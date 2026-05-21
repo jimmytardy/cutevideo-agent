@@ -1,0 +1,65 @@
+{
+  "pipeline": {
+    "max_critic_iterations": 3,
+    "min_critic_score": 70,
+    "min_image_duration_s": 4,
+    "images_per_segment": 4
+  },
+  "tts": {
+    "engine": "edge-tts",
+    "voice": "fr-FR-HenriNeural",
+    "fallback_voice": "fr-FR-DeniseNeural"
+  },
+  "video": {
+    "long": {
+      "width": 1920,
+      "height": 1080,
+      "fps": 25,
+      "bitrate": "8M",
+      "audio_bitrate": "192k"
+    },
+    "short": {
+      "width": 1080,
+      "height": 1920,
+      "fps": 30,
+      "bitrate": "6M",
+      "max_duration_youtube": 60,
+      "max_duration_tiktok": 90,
+      "max_duration_instagram": 90
+    }
+  },
+  "whisper": {
+    "model": "large-v3",
+    "language": "fr"
+  },
+  "media_sources": {
+    "priority_by_theme": {
+      "histoire": ["gallica", "europeana", "wikimedia"],
+      "france": ["gallica", "europeana", "wikimedia"],
+      "nature": ["unsplash", "pexels", "wikimedia"],
+      "science": ["wikimedia", "nasa"],
+      "art": ["europeana", "wikimedia"],
+      "default": ["wikimedia", "unsplash", "pexels"]
+    },
+    "min_width_px": 1280
+  },
+  "publishing": {
+    "auto_publish": false,
+    "default_tags": ["#documentaire", "#histoire", "#éducatif", "#youtube"],
+    "youtube_category_id": "27"
+  },
+  "engagement": {
+    "auto_reply_comments": true,
+    "max_replies_per_run": 10,
+    "max_comments_fetched": 50,
+    "analytics_enabled": true,
+    "comments_enabled": true
+  },
+  "storage": {
+    "retention_days": 30,
+    "max_storage_bytes": 10737418240,
+    "storage_buffer_bytes": 524288000,
+    "presign_ttl_seconds": 3600,
+    "delete_local_after_upload": true
+  }
+}

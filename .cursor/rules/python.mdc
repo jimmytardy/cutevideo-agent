@@ -1,0 +1,46 @@
+---
+description: Conventions Python strictes pour le projet
+globs: ["**/*.py"]
+alwaysApply: true
+---
+
+# Conventions Python
+
+## Style général
+
+- Python 3.11+ uniquement
+- Type hints obligatoires sur toutes les fonctions et méthodes
+- Dataclasses ou Pydantic v2 pour les modèles de données (jamais de dicts bruts)
+- `async/await` partout où une opération I/O est présente
+- f-strings pour le formatage de chaînes
+
+## Imports
+
+- Imports groupés : stdlib → third-party → local
+- Pas d'import `*`
+- Imports absolus depuis la racine du projet
+
+## Nommage
+
+- `snake_case` pour fonctions, variables, modules
+- `PascalCase` pour classes
+- `SCREAMING_SNAKE_CASE` pour constantes
+- Préfixe `_` pour les méthodes/attributs privés
+
+## Gestion des erreurs
+
+- Toujours capturer des exceptions spécifiques (jamais `except Exception` seul en prod)
+- Logger les erreurs avec le contexte complet avant de re-lever
+- Les agents utilisent `fail_run()` pour enregistrer les erreurs en DB
+
+## Async
+
+- Utiliser `asyncio.gather()` pour le parallélisme quand possible
+- Pas de `time.sleep()` — utiliser `asyncio.sleep()`
+- Context managers async (`async with`) pour les connexions DB et HTTP
+
+## Fichiers
+
+- Un module = une responsabilité
+- Pas de fichier > 400 lignes (extraire dans un sous-module)
+- `__init__.py` vide sauf si re-export nécessaire

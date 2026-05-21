@@ -1,0 +1,56 @@
+---
+description: Conventions FastAPI + Pydantic pour l'API REST
+globs: ["api/**/*.py"]
+alwaysApply: false
+---
+
+# Conventions API — FastAPI + Pydantic v2
+
+## Structure des routes
+
+```python
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, UUID4
+
+router = APIRouter(prefix="/projects", tags=["projects"])
+
+class ProjectCreate(BaseModel):
+    theme: str
+    target_duration_seconds: int = 1800
+
+class ProjectResponse(BaseModel):
+    id: UUID4
+    theme: str
+    status: str
+
+    model_config = {"from_attributes": True}
+
+@router.post("/", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
+async def create_project(body: ProjectCreate, db=Depends(get_db)):
+    ...
+```
+
+## Règles
+
+- Un fichier de routes par domaine métier dans `api/routes/`
+- Schémas Pydantic séparés pour Request (`Create`, `Update`) et Response
+- `response_model` toujours précisé
+- Codes HTTP explicites (`status.HTTP_201_CREATED`, etc.)
+- Dépendances FastAPI (`Depends`) pour la session DB et l'auth
+- Pas de logique métier dans les routes — déléguer à des services ou agents
+- Préfixe `/api/v1` sur tous les routers
+- CORS activé pour le dashboard Next.js (`localhost:3000`)
+
+## Gestion d'erreurs
+
+```python
+raise HTTPException(
+    status_code=status.HTTP_404_NOT_FOUND,
+    detail=f"Project {project_id} not found"
+)
+```
+
+## SSE pour le monitoring temps réel
+
+Les routes `/agents/stream` utilisent `StreamingResponse` avec Server-Sent Events
+pour le polling des statuts agents depuis le dashboard.

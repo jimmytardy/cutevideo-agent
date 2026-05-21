@@ -1,0 +1,35 @@
+---
+description: Contexte global du projet CuteVideo Agent
+globs: ["**/*.py", "**/*.ts", "**/*.tsx"]
+alwaysApply: true
+---
+
+# Contexte projet
+
+Agent IA autonome de création vidéo éducative.
+Pipeline multi-agents : chaque agent a un rôle unique, communique via PostgreSQL/Redis.
+Thèmes : histoire, science, nature — vidéos longues (10-60 min) + shorts automatiques.
+
+## Règles absolues
+
+- Toute opération DB passe par `agent/core/database.py` (SQLAlchemy async sessions)
+- Toute config passe par `agent/core/config.py` (jamais de valeurs hardcodées)
+- Chaque agent hérite de `BaseAgent` et implémente `run()`
+- Chaque agent sauvegarde son résultat en DB avant de retourner
+- Les agents ne s'appellent jamais directement — tout passe par `orchestrator.py`
+- Les médias utilisés doivent TOUJOURS avoir une licence vérifiée (CC0, CC-BY, domaine public)
+- Pas de secrets dans le code — uniquement depuis les variables d'environnement via `.env`
+
+## Architecture
+
+```
+Scénariste → Chercheur Média → Narrateur Voix → Monteur Vidéo
+    → Sous-titreur → Critique IA → Découpeur Shorts → Éditeur Shorts → Publisher
+```
+
+## Thèmes supportés
+
+- Histoire (France, monde, antiquité…)
+- Sciences (physique, biologie, astronomie…)
+- Nature (animaux, écologie, géographie…)
+- Art et culture

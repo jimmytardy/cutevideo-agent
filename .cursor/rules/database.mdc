@@ -1,0 +1,77 @@
+---
+description: Conventions PostgreSQL + SQLAlchemy async
+globs: ["agent/core/database.py", "alembic/**/*.py", "api/models.py"]
+alwaysApply: false
+---
+
+# Conventions PostgreSQL + SQLAlchemy async
+
+## Connexion
+
+```python
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+
+engine = create_async_engine(settings.DATABASE_URL, echo=False, pool_size=10)
+AsyncSessionFactory = async_sessionmaker(engine, expire_on_commit=False)
+
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    async with AsyncSessionFactory() as session:
+        yield session
+```
+
+## Modèles SQLAlchemy
+
+```python
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy import String, Integer, func
+from sqlalchemy.dialects.postgresql import UUID, JSONB
+import uuid
+
+class Base(DeclarativeBase):
+    pass
+
+class Project(Base):
+    __tablename__ = "projects"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    theme: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, default="pending")
+    config: Mapped[dict] = mapped_column(JSONB, nullable=True)
+```
+
+## Règles
+
+- SQLAlchemy 2.x async avec asyncpg (jamais de driver sync)
+- UUIDs pour toutes les clés primaires (`gen_random_uuid()` côté DB)
+- JSONB pour les données structurées variables (segments, feedback, config)
+- Pas de raw SQL — SQLAlchemy Core ou ORM
+- Transactions explicites pour les opérations multi-tables
+- Alembic pour TOUTES les migrations (jamais `CREATE TABLE` manuel)
+- `expire_on_commit=False` sur la session factory (évite les lazy load après commit)
+
+## Migrations Alembic
+
+```bash
+# Créer une migration
+alembic revision --autogenerate -m "description"
+
+# Appliquer
+alembic upgrade head
+
+# Rollback
+alembic downgrade -1
+```
+
+## Repositories
+
+Pour les entités complexes, créer un repository dédié :
+
+```python
+class ProjectRepository:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
+    async def get(self, project_id: uuid.UUID) -> Project | None:
+        result = await self.db.execute(select(Project).where(Project.id == project_id))
+        return result.scalar_one_or_none()
+```

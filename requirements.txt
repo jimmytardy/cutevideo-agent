@@ -1,0 +1,50 @@
+# IA
+anthropic>=0.25.0
+openai-whisper>=20231117
+
+# Base de données
+asyncpg>=0.29.0
+sqlalchemy[asyncio]>=2.0.0
+alembic>=1.13.0
+
+# API
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+pydantic>=2.7.0
+pydantic-settings>=2.3.0
+
+# Vidéo + Audio
+ffmpeg-python>=0.2.0
+librosa>=0.10.0
+soundfile>=0.12.0
+Pillow>=10.3.0
+
+# TTS
+edge-tts>=6.1.9
+# TTS>=0.22.0  # Coqui — optionnel, plus lourd
+
+# VAD
+silero-vad>=4.0.0
+
+# Scraping / Automation
+yt-dlp>=2024.5.0
+aiohttp>=3.9.0
+
+# Intégrations (TikTok multi-comptes)
+composio>=0.7.0
+
+# Stockage S3
+boto3>=1.34.0
+requests>=2.32.0
+
+# Google / YouTube
+google-api-python-client>=2.130.0
+google-auth-oauthlib>=1.2.0
+
+# Scheduling
+apscheduler>=3.10.0
+
+# Utils
+python-dotenv>=1.0.0
+redis>=5.0.0
+celery>=5.4.0

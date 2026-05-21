@@ -1,0 +1,23 @@
+[
+  {
+    "slug": "histoire-fr",
+    "name": "Histoire de France",
+    "theme_category": "histoire",
+    "niche_prompt": "Style documentaire Nota Bene / Histoire Brève — narration engageante, faits sourcés.",
+    "tiktok_enabled": true
+  },
+  {
+    "slug": "science",
+    "name": "Science & Découvertes",
+    "theme_category": "science",
+    "niche_prompt": "Vulgarisation scientifique accessible, style Kurzgesagt en français.",
+    "tiktok_enabled": true
+  },
+  {
+    "slug": "nature",
+    "name": "Nature & Écologie",
+    "theme_category": "nature",
+    "niche_prompt": "Documentaires nature, faune et écosystèmes, ton contemplatif.",
+    "tiktok_enabled": true
+  }
+]

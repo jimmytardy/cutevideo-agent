@@ -1,0 +1,72 @@
+---
+description: Comment coder un agent spécialisé
+globs: ["agent/agents/*.py", "agent/core/base_agent.py"]
+alwaysApply: false
+---
+
+# Comment coder un agent spécialisé
+
+## Structure obligatoire
+
+Chaque agent hérite de `BaseAgent` :
+
+```python
+from agent.core.base_agent import BaseAgent
+from dataclasses import dataclass
+
+@dataclass
+class MonInput:
+    project_id: str
+    # ...
+
+@dataclass
+class MonOutput:
+    result: str
+    # ...
+
+class MonAgent(BaseAgent):
+    name = "mon_agent"
+
+    async def run(self, input_data: MonInput) -> MonOutput:
+        run = await self.start_run(input_data)
+        try:
+            result = await self._do_work(input_data)
+            await self.end_run(run, result)
+            return result
+        except Exception as e:
+            await self.fail_run(run, e)
+            raise
+
+    async def _do_work(self, input_data: MonInput) -> MonOutput:
+        # Logique métier ici
+        ...
+```
+
+## Règles impératives
+
+- Jamais de logique dans `__init__`
+- Jamais d'appel direct à un autre agent — tout passe par `orchestrator.py`
+- Toujours logger début et fin dans `agent_runs` via `start_run` / `end_run`
+- Input et output sont des dataclasses ou modèles Pydantic typés
+- Sauvegarder le résultat en DB avant de retourner
+- Gérer le champ `iteration` pour les agents qui peuvent être relancés (monteur, chercheur média)
+
+## Appel Claude
+
+```python
+async def _call_claude(self, prompt: str, **kwargs) -> str:
+    response = await self.claude.messages.create(
+        model="claude-opus-4-5",
+        max_tokens=4096,
+        messages=[{"role": "user", "content": prompt}],
+        **kwargs
+    )
+    return response.content[0].text
+```
+
+## Communication inter-agents
+
+Les résultats sont échangés via la DB PostgreSQL et la queue Redis :
+- L'orchestrateur lit le résultat DB de l'agent N
+- Le passe en input à l'agent N+1
+- En cas d'itération, le rapport du critique est stocké en DB, l'orchestrateur relit et relance

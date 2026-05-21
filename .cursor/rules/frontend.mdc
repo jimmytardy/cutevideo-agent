@@ -1,0 +1,66 @@
+---
+description: Conventions Next.js 14 + Material UI v6
+globs: ["dashboard/**/*.ts", "dashboard/**/*.tsx"]
+alwaysApply: false
+---
+
+# Next.js 14 + Material UI v6
+
+## Structure
+
+- App Router uniquement (jamais Pages Router)
+- TypeScript strict (`"strict": true`, no `any`)
+- Composants dans `dashboard/components/` — props typées avec interfaces
+- Pages dans `dashboard/app/` — Server Components par défaut, `"use client"` si besoin
+- Utilitaires dans `dashboard/lib/`
+
+## Material UI
+
+- MUI v6 pour TOUS les composants — pas de Tailwind, pas de CSS custom inline
+- `ThemeProvider` + `CssBaseline` dans `app/layout.tsx`
+- Thème custom dans `lib/theme.ts` (palette, typography, composants overrides)
+- MUI X Charts pour les graphiques analytics (`@mui/x-charts`)
+- `sx` prop pour les styles inline exceptionnels
+
+```tsx
+// Exemple composant
+import { Card, CardContent, Typography, Chip } from '@mui/material'
+
+interface AgentCardProps {
+  name: string
+  status: 'running' | 'success' | 'failed' | 'pending'
+}
+
+export default function AgentCard({ name, status }: AgentCardProps) {
+  return (
+    <Card>
+      <CardContent>
+        <Typography variant="h6">{name}</Typography>
+        <Chip label={status} color={status === 'success' ? 'success' : 'default'} />
+      </CardContent>
+    </Card>
+  )
+}
+```
+
+## Data fetching
+
+- SWR pour tous les appels API côté client
+- Polling toutes les 2s sur les pages `/agents` et `/projects/[id]`
+- Types API dans `lib/api.ts`
+
+```tsx
+import useSWR from 'swr'
+import { fetchAgents } from '@/lib/api'
+
+const { data, error, isLoading } = useSWR('/api/agents', fetchAgents, {
+  refreshInterval: 2000
+})
+```
+
+## Règles
+
+- Jamais de logique métier côté client
+- Toutes les interfaces TypeScript dans le même fichier que le composant ou dans `lib/api.ts`
+- Pas de `console.log` en production
+- `loading.tsx` et `error.tsx` pour chaque segment de route

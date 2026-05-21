@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# Environnement
+.env
+*.env.local
+
+# Node
+node_modules/
+.next/
+.vercel/
+
+# Données générées
+tmp/
+output/
+!output/long/.gitkeep
+!output/shorts/**/.gitkeep
+
+# Base de données locale
+*.db
+*.sqlite
+
+# Logs
+*.log
+
+# Alembic
+alembic/versions/__pycache__/
+
+# Médias téléchargés (générés automatiquement)
+data/music/**/*.mp3
+data/music/**/*.wav
+!data/music/**/.gitkeep
+
+# IDE
+.DS_Store
+.idea/
+*.swp
+.cursor/mcp.json
