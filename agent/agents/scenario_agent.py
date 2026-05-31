@@ -4,6 +4,7 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +25,8 @@ USER_PROMPT_TEMPLATE = """Crée un scénario détaillé pour une vidéo de {dura
 CHAÎNE : {channel_name} (catégorie : {theme_category})
 CONTEXTE ÉDITORIAL : {niche_prompt}
 SUJET DE LA VIDÉO : "{theme}"
+
+{content_plan_block}
 
 {learning_block}
 
@@ -55,6 +58,23 @@ Principes OBLIGATOIRES :
 - Total : environ {duration_min} minutes de contenu"""
 
 
+def _format_content_plan_block(plan: dict[str, Any] | None) -> str:
+    if not plan:
+        return ""
+    lines = [
+        "MANDAT ÉDITORIAL (content_planner — à respecter) :",
+        f"- Titre provisoire : {plan.get('provisional_title', '')}",
+        f"- Angle : {plan.get('angle', '')}",
+        f"- Format narratif : {plan.get('narrative_format', '')}",
+        f"- Sous-thème : {plan.get('sub_theme', '')}",
+        f"- Entités : {', '.join(plan.get('main_entities', []))}",
+        f"- Mots-clés SEO : {', '.join(plan.get('seo_keywords', []))}",
+    ]
+    if plan.get("reactive_news_hook"):
+        lines.append(f"- Actualité : {plan['reactive_news_hook']}")
+    return "\n".join(lines)
+
+
 @dataclass
 class ScenarioInput:
     project_id: uuid.UUID
@@ -64,6 +84,7 @@ class ScenarioInput:
     theme_category: str
     niche_prompt: str
     learning_context_prompt: str
+    content_plan_block: str = ""
 
 
 @dataclass
@@ -88,6 +109,7 @@ class ScenarioAgent(BaseAgent):
             theme_category=ctx.theme_category,
             niche_prompt=ctx.niche_prompt,
             learning_context_prompt=ctx.learning_context_prompt,
+            content_plan_block=_format_content_plan_block(ctx.content_plan),
         )
         run = await self.start_run(ctx.project_id, input_data)
         try:
@@ -106,6 +128,7 @@ class ScenarioAgent(BaseAgent):
             channel_name=input_data.channel_name,
             theme_category=input_data.theme_category,
             niche_prompt=input_data.niche_prompt or "Vidéo éducative française",
+            content_plan_block=input_data.content_plan_block,
             learning_block=LEARNING_CONTEXT_BLOCK.format(
                 learning_context_prompt=input_data.learning_context_prompt,
             ),

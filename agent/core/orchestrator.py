@@ -33,7 +33,6 @@ AGENT_ORDER = [
     "critic_agent",
     "clipper_agent",
     "short_editor_agent",
-    "publisher_agent",
 ]
 
 ENGAGEMENT_AGENT_ORDER = [
@@ -55,6 +54,8 @@ class PipelineContext:
     target_duration_seconds: int
     iteration: int = 1
     learning_context: ChannelContextSnapshot | None = None
+    content_plan: dict[str, Any] | None = None
+    planned_shorts: list[dict[str, Any]] | None = None
 
     @property
     def learning_context_prompt(self) -> str:
@@ -86,6 +87,7 @@ class Orchestrator:
             await self._update_project_status(session, project_id, "running")
 
         learning = await load_channel_context(channel.id)
+        project_config = project.config or {}
         ctx = PipelineContext(
             project_id=project_id,
             channel_id=channel.id,
@@ -97,6 +99,8 @@ class Orchestrator:
             theme=project.theme,
             target_duration_seconds=project.target_duration_seconds or 1800,
             learning_context=learning,
+            content_plan=project_config.get("content_plan"),
+            planned_shorts=project_config.get("planned_shorts"),
         )
         logger.info(
             "Contexte apprentissage chaîne %s (v%d) chargé pour le projet %s",
@@ -108,8 +112,6 @@ class Orchestrator:
         try:
             await self._run_creation_pipeline(ctx)
             await self._run_shorts_pipeline(ctx)
-            if ctx.channel_config.auto_publish:
-                await self._run_publisher(ctx)
             async with AsyncSessionFactory() as session:
                 await self._update_project_status(session, project_id, "approved")
             logger.info("Pipeline terminé pour le projet %s (chaîne %s)", project_id, channel.slug)
@@ -185,13 +187,6 @@ class Orchestrator:
         await queue.set_agent_status(str(ctx.project_id), "short_editor_agent", "running")
         await ShortEditorAgent().run(ctx, clips)
         await queue.set_agent_status(str(ctx.project_id), "short_editor_agent", "success")
-
-    async def _run_publisher(self, ctx: PipelineContext) -> None:
-        from agent.agents.publisher_agent import PublisherAgent
-
-        await queue.set_agent_status(str(ctx.project_id), "publisher_agent", "running")
-        await PublisherAgent().run(ctx)
-        await queue.set_agent_status(str(ctx.project_id), "publisher_agent", "success")
 
     async def _apply_critic_changes(
         self,

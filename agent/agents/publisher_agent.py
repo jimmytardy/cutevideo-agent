@@ -1,22 +1,27 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlalchemy import select
 
 from agent.core.base_agent import BaseAgent
-from agent.core.config import settings
-from agent.core.database import AsyncSessionFactory, Publication, Scenario, Video
-from agent.core.storage import get_public_video_url_async, resolve_local_path_for_upload
-from agent.skills.publisher import composio_client
+from agent.core.channel_config import resolve_channel_config
+from agent.core.channel_config import ChannelRuntimeConfig
+from agent.core.database import AsyncSessionFactory, Channel, Publication, Scenario, Video
+from agent.skills.publisher.executor import (
+    channel_supports_platform,
+    platform_for_video_type,
+    publish_scheduled,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class PublisherAgent(BaseAgent):
-    """Agent 9 — Publisher : publie les vidéos sur YouTube, TikTok (Composio) et Instagram."""
+    """Agent legacy — publication immédiate (préférer distribution_agent en production)."""
 
     name = "publisher_agent"
 
@@ -24,6 +29,7 @@ class PublisherAgent(BaseAgent):
         run = await self.start_run(ctx.project_id, {"channel": ctx.channel_slug})
         publications: list[Publication] = []
         try:
+            channel_config = ctx.channel_config
             async with AsyncSessionFactory() as session:
                 videos_result = await session.execute(
                     select(Video)
@@ -41,33 +47,35 @@ class PublisherAgent(BaseAgent):
 
             title = "Vidéo éducative"
             description = ctx.theme
-            tags = ctx.channel_config.default_tags
+            tags = channel_config.default_tags
             if scenario and scenario.segments:
                 first = scenario.segments[0] if isinstance(scenario.segments, list) else {}
                 title = str(first.get("title", title)) if isinstance(first, dict) else title
 
+            now = datetime.now(timezone.utc)
             for video in videos:
                 if video.file_purged_at:
                     continue
                 if not video.storage_key and not (video.local_path and Path(video.local_path).exists()):
                     continue
 
-                vtype = video.video_type or "long"
+                platform = platform_for_video_type(video.video_type)
+                if not platform or not channel_supports_platform(ctx.channel, platform):
+                    continue
 
-                if vtype in ("long", "youtube", "short_youtube") and ctx.channel.youtube_channel_id:
-                    pub = await self._publish_youtube(ctx, video, title, description, tags)
-                    if pub:
-                        publications.append(pub)
-
-                if vtype in ("short_tiktok", "tiktok") and composio_client.tiktok_is_connected(ctx.channel):
-                    pub = await self._publish_tiktok(ctx, video, title)
-                    if pub:
-                        publications.append(pub)
-
-                if vtype in ("short_instagram", "instagram") and ctx.channel.instagram_page_id:
-                    pub = await self._publish_instagram(ctx, video, title, tags)
-                    if pub:
-                        publications.append(pub)
+                pub = await self._create_and_publish(
+                    video=video,
+                    channel_id=ctx.channel_id,
+                    channel=ctx.channel,
+                    channel_config=channel_config,
+                    platform=platform,
+                    title=title,
+                    description=description,
+                    tags=tags,
+                    scheduled_at=now,
+                )
+                if pub and pub.status == "published":
+                    publications.append(pub)
 
             await self.end_run(run, {"publications": len(publications)})
             return publications
@@ -75,101 +83,32 @@ class PublisherAgent(BaseAgent):
             await self.fail_run(run, e)
             raise
 
-    async def _publish_youtube(
-        self,
-        ctx: "PipelineContext",
+    @staticmethod
+    async def _create_and_publish(
         video: Video,
-        title: str,
-        description: str,
-        tags: list[str],
-    ) -> Publication | None:
-        try:
-            from agent.skills.publisher.youtube import upload_video
-
-            video_path = await resolve_local_path_for_upload(video)
-            video_id = await upload_video(
-                video_path=video_path,
-                title=title,
-                description=description,
-                tags=tags,
-                category_id=ctx.channel_config.youtube_category_id,
-                refresh_token=ctx.channel.youtube_refresh_token or settings.youtube_refresh_token,
-            )
-            return await self._save_publication(
-                ctx, video, "youtube", video_id, f"https://youtube.com/watch?v={video_id}", title, description, tags
-            )
-        except Exception as e:
-            logger.warning("Publication YouTube ignorée (%s) : %s", ctx.channel.slug, e)
-            return None
-
-    async def _publish_tiktok(self, ctx: "PipelineContext", video: Video, caption: str) -> Publication | None:
-        try:
-            video_url = await get_public_video_url_async(video)
-            publish_id = await composio_client.publish_tiktok_video(
-                channel=ctx.channel,
-                video_url=video_url,
-                caption=caption,
-            )
-            return await self._save_publication(
-                ctx, video, "tiktok", publish_id, None, caption, "", []
-            )
-        except Exception as e:
-            logger.warning("Publication TikTok ignorée (%s) : %s", ctx.channel.slug, e)
-            return None
-
-    async def _publish_instagram(
-        self,
-        ctx: "PipelineContext",
-        video: Video,
-        caption: str,
-        tags: list[str],
-    ) -> Publication | None:
-        try:
-            from agent.skills.publisher.instagram import upload_reel
-
-            video_url = await get_public_video_url_async(video)
-            local_path = await resolve_local_path_for_upload(video)
-            media_id = await upload_reel(
-                video_path=local_path,
-                caption=caption,
-                hashtags=tags,
-                video_url=video_url,
-                page_id=ctx.channel.instagram_page_id or settings.instagram_page_id,
-            )
-            if not media_id:
-                return None
-            return await self._save_publication(
-                ctx, video, "instagram", media_id, None, caption, "", tags
-            )
-        except Exception as e:
-            logger.warning("Publication Instagram ignorée (%s) : %s", ctx.channel.slug, e)
-            return None
-
-    async def _save_publication(
-        self,
-        ctx: "PipelineContext",
-        video: Video,
+        channel_id: uuid.UUID,
+        channel: Channel,
+        channel_config: ChannelRuntimeConfig,
         platform: str,
-        platform_video_id: str,
-        platform_url: str | None,
         title: str,
         description: str,
-        hashtags: list[str],
-    ) -> Publication:
+        tags: list[str],
+        scheduled_at: datetime,
+    ) -> Publication | None:
         async with AsyncSessionFactory() as session:
             pub = Publication(
                 video_id=video.id,
-                channel_id=ctx.channel_id,
+                channel_id=channel_id,
                 platform=platform,
-                platform_video_id=platform_video_id,
-                platform_url=platform_url,
                 title=title,
                 description=description,
-                hashtags=hashtags,
-                published_at=datetime.now(timezone.utc),
-                status="published",
+                hashtags=tags,
+                scheduled_at=scheduled_at,
+                status="scheduled",
+                scheduling_reason={"source": "publisher_agent_immediate"},
             )
             session.add(pub)
             await session.commit()
             await session.refresh(pub)
-            return pub
+
+        return await publish_scheduled(pub, channel, channel_config, video)

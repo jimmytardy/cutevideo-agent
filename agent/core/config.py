@@ -48,6 +48,8 @@ class Settings(BaseSettings):
 
     composio_api_key: str = ""
     media_public_base_url: str = "http://localhost:8000"
+    api_base_url: str = "http://localhost:8000"
+    youtube_oauth_redirect_uri: str = "http://localhost:8000/api/v1/channels/youtube/oauth/callback"
 
     storage_backend: str = "local"
     s3_bucket: str = ""

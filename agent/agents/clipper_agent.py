@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
+from typing import Any
 
 from sqlalchemy import select
 
@@ -25,6 +26,8 @@ DURÉE TOTALE : {duration_s} secondes
 
 SEGMENTS :
 {segments_json}
+
+{planned_shorts_block}
 
 {learning_block}
 
@@ -51,6 +54,16 @@ Critères pour un bon short :
 - Contient un fait surprenant ou peu connu
 - Durée 45-90 secondes
 - Se termine par une question ou une invitation à en savoir plus"""
+
+
+def _format_planned_shorts_block(planned: list[dict[str, Any]] | None) -> str:
+    if not planned:
+        return ""
+    return (
+        "SHORTS PRIORITAIRES (content_planner — favoriser ces angles, "
+        f"{len(planned)} minimum si le scénario le permet) :\n"
+        + json.dumps(planned, ensure_ascii=False, indent=2)
+    )
 
 
 @dataclass
@@ -106,6 +119,7 @@ class ClipperAgent(BaseAgent):
             theme=ctx.theme,
             duration_s=video.duration_s if video else ctx.target_duration_seconds,
             segments_json=json.dumps(scenario.segments or [], ensure_ascii=False, indent=2),
+            planned_shorts_block=_format_planned_shorts_block(ctx.planned_shorts),
             learning_block=LEARNING_CONTEXT_BLOCK.format(
                 learning_context_prompt=ctx.learning_context_prompt,
             ),
@@ -119,6 +133,9 @@ class ClipperAgent(BaseAgent):
             for clip in data.get("clips", [])
         ]
         clips.sort(key=lambda c: c.shortability_score, reverse=True)
+
+        max_clips = len(ctx.planned_shorts) if ctx.planned_shorts else 8
+        clips = clips[: max(max_clips, 1)]
 
         logger.info("%d clips shorts identifiés", len(clips))
         return clips

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any
 
 from sqlalchemy import select
@@ -11,33 +11,26 @@ from sqlalchemy import select
 from agent.core.base_agent import BaseAgent
 from agent.core.channel_config import resolve_channel_config
 from agent.core.database import AsyncSessionFactory, PlatformComment
-from agent.core.learning_context import (
-    load_channel_context,
-    merge_llm_context_update,
-    scheduled_comments_hour,
+from agent.core.learning_context import merge_llm_context_update
+from agent.core.llm_config import is_engagement_run_day, max_publications_per_engagement_run
+from agent.scheduler.engagement import PublicationJob, list_published_publications
+from agent.skills.comments.heuristics import (
+    classify_comments,
+    results_to_analysis_payload,
+    rule_based_comment_insights,
 )
-from agent.scheduler.engagement import PublicationJob, current_utc_hour, list_published_publications
 from agent.skills.publisher import tiktok_comments, youtube_comments
 from agent.skills.publisher.composio_client import tiktok_is_connected
 
 logger = logging.getLogger(__name__)
 
-COMMENTS_SYSTEM = """Tu es community manager pour des chaînes éducatives YouTube et TikTok en français.
-Tu analyses les commentaires, réponds brièvement quand c'est utile, ignores spam et insultes,
-et extrais uniquement les remarques constructives pour améliorer les futures vidéos.
+COMMENTS_LLM_SYSTEM = """Tu es community manager pour des chaînes éducatives YouTube et TikTok en français.
+Tu analyses UNIQUEMENT les commentaires marqués needs_llm.
 Tu retournes UNIQUEMENT du JSON valide."""
 
-COMMENTS_PROMPT_TEMPLATE = """Analyse ces commentaires sur une vidéo publiée.
+COMMENTS_LLM_PROMPT = """Commentaires nécessitant une analyse LLM :
 
-PLATEFORME : {platform}
-TITRE VIDÉO : {title}
-CHAÎNE : {channel_name}
-
-COMMENTAIRES :
 {comments_json}
-
-CONTEXTE D'APPRENTISSAGE ACTUEL :
-{current_context}
 
 Retourne UNIQUEMENT ce JSON :
 {{
@@ -45,45 +38,39 @@ Retourne UNIQUEMENT ce JSON :
     {{
       "platform_comment_id": "id",
       "needs_reply": true,
-      "reply_text": "Réponse courte et bienveillante en français (max 280 caractères) ou null",
+      "reply_text": "Réponse courte (max 280 car.) ou null",
       "status": "replied | ignored | spam",
       "is_constructive": true,
-      "constructive_note": "Ce que ce commentaire apprend pour les prochaines vidéos ou null"
+      "constructive_note": "string ou null"
     }}
   ],
-  "summary": "Synthèse des retours audience (max 200 mots)",
+  "summary": "Synthèse courte (max 150 mots)",
   "new_insights": [
-    {{
-      "text": "Insight issu des commentaires",
-      "source": "comments",
-      "confidence": 0.75,
-      "evidence": "Commentaire ou tendance"
-    }}
+    {{"text": "...", "source": "comments", "confidence": 0.75, "evidence": "..."}}
   ],
   "invalidate_insight_ids": [],
   "update_insights": []
-}}
-
-Règles :
-- needs_reply=true seulement pour questions sincères, remerciements importants ou corrections factuelles
-- Ne réponds pas aux trolls, spam, ou commentaires vides
-- constructive_note uniquement si is_constructive=true"""
+}}"""
 
 
 class CommentsAgent(BaseAgent):
-    """Agent 11 — Commentaires : modération, réponses et retours constructifs."""
+    """Agent 11 — Commentaires : heuristiques 2×/semaine, Sonnet pour cas ambigus."""
 
     name = "comments_agent"
 
     async def run_scheduled(self, force_all: bool = False) -> dict[str, int]:
-        hour = current_utc_hour()
-        jobs = await list_published_publications()
+        if not force_all and not is_engagement_run_day(date.today()):
+            logger.info("Comments ignoré — hors jour planifié (engagement_run_weekdays)")
+            return {"processed": 0, "errors": 0, "skipped": "not_scheduled_day"}
+
+        jobs = await list_published_publications(force_all=force_all)
+        cap = max_publications_per_engagement_run()
+        jobs = jobs[:cap]
+
         processed = 0
         errors = 0
 
         for job in jobs:
-            if not force_all and scheduled_comments_hour(job.publication.id) != hour:
-                continue
             cfg = resolve_channel_config(job.channel)
             if not cfg.comments_enabled:
                 continue
@@ -98,11 +85,15 @@ class CommentsAgent(BaseAgent):
                     e,
                 )
 
-        logger.info("Comments planifié : %d traités, %d erreurs (heure UTC %d)", processed, errors, hour)
+        logger.info("Comments planifié : %d traités, %d erreurs", processed, errors)
         return {"processed": processed, "errors": errors}
 
     async def run_for_publication(self, publication_id: uuid.UUID) -> dict[str, Any]:
-        jobs = await list_published_publications()
+        if not is_engagement_run_day(date.today()):
+            raise ValueError(
+                "Comments manuel autorisé uniquement les jours engagement_run_weekdays"
+            )
+        jobs = await list_published_publications(force_all=True)
         job = next((j for j in jobs if j.publication.id == publication_id), None)
         if not job:
             raise ValueError(f"Publication {publication_id} introuvable ou non publiée")
@@ -123,7 +114,6 @@ class CommentsAgent(BaseAgent):
                 await self.end_run(run, {"replies": 0, "new_comments": 0})
                 return {"replies": 0, "new_comments": 0}
 
-            current_ctx = await load_channel_context(channel.id)
             comments_payload = [
                 {
                     "platform_comment_id": c.platform_comment_id,
@@ -134,28 +124,64 @@ class CommentsAgent(BaseAgent):
                 for c in new_comments
             ]
 
-            prompt = COMMENTS_PROMPT_TEMPLATE.format(
-                platform=pub.platform or "unknown",
-                title=pub.title or "",
-                channel_name=channel.name,
-                comments_json=json.dumps(comments_payload, ensure_ascii=False, indent=2),
-                current_context=current_ctx.format_for_prompt(),
-            )
-            raw = await self._call_claude(prompt, system=COMMENTS_SYSTEM, max_tokens=4096)
-            llm_data = self._parse_json(raw)
+            heuristic_results = classify_comments(comments_payload)
+            analysis_payload = results_to_analysis_payload(heuristic_results)
 
             replies_sent = 0
             if cfg.auto_reply_comments:
                 replies_sent = await self._apply_replies(
-                    pub, channel, llm_data.get("comments_analysis", []), cfg.max_replies_per_run
+                    pub, channel, analysis_payload, cfg.max_replies_per_run
                 )
 
-            if llm_data.get("new_insights") or llm_data.get("summary"):
-                await merge_llm_context_update(channel.id, llm_data)
+            llm_needing = [r for r in heuristic_results if r.needs_llm]
+            merge_payload = rule_based_comment_insights(heuristic_results)
 
-            await self._mark_comments_processed(llm_data.get("comments_analysis", []))
+            if llm_needing:
+                llm_comments = [
+                    c
+                    for c in comments_payload
+                    if any(
+                        r.platform_comment_id == c["platform_comment_id"] and r.needs_llm
+                        for r in llm_needing
+                    )
+                ]
+                prompt = COMMENTS_LLM_PROMPT.format(
+                    comments_json=json.dumps(llm_comments, ensure_ascii=False, indent=2),
+                )
+                raw = await self._call_claude_for_channel(
+                    channel.id,
+                    prompt,
+                    system=COMMENTS_LLM_SYSTEM,
+                )
+                llm_data = self._parse_json(raw)
+                llm_analyses = llm_data.get("comments_analysis", [])
+                by_id = {a["platform_comment_id"]: a for a in llm_analyses if a.get("platform_comment_id")}
+                for item in analysis_payload:
+                    lid = item["platform_comment_id"]
+                    if lid in by_id:
+                        item.update(by_id[lid])
+                if cfg.auto_reply_comments:
+                    extra = await self._apply_replies(
+                        pub, channel, llm_analyses, cfg.max_replies_per_run - replies_sent
+                    )
+                    replies_sent += extra
+                if llm_data.get("new_insights") or llm_data.get("summary"):
+                    merge_payload["summary"] = str(llm_data.get("summary") or merge_payload["summary"])
+                    merge_payload["new_insights"] = (
+                        merge_payload.get("new_insights", []) + llm_data.get("new_insights", [])
+                    )[:2]
 
-            output = {"replies": replies_sent, "new_comments": len(new_comments)}
+            if merge_payload.get("new_insights") or merge_payload.get("summary"):
+                await merge_llm_context_update(channel.id, merge_payload)
+
+            await self._mark_comments_processed(analysis_payload)
+
+            output = {
+                "replies": replies_sent,
+                "new_comments": len(new_comments),
+                "llm_comments": len(llm_needing),
+                "method": "heuristics+sonnet" if llm_needing else "heuristics",
+            }
             await self.end_run(run, output)
             return output
         except Exception as e:
@@ -181,8 +207,7 @@ class CommentsAgent(BaseAgent):
                 max_results=max_count,
             )
         elif platform == "tiktok" and tiktok_is_connected(channel):
-            tt = await tiktok_comments.fetch_video_comments(channel, video_id, max_count)
-            raw_comments = tt
+            raw_comments = await tiktok_comments.fetch_video_comments(channel, video_id, max_count)
 
         stored: list[PlatformComment] = []
         async with AsyncSessionFactory() as session:
@@ -271,7 +296,9 @@ class CommentsAgent(BaseAgent):
                     continue
                 if row.status == "replied":
                     continue
-                row.status = status if status in ("ignored", "spam", "replied") else "ignored"
+                row.status = status if status in ("ignored", "spam", "replied", "new") else "ignored"
+                if row.status == "new":
+                    row.status = "ignored"
                 row.analysis = item
                 session.add(row)
             await session.commit()

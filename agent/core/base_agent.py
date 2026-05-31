@@ -12,6 +12,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.core.config import settings
 from agent.core.database import AgentRun, AsyncSessionFactory
+from agent.core.llm_config import (
+    compact_learning_context,
+    resolve_max_tokens,
+    resolve_model,
+)
+from agent.core.learning_context import load_channel_context
 
 logger = logging.getLogger(__name__)
 
@@ -73,21 +79,65 @@ class BaseAgent(ABC, Generic[InputT, OutputT]):
     async def _call_claude(
         self,
         prompt: str,
-        model: str = "claude-opus-4-5",
-        max_tokens: int = 4096,
+        model: str | None = None,
+        max_tokens: int | None = None,
         system: str | None = None,
+        cacheable_context: str | None = None,
     ) -> str:
-        """Appel standardisé à Claude."""
-        messages = [{"role": "user", "content": prompt}]
+        """Appel standardisé à Claude avec résolution modèle/tokens et prompt caching."""
+        resolved_model = model or resolve_model(self.name)
+        resolved_max_tokens = resolve_max_tokens(self.name, max_tokens)
+
+        user_content: list[dict[str, Any]] = []
+        if cacheable_context and cacheable_context.strip():
+            user_content.append(
+                {
+                    "type": "text",
+                    "text": cacheable_context.strip(),
+                    "cache_control": {"type": "ephemeral"},
+                }
+            )
+        user_content.append({"type": "text", "text": prompt})
+
         kwargs: dict[str, Any] = {
-            "model": model,
-            "max_tokens": max_tokens,
-            "messages": messages,
+            "model": resolved_model,
+            "max_tokens": resolved_max_tokens,
+            "messages": [{"role": "user", "content": user_content}],
         }
-        if system:
-            kwargs["system"] = system
+        if system and system.strip():
+            kwargs["system"] = [
+                {
+                    "type": "text",
+                    "text": system.strip(),
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ]
+
         response = await self.claude.messages.create(**kwargs)
         return response.content[0].text
+
+    async def _call_claude_for_channel(
+        self,
+        channel_id: uuid.UUID,
+        prompt: str,
+        system: str | None = None,
+        *,
+        model: str | None = None,
+        max_tokens: int | None = None,
+        extra_cacheable: str | None = None,
+    ) -> str:
+        """Appel Claude avec contexte d'apprentissage chaîne en bloc cacheable."""
+        snapshot = await load_channel_context(channel_id)
+        context_block = compact_learning_context(snapshot)
+        if extra_cacheable:
+            context_block = f"{extra_cacheable.strip()}\n\n{context_block}"
+        return await self._call_claude(
+            prompt,
+            model=model,
+            max_tokens=max_tokens,
+            system=system,
+            cacheable_context=context_block,
+        )
 
     @staticmethod
     def _serialize(data: Any) -> dict | None:

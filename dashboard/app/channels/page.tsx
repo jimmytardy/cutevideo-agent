@@ -19,6 +19,10 @@ import CircularProgress from '@mui/material/CircularProgress'
 import Alert from '@mui/material/Alert'
 import AddIcon from '@mui/icons-material/Add'
 import LinkIcon from '@mui/icons-material/Link'
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome'
+import SettingsIcon from '@mui/icons-material/Settings'
+import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import AppShell from '@/components/AppShell'
 import {
   connectTikTok,
@@ -48,7 +52,12 @@ function ChannelCard({ channel, onRefresh }: { channel: Channel; onRefresh: () =
       <CardContent>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
           <Typography variant="h6">{channel.name}</Typography>
-          <Chip label={channel.theme_category} size="small" color="primary" variant="outlined" />
+          <Box sx={{ display: 'flex', gap: 0.5 }}>
+            {channel.onboarding_step && channel.onboarding_step !== 'complete' && (
+              <Chip label="Config en cours" size="small" color="warning" />
+            )}
+            <Chip label={channel.theme_category} size="small" color="primary" variant="outlined" />
+          </Box>
         </Box>
         <Typography variant="body2" color="text.secondary">
           Slug : {channel.slug}
@@ -73,6 +82,16 @@ function ChannelCard({ channel, onRefresh }: { channel: Channel; onRefresh: () =
         </Box>
       </CardContent>
       <CardActions>
+        {channel.onboarding_step && channel.onboarding_step !== 'complete' && (
+          <Button
+            size="small"
+            component={Link}
+            href={`/channels/${channel.id}/setup`}
+            startIcon={<SettingsIcon />}
+          >
+            Reprendre l&apos;onboarding
+          </Button>
+        )}
         {channel.tiktok_enabled && !integrations?.tiktok_connected && (
           <Button size="small" startIcon={<LinkIcon />} onClick={handleConnectTikTok}>
             Connecter TikTok
@@ -84,6 +103,7 @@ function ChannelCard({ channel, onRefresh }: { channel: Channel; onRefresh: () =
 }
 
 export default function ChannelsPage() {
+  const router = useRouter()
   const { data: channels, error, isLoading, mutate } = useSWR<Channel[]>(
     '/api/v1/channels',
     () => fetchChannels(),
@@ -120,9 +140,18 @@ export default function ChannelsPage() {
       <Box sx={{ maxWidth: 1100, mx: 'auto' }}>
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 4 }}>
           <Typography variant="h5">Chaînes</Typography>
-          <Button variant="contained" startIcon={<AddIcon />} onClick={() => setOpen(true)}>
-            Nouvelle chaîne
-          </Button>
+          <Box sx={{ display: 'flex', gap: 1 }}>
+            <Button
+              variant="contained"
+              startIcon={<AutoAwesomeIcon />}
+              onClick={() => router.push('/channels/new')}
+            >
+              Créer une chaîne guidée
+            </Button>
+            <Button variant="outlined" startIcon={<AddIcon />} onClick={() => setOpen(true)}>
+              Création rapide
+            </Button>
+          </Box>
         </Box>
 
         {isLoading && <CircularProgress />}

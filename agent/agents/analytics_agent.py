@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import json
 import logging
 import uuid
+from datetime import date
 from typing import Any
 
 from sqlalchemy import select
@@ -10,75 +10,37 @@ from sqlalchemy import select
 from agent.core.base_agent import BaseAgent
 from agent.core.channel_config import resolve_channel_config
 from agent.core.database import Analytics, AsyncSessionFactory
-from agent.core.learning_context import (
-    load_channel_context,
-    merge_llm_context_update,
-    scheduled_analysis_hour,
+from agent.core.learning_context import merge_llm_context_update
+from agent.core.llm_config import is_engagement_run_day, max_publications_per_engagement_run
+from agent.scheduler.engagement import (
+    PublicationJob,
+    analytics_history_limit,
+    list_published_publications,
 )
-from agent.scheduler.engagement import PublicationJob, current_utc_hour, list_published_publications
+from agent.skills.analytics.metrics_rules import analyze_metrics_with_pandas
 from agent.skills.publisher import youtube_analytics
 
 logger = logging.getLogger(__name__)
 
-ANALYTICS_SYSTEM = """Tu es un expert en performance de vidéos éducatives YouTube et TikTok.
-Tu analyses les métriques, identifies ce qui fonctionne ou non, et mets à jour un contexte
-d'apprentissage pour améliorer les prochaines productions.
-Tu peux INVALIDER des insights précédents si les nouvelles données les contredisent.
-Tu retournes UNIQUEMENT du JSON valide."""
-
-ANALYTICS_PROMPT_TEMPLATE = """Analyse les performances de cette vidéo publiée.
-
-PLATEFORME : {platform}
-TITRE : {title}
-CHAÎNE : {channel_name} ({theme_category})
-
-MÉTRIQUES ACTUELLES :
-{metrics_json}
-
-HISTORIQUE DES SNAPSHOTS (du plus ancien au plus récent) :
-{history_json}
-
-CONTEXTE D'APPRENTISSAGE ACTUEL DE LA CHAÎNE :
-{current_context}
-
-Retourne UNIQUEMENT ce JSON :
-{{
-  "summary": "Résumé synthétique pour guider les prochaines vidéos (max 400 mots)",
-  "performance_verdict": "success | mixed | underperforming",
-  "new_insights": [
-    {{
-      "text": "Insight actionnable pour les prochaines vidéos",
-      "source": "analytics",
-      "confidence": 0.85,
-      "evidence": "Donnée ou tendance qui supporte l'insight"
-    }}
-  ],
-  "invalidate_insight_ids": ["id-insight-devenu-faux"],
-  "update_insights": [
-    {{"id": "id-existant", "confidence": 0.2, "active": false}}
-  ]
-}}
-
-Règles :
-- Invalide les insights dont la confiance tombe sous 0.35 face aux nouvelles métriques
-- Sois factuel : ne suppose pas de causes sans indicateur dans les métriques
-- Focus : hook, rétention, engagement, format court vs long"""
-
 
 class AnalyticsAgent(BaseAgent):
-    """Agent 10 — Analytics : métriques quotidiennes et contexte d'apprentissage chaîne."""
+    """Agent 10 — Analytics : métriques 2×/semaine, analyse pandas sans LLM."""
 
     name = "analytics_agent"
 
     async def run_scheduled(self, force_all: bool = False) -> dict[str, int]:
-        hour = current_utc_hour()
-        jobs = await list_published_publications()
+        if not force_all and not is_engagement_run_day(date.today()):
+            logger.info("Analytics ignoré — hors jour planifié (engagement_run_weekdays)")
+            return {"processed": 0, "errors": 0, "skipped": "not_scheduled_day"}
+
+        jobs = await list_published_publications(force_all=force_all)
+        cap = max_publications_per_engagement_run()
+        jobs = jobs[:cap]
+
         processed = 0
         errors = 0
 
         for job in jobs:
-            if not force_all and scheduled_analysis_hour(job.publication.id) != hour:
-                continue
             cfg = resolve_channel_config(job.channel)
             if not cfg.analytics_enabled:
                 continue
@@ -93,11 +55,15 @@ class AnalyticsAgent(BaseAgent):
                     e,
                 )
 
-        logger.info("Analytics planifié : %d traités, %d erreurs (heure UTC %d)", processed, errors, hour)
+        logger.info("Analytics planifié : %d traités, %d erreurs", processed, errors)
         return {"processed": processed, "errors": errors}
 
     async def run_for_publication(self, publication_id: uuid.UUID) -> dict[str, Any]:
-        jobs = await list_published_publications()
+        if not is_engagement_run_day(date.today()):
+            raise ValueError(
+                "Analytics manuel autorisé uniquement les jours engagement_run_weekdays"
+            )
+        jobs = await list_published_publications(force_all=True)
         job = next((j for j in jobs if j.publication.id == publication_id), None)
         if not job:
             raise ValueError(f"Publication {publication_id} introuvable ou non publiée")
@@ -112,28 +78,22 @@ class AnalyticsAgent(BaseAgent):
         )
         try:
             metrics = await self._fetch_metrics(pub, channel)
-            history = await self._load_analytics_history(pub.id)
-            current_ctx = await load_channel_context(channel.id)
-
-            prompt = ANALYTICS_PROMPT_TEMPLATE.format(
-                platform=pub.platform or "unknown",
+            history = await self._load_analytics_history(pub.id, job.video_type)
+            rule_payload = analyze_metrics_with_pandas(
+                metrics,
+                history,
                 title=pub.title or "",
-                channel_name=channel.name,
-                theme_category=channel.theme_category,
-                metrics_json=json.dumps(metrics, ensure_ascii=False, indent=2),
-                history_json=json.dumps(history, ensure_ascii=False, indent=2),
-                current_context=current_ctx.format_for_prompt(),
+                platform=pub.platform or "",
             )
-            raw = await self._call_claude(prompt, system=ANALYTICS_SYSTEM, max_tokens=4096)
-            llm_data = self._parse_json(raw)
 
             await self._save_analytics_snapshot(pub.id, metrics)
-            snapshot = await merge_llm_context_update(channel.id, llm_data)
+            snapshot = await merge_llm_context_update(channel.id, rule_payload)
 
             output = {
                 "publication_id": str(pub.id),
-                "verdict": llm_data.get("performance_verdict"),
+                "verdict": rule_payload.get("performance_verdict"),
                 "context_version": snapshot.version,
+                "method": "pandas_rules",
             }
             await self.end_run(run, output)
             return output
@@ -159,16 +119,24 @@ class AnalyticsAgent(BaseAgent):
         return {
             "platform": platform,
             "video_id": video_id,
-            "note": "Métriques TikTok détaillées non disponibles via API — utiliser vues/likes si présents en DB",
+            "views": 0,
+            "likes": 0,
+            "comments": 0,
+            "note": "Métriques TikTok détaillées non disponibles via API",
         }
 
-    async def _load_analytics_history(self, publication_id: uuid.UUID) -> list[dict[str, Any]]:
+    async def _load_analytics_history(
+        self,
+        publication_id: uuid.UUID,
+        video_type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        limit = analytics_history_limit(video_type)
         async with AsyncSessionFactory() as session:
             result = await session.execute(
                 select(Analytics)
                 .where(Analytics.publication_id == publication_id)
                 .order_by(Analytics.fetched_at.asc())
-                .limit(14)
+                .limit(limit)
             )
             rows = list(result.scalars().all())
         return [
@@ -198,11 +166,3 @@ class AnalyticsAgent(BaseAgent):
             )
             session.add(row)
             await session.commit()
-
-    @staticmethod
-    def _parse_json(raw: str) -> dict[str, Any]:
-        raw = raw.strip()
-        if raw.startswith("```"):
-            lines = raw.split("\n")
-            raw = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
-        return json.loads(raw)

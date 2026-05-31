@@ -7,7 +7,19 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from agent.core.config import settings
 from agent.core.queue import queue
-from api.routes import agents, analytics, channels, config, engagement, media, media_serve, projects
+from api.routes import (
+    agents,
+    analytics,
+    channel_onboarding,
+    channels,
+    config,
+    content_planning,
+    distribution,
+    engagement,
+    media,
+    media_serve,
+    projects,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
@@ -27,6 +39,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(channel_onboarding.router)
 app.include_router(channels.router)
 app.include_router(projects.router)
 if settings.storage_backend == "local":
@@ -34,6 +47,8 @@ if settings.storage_backend == "local":
 app.include_router(agents.router)
 app.include_router(media.router)
 app.include_router(analytics.router)
+app.include_router(content_planning.router)
+app.include_router(distribution.router)
 app.include_router(engagement.router)
 app.include_router(config.router)
 

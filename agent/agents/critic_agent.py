@@ -6,7 +6,8 @@ from pathlib import Path
 
 from agent.core.base_agent import BaseAgent
 from agent.core.database import AsyncSessionFactory, CriticReport, Scenario, Video
-from agent.core.learning_context import LEARNING_CONTEXT_BLOCK
+from agent.core.learning_context import LEARNING_CONTEXT_BLOCK, load_channel_context
+from agent.core.llm_config import compact_learning_context
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +101,10 @@ class CriticAgent(BaseAgent):
         iteration: int,
     ) -> CriticReport:
         scenario_summary = self._build_scenario_summary(scenario)
+        learning = await load_channel_context(ctx.channel_id)
+        learning_block = LEARNING_CONTEXT_BLOCK.format(
+            learning_context_prompt="(voir bloc contexte chaîne ci-dessus)",
+        )
         prompt = CRITIC_PROMPT_TEMPLATE.format(
             channel_name=ctx.channel.name,
             theme_category=ctx.theme_category,
@@ -107,14 +112,16 @@ class CriticAgent(BaseAgent):
             duration_s=video.duration_s or 0,
             iteration=iteration,
             scenario_summary=scenario_summary,
-            learning_block=LEARNING_CONTEXT_BLOCK.format(
-                learning_context_prompt=ctx.learning_context_prompt,
-            ),
+            learning_block=learning_block,
             min_duration=ctx.channel_config.min_image_duration_s,
             min_score=ctx.channel_config.min_critic_score,
         )
 
-        raw = await self._call_claude(prompt, system=CRITIC_SYSTEM, max_tokens=2048)
+        raw = await self._call_claude(
+            prompt,
+            system=CRITIC_SYSTEM,
+            cacheable_context=compact_learning_context(learning),
+        )
         data = self._parse_json(raw)
 
         score = data.get("global_score", 0)

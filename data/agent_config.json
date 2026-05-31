@@ -37,23 +37,83 @@
       "histoire": ["gallica", "europeana", "wikimedia"],
       "france": ["gallica", "europeana", "wikimedia"],
       "nature": ["unsplash", "pexels", "wikimedia"],
+      "animaux": ["unsplash", "pexels", "wikimedia"],
       "science": ["wikimedia", "nasa"],
       "art": ["europeana", "wikimedia"],
       "default": ["wikimedia", "unsplash", "pexels"]
     },
     "min_width_px": 1280
   },
+  "editorial_calendar": {
+    "publication_lead_days": 1
+  },
+  "content_planning": {
+    "freshness_days": 30,
+    "default_long_duration_seconds": 1800,
+    "default_short_duration_s": 60,
+    "evergreen_default": [
+      "Portrait d'une figure emblématique du thème",
+      "Mythe ou idée reçue à déconstruire",
+      "Comparaison entre deux époques ou deux courants"
+    ],
+    "evergreen_by_theme": {
+      "histoire": ["Événement méconnu", "Biographie courte", "Chronologie d'une bataille"],
+      "science": ["Expérience de pensée", "Découverte récente expliquée", "Erreur scientifique célèbre"],
+      "nature": ["Espèce surprenante", "Écosystème en danger", "Comportement animal"],
+      "animaux": ["Espèce peu connue", "Record animal", "Relation homme-animal"]
+    }
+  },
   "publishing": {
-    "auto_publish": false,
+    "auto_publish": true,
+    "timezone": "Europe/Paris",
+    "daily_quotas": { "long": 1, "short": 3 },
+    "platform_slots": {
+      "youtube": { "weekdays": [2, 4, 6], "hours": [18, 19] },
+      "tiktok": { "weekdays": [1, 3, 5], "hours": [12, 20] },
+      "instagram": { "weekdays": [0, 2, 4], "hours": [11, 17] }
+    },
     "default_tags": ["#documentaire", "#histoire", "#éducatif", "#youtube"],
     "youtube_category_id": "27"
+  },
+  "llm": {
+    "default_model": "claude-opus-4-5",
+    "economy_model": "claude-sonnet-4-5",
+    "agent_models": {
+      "content_planner_agent": "economy",
+      "critic_agent": "economy",
+      "comments_agent": "economy"
+    },
+    "max_tokens": {
+      "content_planner_agent": 2048,
+      "critic_agent": 2048,
+      "comments_agent": 1024
+    },
+    "engagement_run_weekdays": [0, 3],
+    "planner_llm_weekdays": [0, 3],
+    "learning_context_max_insights": 8,
+    "max_publications_per_engagement_run": 40
   },
   "engagement": {
     "auto_reply_comments": true,
     "max_replies_per_run": 10,
     "max_comments_fetched": 50,
     "analytics_enabled": true,
-    "comments_enabled": true
+    "comments_enabled": true,
+    "max_publications_per_engagement_run": 40,
+    "analytics_thresholds": {
+      "views_success_pct": 20.0,
+      "views_underperform_pct": -10.0
+    }
+  },
+  "onboarding": {
+    "market_research": {
+      "platforms": ["youtube", "tiktok", "instagram"],
+      "region": "FR",
+      "language": "fr",
+      "max_youtube_channels": 10,
+      "max_youtube_videos": 15,
+      "max_tokens": 4096
+    }
   },
   "storage": {
     "retention_days": 30,

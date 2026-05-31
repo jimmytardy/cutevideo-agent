@@ -6,6 +6,11 @@ export interface Channel {
   name: string
   theme_category: string
   niche_prompt: string | null
+  theme_prompt?: string | null
+  brand_kit?: Record<string, unknown> | null
+  onboarding_step?: string
+  tiktok_publish_defaults?: Record<string, unknown> | null
+  instagram_profile?: Record<string, unknown> | null
   config: Record<string, unknown> | null
   youtube_channel_id: string | null
   youtube_channel_url: string | null
@@ -17,6 +22,83 @@ export interface Channel {
   is_active: boolean
   created_at: string
   updated_at: string
+}
+
+export interface ThemeVariant {
+  content_angle: string
+  slug: string
+  name: string
+  theme_category: string
+  niche_prompt: string
+  suggested_tags: string[]
+}
+
+export interface MarketAnalysisReport {
+  user_prompt: string
+  market_summary: string
+  saturation_verdict: string
+  differentiation_verdict: string
+  platforms_analyzed: string[]
+  platform_insights: {
+    platform: string
+    trend_summary: string
+    winning_formats: string[]
+    audience_signals: string[]
+    hashtag_or_keyword_hints: string[]
+    data_source: string
+  }[]
+  top_competitors: {
+    platform: string
+    name: string
+    handle_or_url: string
+    subscriber_count: number | null
+    video_count: number | null
+    positioning: string
+    strengths: string[]
+    weaknesses: string[]
+    content_formats: string[]
+  }[]
+  niche_opportunities: {
+    niche_name: string
+    potential_score: number
+    competition_level: string
+    rationale: string
+    differentiation_angle: string
+  }[]
+  recommended_themes: ThemeVariant & {
+    differentiation_score: number
+    competition_level: string
+    why_you_can_win: string
+    risks: string[]
+  }[]
+  avoid: string[]
+  next_steps: string[]
+}
+
+export interface ChannelBrandKit {
+  slug: string
+  name: string
+  theme_category: string
+  niche_prompt: string
+  content_angle: string
+  youtube: {
+    title: string
+    description: string
+    keywords: string[]
+    handle_suggestion: string
+  }
+  tiktok: { display_name: string; bio: string; default_caption_style: string }
+  instagram: { page_name: string; bio: string }
+  default_tags: string[]
+  media_source_priority?: string[]
+  sample_video_titles?: string[]
+}
+
+export interface YouTubeChannelItem {
+  channel_id: string
+  title: string
+  description: string
+  custom_url: string
 }
 
 export interface ChannelIntegrations {
@@ -145,4 +227,123 @@ export async function runPipeline(projectId: string): Promise<void> {
 
 export async function deleteProject(projectId: string): Promise<void> {
   await fetch(`${BASE}/projects/${projectId}`, { method: 'DELETE' })
+}
+
+export async function analyzeMarket(
+  prompt: string,
+  platforms: string[] = ['youtube', 'tiktok', 'instagram'],
+): Promise<MarketAnalysisReport> {
+  const res = await fetch(`${BASE}/channels/onboarding/market-analysis`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt, platforms }),
+  })
+  if (!res.ok) {
+    throw new Error((await res.json().catch(() => ({}))).detail || 'Erreur analyse marché')
+  }
+  return res.json()
+}
+
+export async function suggestThemes(
+  prompt: string,
+  marketContext?: string | null,
+): Promise<ThemeVariant[]> {
+  const res = await fetch(`${BASE}/channels/onboarding/suggest-themes`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt, market_context: marketContext ?? undefined }),
+  })
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'Erreur suggest-themes')
+  const data = await res.json()
+  return data.variants
+}
+
+export async function generateBrandKit(
+  variant: ThemeVariant,
+  marketContext?: string | null,
+): Promise<ChannelBrandKit> {
+  const res = await fetch(`${BASE}/channels/onboarding/generate-brand`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ variant, market_context: marketContext ?? undefined }),
+  })
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'Erreur generate-brand')
+  return res.json()
+}
+
+export async function createOnboardingDraft(
+  themePrompt: string,
+  brandKit: ChannelBrandKit,
+): Promise<Channel> {
+  const res = await fetch(`${BASE}/channels/onboarding/draft`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ theme_prompt: themePrompt, brand_kit: brandKit }),
+  })
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'Erreur draft')
+  return res.json()
+}
+
+export async function getYoutubeOAuthUrl(channelId?: string): Promise<{ authorization_url: string; state: string }> {
+  const q = channelId ? `?channel_id=${channelId}` : ''
+  const res = await fetch(`${BASE}/channels/youtube/oauth-url${q}`)
+  return res.json()
+}
+
+export async function listYoutubeChannels(channelId?: string): Promise<YouTubeChannelItem[]> {
+  const q = channelId ? `?channel_id=${channelId}` : ''
+  const res = await fetch(`${BASE}/channels/youtube/list${q}`)
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'Erreur liste YouTube')
+  return res.json()
+}
+
+export async function patchOnboardingYoutube(
+  channelId: string,
+  data: { youtube_channel_id: string; youtube_channel_url?: string },
+): Promise<Channel> {
+  const res = await fetch(`${BASE}/channels/${channelId}/onboarding/youtube`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  return res.json()
+}
+
+export async function applyYoutubeBranding(channelId: string): Promise<void> {
+  const res = await fetch(`${BASE}/channels/${channelId}/apply-youtube-branding`, { method: 'POST' })
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'Erreur branding YouTube')
+}
+
+export async function patchOnboardingTiktok(
+  channelId: string,
+  tiktok_publish_defaults: Record<string, unknown>,
+): Promise<Channel> {
+  const res = await fetch(`${BASE}/channels/${channelId}/onboarding/tiktok`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tiktok_publish_defaults }),
+  })
+  return res.json()
+}
+
+export async function patchOnboardingInstagram(
+  channelId: string,
+  data: { instagram_page_id: string; instagram_profile?: Record<string, unknown> },
+): Promise<Channel> {
+  const res = await fetch(`${BASE}/channels/${channelId}/onboarding/instagram`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  return res.json()
+}
+
+export async function completeOnboarding(channelId: string): Promise<Channel> {
+  const res = await fetch(`${BASE}/channels/${channelId}/onboarding/complete`, { method: 'POST' })
+  return res.json()
+}
+
+export async function fetchChannel(channelId: string): Promise<Channel> {
+  const res = await fetch(`${BASE}/channels/${channelId}`)
+  return res.json()
 }

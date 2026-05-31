@@ -21,15 +21,33 @@ scheduler = AsyncIOScheduler()
 def setup_scheduler() -> None:
     """Configure les tâches planifiées."""
     scheduler.add_job(
+        run_content_planner,
+        CronTrigger(hour=6, minute=0, timezone="Europe/Paris"),
+        id="content_planner_daily",
+        replace_existing=True,
+    )
+    scheduler.add_job(
         run_pending_projects,
-        CronTrigger(hour="*", minute="0"),
-        id="run_pending_projects",
+        CronTrigger(hour=6, minute=30, timezone="Europe/Paris"),
+        id="run_pending_projects_morning",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        run_pending_projects,
+        CronTrigger(hour="7-23", minute="0"),
+        id="run_pending_projects_hourly",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        run_distribution_agent,
+        CronTrigger(minute="*/15"),
+        id="distribution_agent",
         replace_existing=True,
     )
     scheduler.add_job(
         run_engagement_agents,
-        CronTrigger(hour="*", minute="15"),
-        id="engagement_agents_hourly",
+        CronTrigger(day_of_week="mon,thu", hour=9, minute=15, timezone="Europe/Paris"),
+        id="engagement_agents_biweekly",
         replace_existing=True,
     )
     scheduler.add_job(
@@ -42,15 +60,39 @@ def setup_scheduler() -> None:
     logger.info("Scheduler configuré")
 
 
+async def run_content_planner() -> None:
+    """Planification éditoriale quotidienne (sujets longs + shorts)."""
+    from agent.agents.content_planner_agent import ContentPlannerAgent
+
+    await ContentPlannerAgent().run_scheduled()
+
+
+async def run_distribution_agent() -> None:
+    """Planification et publication des vidéos approuvées."""
+    from agent.agents.distribution_agent import DistributionAgent
+
+    await DistributionAgent().run_scheduled()
+
+
 async def run_pending_projects() -> None:
-    """Lance les projets en attente si la chaîne a un slot libre."""
+    """Lance les projets en attente pour publication le lendemain (production J → publication J+1)."""
+    from agent.scheduler.editorial_calendar import publication_target_iso
+
+    target_iso = publication_target_iso()
+
     async with AsyncSessionFactory() as session:
         result = await session.execute(
             select(Project)
             .where(Project.status == "pending")
             .order_by(Project.created_at.asc())
         )
-        pending = list(result.scalars().all())
+        all_pending = list(result.scalars().all())
+
+    pending = [
+        p
+        for p in all_pending
+        if _project_targets_publication_date(p, target_iso)
+    ]
 
     launched_channels: set = set()
 
@@ -61,16 +103,24 @@ async def run_pending_projects() -> None:
             continue
 
         logger.info(
-            "Lancement automatique du projet %s (chaîne %s)",
+            "Lancement pipeline projet %s (publication cible %s, chaîne %s)",
             project.id,
+            target_iso,
             project.channel_id,
         )
         asyncio.create_task(Orchestrator().run_pipeline(project.id))
         launched_channels.add(project.channel_id)
 
 
+def _project_targets_publication_date(project: Project, target_iso: str) -> bool:
+    pub = (project.config or {}).get("target_publish_date")
+    if pub:
+        return pub == target_iso
+    return True
+
+
 async def run_engagement_agents() -> None:
-    """Agents post-publication : analytics et commentaires (heures décalées par vidéo)."""
+    """Agents post-publication : analytics et commentaires (lun/jeu, règles + Sonnet ciblé)."""
     from agent.agents.analytics_agent import AnalyticsAgent
     from agent.agents.comments_agent import CommentsAgent
 

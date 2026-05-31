@@ -8,7 +8,9 @@ des vidéos éducatives longues (10-60 min) + shorts automatiques.
 ## Flux de données
 
 ```
-Input (thème + durée)
+Content Planner (cron 6h Paris) → DB: projects pending (sujets + planned_shorts)
+  ↓
+Input (thème mandaté + durée + content_plan)
   ↓
 Agent 1 — Scénariste     → DB: scenarios
   ↓
@@ -28,15 +30,19 @@ Agent 7 — Découpeur Shorts → timestamps sélectionnés
   ↓
 Agent 8 — Éditeur Shorts   → DB: videos (3 formats 9:16 par short)
   ↓
-Publisher                  → DB: publications
+(projet approved — publication asynchrone)
+  ↓
+Distribution Agent (cron 15 min) → DB: publications (scheduled → published)
 ```
 
 ## Communication inter-agents
 
 - L'orchestrateur (`orchestrator.py`) lit les résultats de chaque agent depuis la DB
 - La queue Redis gère l'ordre d'exécution et les retries
+- `distribution_agent` planifie et publie via `agent/skills/publisher/executor.py`
 - En cas d'itération (critique), l'orchestrateur relit le `critic_report` et relance
   uniquement les agents concernés par les changements demandés
+- Analytics / comments : fenêtre 21j (shorts), 180j (longues)
 
 ## Sources médias (par thème)
 

@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ChannelCreate(BaseModel):
@@ -34,6 +34,126 @@ class ChannelUpdate(BaseModel):
     is_active: bool | None = None
 
 
+class ThemeVariantResponse(BaseModel):
+    content_angle: str
+    slug: str
+    name: str
+    theme_category: str
+    niche_prompt: str
+    suggested_tags: list[str] = []
+
+
+class SuggestThemesRequest(BaseModel):
+    prompt: str
+    market_context: str | None = None
+
+
+class SuggestThemesResponse(BaseModel):
+    variants: list[ThemeVariantResponse]
+
+
+class MarketAnalysisRequest(BaseModel):
+    prompt: str
+    platforms: list[str] = Field(
+        default_factory=lambda: ["youtube", "tiktok", "instagram"]
+    )
+    region: str = "FR"
+    language: str = "fr"
+
+
+class PlatformInsightResponse(BaseModel):
+    platform: str
+    trend_summary: str
+    winning_formats: list[str] = []
+    audience_signals: list[str] = []
+    hashtag_or_keyword_hints: list[str] = []
+    data_source: str = "model_estimate"
+
+
+class CompetitorProfileResponse(BaseModel):
+    platform: str
+    name: str
+    handle_or_url: str = ""
+    subscriber_count: int | None = None
+    video_count: int | None = None
+    positioning: str = ""
+    strengths: list[str] = []
+    weaknesses: list[str] = []
+    content_formats: list[str] = []
+
+
+class NicheOpportunityResponse(BaseModel):
+    niche_name: str
+    potential_score: int
+    competition_level: str
+    rationale: str
+    differentiation_angle: str
+
+
+class RecommendedThemeResponse(BaseModel):
+    content_angle: str
+    slug: str
+    name: str
+    theme_category: str
+    niche_prompt: str
+    suggested_tags: list[str] = []
+    differentiation_score: int = 50
+    competition_level: str = "medium"
+    why_you_can_win: str = ""
+    risks: list[str] = []
+
+
+class MarketAnalysisResponse(BaseModel):
+    user_prompt: str
+    market_summary: str
+    saturation_verdict: str
+    differentiation_verdict: str
+    platforms_analyzed: list[str] = []
+    platform_insights: list[PlatformInsightResponse] = []
+    top_competitors: list[CompetitorProfileResponse] = []
+    niche_opportunities: list[NicheOpportunityResponse] = []
+    recommended_themes: list[RecommendedThemeResponse] = []
+    avoid: list[str] = []
+    next_steps: list[str] = []
+
+
+class GenerateBrandRequest(BaseModel):
+    variant: ThemeVariantResponse
+    market_context: str | None = None
+
+
+class OnboardingDraftRequest(BaseModel):
+    theme_prompt: str
+    brand_kit: dict[str, Any]
+
+
+class OnboardingYoutubeRequest(BaseModel):
+    youtube_channel_id: str
+    youtube_channel_url: str | None = None
+    youtube_refresh_token: str | None = None
+
+
+class OnboardingTikTokRequest(BaseModel):
+    tiktok_publish_defaults: dict[str, Any] | None = None
+
+
+class OnboardingInstagramRequest(BaseModel):
+    instagram_page_id: str
+    instagram_profile: dict[str, Any] | None = None
+
+
+class YouTubeOAuthUrlResponse(BaseModel):
+    authorization_url: str
+    state: str
+
+
+class YouTubeChannelItem(BaseModel):
+    channel_id: str
+    title: str
+    description: str
+    custom_url: str
+
+
 class ChannelResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -42,6 +162,11 @@ class ChannelResponse(BaseModel):
     name: str
     theme_category: str
     niche_prompt: str | None
+    theme_prompt: str | None = None
+    brand_kit: dict | None = None
+    onboarding_step: str = "complete"
+    tiktok_publish_defaults: dict | None = None
+    instagram_profile: dict | None = None
     config: dict | None
     youtube_channel_id: str | None
     youtube_channel_url: str | None
@@ -184,5 +309,7 @@ class PublicationResponse(BaseModel):
     title: str | None
     description: str | None
     hashtags: list | None
+    scheduled_at: datetime | None = None
+    scheduling_reason: dict | None = None
     published_at: datetime | None
     status: str | None
