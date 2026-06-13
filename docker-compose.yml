@@ -1,5 +1,12 @@
 name: cuteagent-video
 
+networks:
+  # Docker crée ce réseau en local s'il n'existe pas.
+  # Sur le VPS, il réutilisera le réseau existant.
+  local-network:
+    driver: bridge
+    name: local-network
+
 services:
   app:
     container_name: cuteagent-video
@@ -7,19 +14,18 @@ services:
     build: .
     env_file: .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://cutevideo:cutevideo@postgres:5432/cutevideo
+      DATABASE_URL: postgresql+asyncpg://cutevideo:cutevideo@shared-postgres:5432/cutevideo
       REDIS_URL: redis://redis:6379
-      INTERNAL_API_URL: http://127.0.0.1:8000
+      INTERNAL_API_URL: http://host.docker.internal:8000
     ports:
       - "${APP_HOST:-127.0.0.1}:${APP_PORT:-3000}:3000"
     volumes:
       - app_tmp:/app/tmp
       - app_output:/app/output
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+    networks:
+      - local-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
   app-dev:
@@ -29,10 +35,9 @@ services:
       dockerfile: Dockerfile.dev
     env_file: .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://cutevideo:cutevideo@postgres:5432/cutevideo
+      DATABASE_URL: postgresql+asyncpg://cutevideo:cutevideo@shared-postgres:5432/cutevideo
       REDIS_URL: redis://redis:6379
       INTERNAL_API_URL: http://127.0.0.1:8000
-      # Required for Next.js hot reload to detect file changes via Docker volumes
       WATCHPACK_POLLING: "true"
       CHOKIDAR_USEPOLLING: "true"
     ports:
@@ -44,39 +49,47 @@ services:
       - ./alembic.ini:/app/alembic.ini
       - ./data:/app/data
       - ./dashboard:/app/dashboard
-      # Preserve container node_modules so host folder doesn't shadow them
       - /app/dashboard/node_modules
       - /app/dashboard/.next
       - app_tmp:/app/tmp
       - app_output:/app/output
+    networks:
+      - local-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
-      postgres:
+      shared-postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-    profiles:
-      - dev
 
-  postgres:
+  # Ce bloc reste en sommeil, sauf si app-dev le réveille
+  shared-postgres:
+    container_name: shared-postgres
     image: postgres:16
     environment:
       POSTGRES_DB: cutevideo
       POSTGRES_USER: cutevideo
       POSTGRES_PASSWORD: cutevideo
     ports:
-      - "5433:5432"
+      - "5432" # 🟢 CHANGEMENT ICI : On retire le "5433:" devant
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      - local-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U cutevideo"]
+      test: ["CMD-SHELL", "pg_isready -U cutevideo -d cutevideo"]
       interval: 5s
       timeout: 5s
       retries: 5
 
   redis:
+    container_name: redis
     image: redis:7-alpine
     ports:
-      - "6380:6379"
+      - "6379" # 🟢 CHANGEMENT ICI : On retire le "6380:" devant
+    networks:
+      - local-network
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
