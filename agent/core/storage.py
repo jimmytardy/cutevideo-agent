@@ -55,30 +55,45 @@ async def delete_s3_object(storage_key: str) -> None:
         return
 
     def _delete() -> None:
-        import boto3
-
-        cfg = get_storage_settings()
-        region = cfg.region if cfg.region and cfg.region != "auto" else "auto"
-        client_kwargs: dict = {"region_name": region}
-        if cfg.endpoint_url:
-            client_kwargs["endpoint_url"] = cfg.endpoint_url
-        client = boto3.client("s3", **client_kwargs)
+        client, cfg = _make_s3_client()
         client.delete_object(Bucket=cfg.bucket, Key=storage_key)
 
     await asyncio.get_event_loop().run_in_executor(None, _delete)
     logger.info("S3 objet supprimé : %s", storage_key)
 
 
+def _make_s3_client() -> tuple:
+    import boto3
+
+    cfg = get_storage_settings()
+    region = cfg.region if cfg.region and cfg.region != "auto" else "auto"
+    client_kwargs: dict = {"region_name": region}
+    if cfg.endpoint_url:
+        client_kwargs["endpoint_url"] = cfg.endpoint_url
+    return boto3.client("s3", **client_kwargs), cfg
+
+
+def _ensure_bucket(client, bucket: str, region: str) -> None:
+    from botocore.exceptions import ClientError
+
+    try:
+        client.head_bucket(Bucket=bucket)
+    except ClientError as e:
+        code = e.response["Error"]["Code"]
+        if code in ("404", "NoSuchBucket"):
+            kwargs: dict = {}
+            if region and region != "auto":
+                kwargs["CreateBucketConfiguration"] = {"LocationConstraint": region}
+            client.create_bucket(Bucket=bucket, **kwargs)
+            logger.info("Bucket S3 créé : %s", bucket)
+        else:
+            raise
+
+
 async def upload_file(local_path: Path, storage_key: str) -> None:
     def _upload() -> None:
-        import boto3
-
-        cfg = get_storage_settings()
-        region = cfg.region if cfg.region and cfg.region != "auto" else "auto"
-        client_kwargs: dict = {"region_name": region}
-        if cfg.endpoint_url:
-            client_kwargs["endpoint_url"] = cfg.endpoint_url
-        client = boto3.client("s3", **client_kwargs)
+        client, cfg = _make_s3_client()
+        _ensure_bucket(client, cfg.bucket, cfg.region)
         client.upload_file(
             str(local_path),
             cfg.bucket,
@@ -95,13 +110,7 @@ async def get_presigned_url(storage_key: str, ttl_seconds: int | None = None) ->
     ttl = ttl_seconds or cfg.presign_ttl_seconds
 
     def _presign() -> str:
-        import boto3
-
-        region = cfg.region if cfg.region and cfg.region != "auto" else "auto"
-        client_kwargs: dict = {"region_name": region}
-        if cfg.endpoint_url:
-            client_kwargs["endpoint_url"] = cfg.endpoint_url
-        client = boto3.client("s3", **client_kwargs)
+        client, cfg = _make_s3_client()
         return client.generate_presigned_url(
             "get_object",
             Params={"Bucket": cfg.bucket, "Key": storage_key},
@@ -217,13 +226,7 @@ async def resolve_local_path_for_upload(video: Video) -> Path:
         dest = tmp_dir / "video.mp4"
 
         def _download() -> None:
-            import boto3
-
-            cfg = get_storage_settings()
-            client_kwargs: dict = {"region_name": cfg.region}
-            if cfg.endpoint_url:
-                client_kwargs["endpoint_url"] = cfg.endpoint_url
-            client = boto3.client("s3", **client_kwargs)
+            client, cfg = _make_s3_client()
             client.download_file(cfg.bucket, video.storage_key, str(dest))
 
         await asyncio.get_event_loop().run_in_executor(None, _download)

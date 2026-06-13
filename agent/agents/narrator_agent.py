@@ -10,8 +10,17 @@ from agent.core.database import AsyncSessionFactory, AudioFile, Scenario
 logger = logging.getLogger(__name__)
 
 
+def segment_needs_voice(segment: dict) -> bool:
+    if segment.get("needs_voice") is False:
+        return False
+    text = (segment.get("narration_text") or "").strip()
+    if not text:
+        return False
+    return bool(segment.get("needs_voice", True))
+
+
 class NarratorAgent(BaseAgent):
-    """Agent 3 — Narrateur voix : synthèse TTS pour chaque segment."""
+    """Agent 3 — Narrateur voix : synthèse TTS pour les segments qui en ont besoin."""
 
     name = "narrator_agent"
 
@@ -32,10 +41,8 @@ class NarratorAgent(BaseAgent):
         output_dir = Path(f"./tmp/{ctx.project_id}/audio")
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        tasks = [
-            self._generate_segment_audio(ctx, segment, output_dir)
-            for segment in segments
-        ]
+        voice_segments = [s for s in segments if segment_needs_voice(s)]
+        tasks = [self._generate_segment_audio(ctx, segment, output_dir) for segment in voice_segments]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         audio_files: list[AudioFile] = []
@@ -44,6 +51,10 @@ class NarratorAgent(BaseAgent):
                 audio_files.append(result)
             elif isinstance(result, Exception):
                 logger.warning("Erreur génération audio : %s", result)
+
+        skipped = len(segments) - len(voice_segments)
+        if skipped:
+            logger.info("Narration : %d segment(s) sans voix (choix éditorial)", skipped)
 
         audio_files.sort(key=lambda a: a.segment_order or 0)
         logger.info("Narration : %d fichiers audio générés", len(audio_files))
@@ -57,12 +68,19 @@ class NarratorAgent(BaseAgent):
         order = segment.get("order", 0)
         text = segment.get("narration_text", "")
         output_path = output_dir / f"segment_{order:02d}.wav"
+        delivery_style = segment.get("delivery_style") or {}
+        cfg = ctx.channel_config
 
-        voice = ctx.channel_config.tts_voice
         duration_s = await generate_tts(
             text=text,
             output_path=output_path,
-            voice=voice,
+            voice=cfg.tts_voice,
+            engine=cfg.tts_engine,
+            delivery_style=delivery_style,
+            editorial_tone=cfg.editorial_tone,
+            tts_style=cfg.tts_style,
+            tts_rate=cfg.tts_rate,
+            tts_pitch=cfg.tts_pitch,
         )
 
         async with AsyncSessionFactory() as session:
@@ -71,13 +89,12 @@ class NarratorAgent(BaseAgent):
                 segment_order=order,
                 local_path=str(output_path),
                 duration_s=duration_s,
-                tts_engine="edge-tts",
-                voice=voice,
+                tts_engine=cfg.tts_engine,
+                voice=cfg.tts_voice,
                 transcript=text,
             )
             session.add(audio_file)
             await session.commit()
             await session.refresh(audio_file)
 
-        logger.debug("Audio segment %d : %.1f s", order, duration_s)
         return audio_file

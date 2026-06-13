@@ -10,11 +10,12 @@ build/
 .venv/
 venv/
 env/
-
+cutevideo-imgen.json
 # Environnement
 .env
 *.env.local
 
+.venv-menu
 # Node
 node_modules/
 .next/

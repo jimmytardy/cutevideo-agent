@@ -91,7 +91,9 @@ class DistributionAgent(BaseAgent):
         return planned
 
     async def _plan_channel(self, channel: Channel, cfg: Any) -> int:
-        platform_slots = parse_platform_slots(cfg.platform_slots)
+        raw_slots = parse_platform_slots(cfg.platform_slots)
+        enabled = set(cfg.enabled_platforms or [])
+        platform_slots = {k: v for k, v in raw_slots.items() if not enabled or k in enabled}
         if not platform_slots:
             logger.warning("Aucun platform_slots pour %s — planification ignorée", channel.slug)
             return 0
@@ -149,6 +151,8 @@ class DistributionAgent(BaseAgent):
     ) -> bool:
         platform = platform_for_video_type(video.video_type)
         if not platform or not channel_supports_platform(channel, platform):
+            return False
+        if cfg.enabled_platforms and platform not in cfg.enabled_platforms:
             return False
 
         if video.file_purged_at:

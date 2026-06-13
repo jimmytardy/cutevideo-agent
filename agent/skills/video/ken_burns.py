@@ -10,6 +10,48 @@ VIDEO_FPS = 25
 ZOOM_START = 1.0
 ZOOM_END = 1.05
 
+SHORT_WIDTH = 1080
+SHORT_HEIGHT = 1920
+SHORT_FPS = 30
+
+
+async def apply_ken_burns_vertical(
+    image_path: Path,
+    output_path: Path,
+    duration_s: float = 5.0,
+) -> None:
+    """Ken Burns vertical 9:16."""
+    n_frames = int(duration_s * SHORT_FPS)
+    direction = random.choice(["in", "out"])
+    zoom_start = ZOOM_START if direction == "in" else ZOOM_END
+    zoom_end = ZOOM_END if direction == "in" else ZOOM_START
+
+    zoom_expr = (
+        f"zoompan='min(zoom+{(zoom_end - zoom_start) / n_frames:.6f},{zoom_end})'"
+        f":x='iw/2-(iw/zoom/2)'"
+        f":y='ih/2-(ih/zoom/2)'"
+        f":d={n_frames}"
+        f":s={SHORT_WIDTH}x{SHORT_HEIGHT}"
+        f":fps={SHORT_FPS}"
+    )
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-loop", "1",
+        "-i", str(image_path),
+        "-vf", zoom_expr,
+        "-t", str(duration_s),
+        "-c:v", "libx264", "-crf", "22", "-preset", "fast",
+        "-pix_fmt", "yuv420p",
+        str(output_path),
+    ]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+    )
+    _, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        raise RuntimeError(f"Ken Burns vertical error: {stderr.decode()[-1000:]}")
+
 
 async def apply_ken_burns(
     image_path: Path,
@@ -27,7 +69,7 @@ async def apply_ken_burns(
     pan_y = random.choice([-1, 0, 1]) * 0.02
 
     zoom_expr = (
-        f"zoom='min(zoom+{(zoom_end - zoom_start) / n_frames:.6f},{zoom_end})'"
+        f"zoompan='min(zoom+{(zoom_end - zoom_start) / n_frames:.6f},{zoom_end})'"
         f":x='iw/2-(iw/zoom/2)+{pan_x}*iw*on/{n_frames}'"
         f":y='ih/2-(ih/zoom/2)+{pan_y}*ih*on/{n_frames}'"
         f":d={n_frames}"

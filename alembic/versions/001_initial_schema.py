@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects.postgresql import UUID, JSONB, TIMESTAMPTZ
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 
 revision = "001"
 down_revision = None
@@ -25,8 +25,8 @@ def upgrade() -> None:
         sa.Column("target_duration_seconds", sa.Integer(), nullable=True),
         sa.Column("status", sa.String(), nullable=False, server_default="pending"),
         sa.Column("config", JSONB(), nullable=True),
-        sa.Column("created_at", TIMESTAMPTZ(), nullable=False, server_default=sa.text("now()")),
-        sa.Column("updated_at", TIMESTAMPTZ(), nullable=False, server_default=sa.text("now()")),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
     )
 
     op.create_table(
@@ -36,7 +36,7 @@ def upgrade() -> None:
         sa.Column("segments", JSONB(), nullable=True),
         sa.Column("total_duration_s", sa.Integer(), nullable=True),
         sa.Column("iteration", sa.Integer(), nullable=False, server_default="1"),
-        sa.Column("created_at", TIMESTAMPTZ(), nullable=False, server_default=sa.text("now()")),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
     )
 
     op.create_table(
@@ -51,7 +51,7 @@ def upgrade() -> None:
         sa.Column("attribution", sa.String(), nullable=True),
         sa.Column("asset_type", sa.String(), nullable=True),
         sa.Column("selected", sa.Boolean(), nullable=False, server_default="false"),
-        sa.Column("created_at", TIMESTAMPTZ(), nullable=False, server_default=sa.text("now()")),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
     )
 
     op.create_table(
@@ -64,7 +64,7 @@ def upgrade() -> None:
         sa.Column("tts_engine", sa.String(), nullable=True),
         sa.Column("voice", sa.String(), nullable=True),
         sa.Column("transcript", sa.String(), nullable=True),
-        sa.Column("created_at", TIMESTAMPTZ(), nullable=False, server_default=sa.text("now()")),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
     )
 
     op.create_table(
@@ -76,7 +76,7 @@ def upgrade() -> None:
         sa.Column("duration_s", sa.Float(), nullable=True),
         sa.Column("iteration", sa.Integer(), nullable=False, server_default="1"),
         sa.Column("status", sa.String(), nullable=False, server_default="draft"),
-        sa.Column("created_at", TIMESTAMPTZ(), nullable=False, server_default=sa.text("now()")),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
     )
 
     op.create_table(
@@ -88,7 +88,7 @@ def upgrade() -> None:
         sa.Column("global_score", sa.Integer(), nullable=True),
         sa.Column("feedback", JSONB(), nullable=True),
         sa.Column("requested_changes", JSONB(), nullable=True),
-        sa.Column("created_at", TIMESTAMPTZ(), nullable=False, server_default=sa.text("now()")),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
     )
 
     op.create_table(
@@ -101,8 +101,8 @@ def upgrade() -> None:
         sa.Column("input_json", JSONB(), nullable=True),
         sa.Column("output_json", JSONB(), nullable=True),
         sa.Column("error", sa.String(), nullable=True),
-        sa.Column("started_at", TIMESTAMPTZ(), nullable=True),
-        sa.Column("ended_at", TIMESTAMPTZ(), nullable=True),
+        sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("ended_at", sa.DateTime(timezone=True), nullable=True),
     )
 
     op.create_table(
@@ -115,7 +115,7 @@ def upgrade() -> None:
         sa.Column("title", sa.String(), nullable=True),
         sa.Column("description", sa.String(), nullable=True),
         sa.Column("hashtags", JSONB(), nullable=True),
-        sa.Column("published_at", TIMESTAMPTZ(), nullable=True),
+        sa.Column("published_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("status", sa.String(), nullable=True),
     )
 
@@ -130,7 +130,7 @@ def upgrade() -> None:
         sa.Column("watch_time_seconds", sa.BigInteger(), nullable=True),
         sa.Column("retention_percent", sa.Float(), nullable=True),
         sa.Column("revenue_eur", sa.Float(), nullable=True),
-        sa.Column("fetched_at", TIMESTAMPTZ(), nullable=False, server_default=sa.text("now()")),
+        sa.Column("fetched_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
     )
 
     op.create_index("ix_projects_status", "projects", ["status"])

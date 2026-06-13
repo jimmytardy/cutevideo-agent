@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects.postgresql import UUID, JSONB, TIMESTAMPTZ
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 
 revision = "004"
 down_revision = "003"
@@ -26,7 +26,7 @@ def upgrade() -> None:
         sa.Column("summary", sa.Text(), nullable=True),
         sa.Column("insights", JSONB(), nullable=True),
         sa.Column("version", sa.Integer(), nullable=False, server_default="1"),
-        sa.Column("updated_at", TIMESTAMPTZ(), nullable=False, server_default=sa.text("now()")),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
     )
 
     op.create_table(
@@ -37,12 +37,12 @@ def upgrade() -> None:
         sa.Column("platform_comment_id", sa.String(), nullable=False),
         sa.Column("author_name", sa.String(), nullable=True),
         sa.Column("text", sa.Text(), nullable=False),
-        sa.Column("published_at", TIMESTAMPTZ(), nullable=True),
+        sa.Column("published_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("status", sa.String(), nullable=False, server_default="new"),
         sa.Column("reply_text", sa.Text(), nullable=True),
-        sa.Column("replied_at", TIMESTAMPTZ(), nullable=True),
+        sa.Column("replied_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("analysis", JSONB(), nullable=True),
-        sa.Column("created_at", TIMESTAMPTZ(), nullable=False, server_default=sa.text("now()")),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
         sa.UniqueConstraint("platform", "platform_comment_id", name="uq_platform_comment"),
     )
     op.create_index("ix_platform_comments_publication_id", "platform_comments", ["publication_id"])

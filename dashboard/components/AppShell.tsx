@@ -14,7 +14,10 @@ import VideoLibraryIcon from '@mui/icons-material/VideoLibrary'
 import TvIcon from '@mui/icons-material/Tv'
 import SmartToyIcon from '@mui/icons-material/SmartToy'
 import BarChartIcon from '@mui/icons-material/BarChart'
+import SearchIcon from '@mui/icons-material/Search'
 import SettingsIcon from '@mui/icons-material/Settings'
+import ScheduleIcon from '@mui/icons-material/Schedule'
+import AddCircleIcon from '@mui/icons-material/AddCircle'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 
@@ -22,9 +25,12 @@ const DRAWER_WIDTH = 220
 
 const NAV_ITEMS = [
   { label: 'Accueil', href: '/', icon: <HomeIcon /> },
+  { label: 'Créer une vidéo', href: '/create', icon: <AddCircleIcon color="primary" /> },
   { label: 'Chaînes', href: '/channels', icon: <TvIcon /> },
+  { label: 'Marchés analysés', href: '/markets', icon: <SearchIcon /> },
   { label: 'Projets', href: '/projects', icon: <VideoLibraryIcon /> },
   { label: 'Agents', href: '/agents', icon: <SmartToyIcon /> },
+  { label: 'Scheduler', href: '/scheduler', icon: <ScheduleIcon /> },
   { label: 'Analytics', href: '/analytics', icon: <BarChartIcon /> },
   { label: 'Config', href: '/config', icon: <SettingsIcon /> },
 ]

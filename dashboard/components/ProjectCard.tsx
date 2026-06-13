@@ -7,6 +7,8 @@ import Typography from '@mui/material/Typography'
 import Chip from '@mui/material/Chip'
 import Button from '@mui/material/Button'
 import Box from '@mui/material/Box'
+import Tooltip from '@mui/material/Tooltip'
+import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline'
 import PlayArrowIcon from '@mui/icons-material/PlayArrow'
 import VisibilityIcon from '@mui/icons-material/Visibility'
 import Link from 'next/link'
@@ -55,6 +57,16 @@ export default function ProjectCard({ project, onRefresh }: ProjectCardProps) {
         <Typography variant="body2" color="text.secondary" noWrap>
           {project.theme}
         </Typography>
+        {project.status === 'failed' && project.error_message && (
+          <Tooltip title={project.error_message} placement="bottom-start">
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 1 }}>
+              <ErrorOutlineIcon color="error" fontSize="small" />
+              <Typography variant="caption" color="error" noWrap sx={{ maxWidth: 220 }}>
+                {project.error_message}
+              </Typography>
+            </Box>
+          </Tooltip>
+        )}
         {durationMin && (
           <Typography variant="caption" color="text.secondary">
             Durée cible : {durationMin} min

@@ -1,5 +1,62 @@
-version: '3.8'
+name: cuteagent-video
+
 services:
+  app:
+    container_name: cuteagent-video
+    image: cuteagent-video:local
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://cutevideo:cutevideo@postgres:5432/cutevideo
+      REDIS_URL: redis://redis:6379
+      INTERNAL_API_URL: http://127.0.0.1:8000
+    ports:
+      - "${APP_HOST:-127.0.0.1}:${APP_PORT:-3000}:3000"
+    volumes:
+      - app_tmp:/app/tmp
+      - app_output:/app/output
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  app-dev:
+    container_name: cuteagent-video-dev
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://cutevideo:cutevideo@postgres:5432/cutevideo
+      REDIS_URL: redis://redis:6379
+      INTERNAL_API_URL: http://127.0.0.1:8000
+      # Required for Next.js hot reload to detect file changes via Docker volumes
+      WATCHPACK_POLLING: "true"
+      CHOKIDAR_USEPOLLING: "true"
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    volumes:
+      - ./agent:/app/agent
+      - ./api:/app/api
+      - ./alembic:/app/alembic
+      - ./alembic.ini:/app/alembic.ini
+      - ./data:/app/data
+      - ./dashboard:/app/dashboard
+      # Preserve container node_modules so host folder doesn't shadow them
+      - /app/dashboard/node_modules
+      - /app/dashboard/.next
+      - app_tmp:/app/tmp
+      - app_output:/app/output
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    profiles:
+      - dev
+
   postgres:
     image: postgres:16
     environment:
@@ -28,3 +85,5 @@ services:
 
 volumes:
   postgres_data:
+  app_tmp:
+  app_output:

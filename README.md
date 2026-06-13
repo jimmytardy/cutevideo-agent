@@ -112,9 +112,29 @@ Catégorie **`animaux`** : priorité médias `unsplash` → `pexels` → `wikime
 
 ## Démarrage rapide
 
+### Option A — Docker (tout-en-un)
+
 ```bash
-# 1. Lancer PostgreSQL + Redis
-docker-compose up -d
+cp .env.example .env   # remplir ANTHROPIC_API_KEY etc.
+# Port du dashboard (optionnel, défaut 3000) :
+# echo "APP_PORT=8080" >> .env
+
+docker compose build app
+docker compose up -d
+
+# Dashboard : http://localhost:${APP_PORT:-3000}
+```
+
+Les migrations Alembic s'appliquent automatiquement au démarrage du conteneur.
+Au premier pipeline vidéo, Whisper télécharge le modèle configuré (`WHISPER_MODEL`) — le premier run peut être long.
+
+Pour OAuth YouTube/TikTok via le dashboard Docker, configure `API_BASE_URL` et `YOUTUBE_OAUTH_REDIRECT_URI` avec l'URL **externe** du dashboard (ex. `http://localhost:3000`), pas l'API interne.
+
+### Option B — Dev local
+
+```bash
+# 1. Lancer PostgreSQL + Redis uniquement
+docker compose up -d postgres redis
 
 # 2. Copier et remplir les variables d'environnement
 cp .env.example .env

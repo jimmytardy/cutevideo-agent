@@ -267,11 +267,12 @@ export default function NewChannelWizardPage() {
     const parts = path.split('.')
     if (parts.length === 2) {
       const [section, field] = parts
-      const sectionObj = { ...(next as Record<string, Record<string, string>>)[section] }
+      const root = next as unknown as Record<string, Record<string, string>>
+      const sectionObj = { ...(root[section] ?? {}) }
       sectionObj[field] = value
-      ;(next as Record<string, unknown>)[section] = sectionObj
+      root[section] = sectionObj
     } else {
-      ;(next as Record<string, string>)[path] = value
+      ;(next as unknown as Record<string, string>)[path] = value
     }
     setBrandKit(next)
   }

@@ -29,6 +29,7 @@ import {
   createChannel,
   fetchChannelIntegrations,
   fetchChannels,
+  fetchRunwayStatus,
   type Channel,
 } from '@/lib/api'
 
@@ -38,6 +39,13 @@ function ChannelCard({ channel, onRefresh }: { channel: Channel; onRefresh: () =
   const { data: integrations, mutate: mutateIntegrations } = useSWR(
     `/api/v1/channels/${channel.id}/integrations`,
     () => fetchChannelIntegrations(channel.id),
+  )
+
+  const runwayEnabled = Boolean((channel.config as Record<string, unknown> | null)?.runway && ((channel.config as Record<string, Record<string, unknown>>).runway?.enabled))
+  const { data: runwayStatus } = useSWR(
+    runwayEnabled ? `/api/v1/channels/${channel.id}/runway-status` : null,
+    () => fetchRunwayStatus(channel.id),
+    { refreshInterval: 60000 },
   )
 
   const handleConnectTikTok = async () => {
@@ -79,9 +87,31 @@ function ChannelCard({ channel, onRefresh }: { channel: Channel; onRefresh: () =
           {integrations?.instagram_configured && (
             <Chip label="Instagram OK" size="small" color="info" variant="outlined" />
           )}
+          {runwayEnabled && (
+            <Chip
+              label={runwayStatus?.credit_error ? 'Runway — crédits épuisés' : 'Runway actif'}
+              size="small"
+              color={runwayStatus?.credit_error ? 'error' : 'secondary'}
+              variant={runwayStatus?.credit_error ? 'filled' : 'outlined'}
+            />
+          )}
         </Box>
+        {runwayStatus?.credit_error && (
+          <Alert severity="error" sx={{ mt: 2 }} variant="outlined">
+            Crédits Runway insuffisants — les clips vidéo IA sont suspendus.
+            Rechargez sur <strong>app.runwayml.com</strong>.
+          </Alert>
+        )}
       </CardContent>
       <CardActions>
+        <Button
+          size="small"
+          component={Link}
+          href={`/channels/${channel.id}/settings`}
+          startIcon={<SettingsIcon />}
+        >
+          Paramètres
+        </Button>
         {channel.onboarding_step && channel.onboarding_step !== 'complete' && (
           <Button
             size="small"

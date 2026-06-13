@@ -47,6 +47,15 @@ def _build_credentials(refresh_token: str | None) -> Any:
     )
 
 
+class YouTubeAuthError(RuntimeError):
+    """Le refresh token YouTube est invalide ou révoqué."""
+
+
+def _is_invalid_grant(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return "invalid_grant" in msg or "token has been expired or revoked" in msg
+
+
 def _discover_sync(
     queries: list[str],
     refresh_token: str | None,
@@ -86,6 +95,11 @@ def _discover_sync(
                     channel_ids.append(cid)
                     channel_snippets[cid] = item.get("snippet", {})
         except Exception as e:
+            if _is_invalid_grant(e):
+                raise YouTubeAuthError(
+                    "Le refresh token YouTube est expiré ou révoqué (invalid_grant). "
+                    "Regénère YOUTUBE_REFRESH_TOKEN via le flow OAuth2 Google."
+                ) from e
             logger.warning("Recherche chaînes YouTube (%s) : %s", query, e)
 
         try:
@@ -110,6 +124,8 @@ def _discover_sync(
                     ch_id = item.get("snippet", {}).get("channelId")
                     if ch_id and ch_id not in channel_ids:
                         channel_ids.append(ch_id)
+        except YouTubeAuthError:
+            raise
         except Exception as e:
             logger.warning("Recherche vidéos YouTube (%s) : %s", query, e)
 
@@ -184,15 +200,18 @@ async def discover_youtube_landscape(
     relevance_language: str = "fr",
 ) -> dict[str, Any]:
     """Collecte chaînes et vidéos concurrentes via YouTube Data API."""
-    loop = __import__("asyncio").get_event_loop()
+    import asyncio
+    import functools
+
     queries = search_queries_from_prompt(prompt)
-    return await loop.run_in_executor(
-        None,
+    fn = functools.partial(
         _discover_sync,
         queries,
         refresh_token,
-        max_channels,
-        max_videos,
-        region_code,
-        relevance_language,
+        max_channels=max_channels,
+        max_videos=max_videos,
+        region_code=region_code,
+        relevance_language=relevance_language,
     )
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, fn)

@@ -95,6 +95,7 @@ async def _publish_youtube(
     tags: list[str],
 ) -> Publication | None:
     from agent.skills.publisher.youtube import upload_video
+    from agent.skills.publisher.youtube_channel_manager import post_publish_hook
 
     video_path = await resolve_local_path_for_upload(video)
     video_id = await upload_video(
@@ -105,11 +106,32 @@ async def _publish_youtube(
         category_id=channel_config.youtube_category_id,
         refresh_token=channel.youtube_refresh_token or settings.youtube_refresh_token,
     )
-    return await _mark_published(
+    pub = await _mark_published(
         publication.id,
         platform_video_id=video_id,
         platform_url=f"https://youtube.com/watch?v={video_id}",
     )
+
+    # Récupère le thème via le projet pour la playlist
+    try:
+        from sqlalchemy import select
+
+        from agent.core.database import AsyncSessionFactory, Project
+
+        async with AsyncSessionFactory() as db:
+            result = await db.execute(select(Project).where(Project.id == video.project_id))
+            project = result.scalar_one_or_none()
+            theme = project.theme if project else (channel.theme_category or "général")
+            # Recharge le channel dans cette session pour pouvoir modifier channel.config
+            from agent.core.database import Channel as ChannelModel
+            ch_result = await db.execute(select(ChannelModel).where(ChannelModel.id == channel.id))
+            ch = ch_result.scalar_one_or_none()
+            if ch:
+                await post_publish_hook(ch, video_id, theme, db)
+    except Exception as e:
+        logger.warning("post_publish_hook YouTube échoué (non bloquant) : %s", e)
+
+    return pub
 
 
 async def _publish_tiktok(

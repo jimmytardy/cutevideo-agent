@@ -114,7 +114,9 @@ Retourne UNIQUEMENT ce JSON :
 Règles strictes :
 - Exactement {long_count} entrées dans long_videos
 - Exactement {short_count} entrées dans short_videos
-- Chaque short_derived doit référencer un parent_long_index valide (< {long_count})
+- Chaque short_derived doit référencer un parent_long_index valide (< {long_count}) si long_count > 0
+- En mode shorts_only (long_count=0) : shorts autonomes, parent_long_index=null, format short_standalone
+- Voix/narration : optionnelle sur les shorts — privilégier visuel + texte à l'écran quand la voix n'apporte rien
 - Aucune répétition sémantique avec l'historique
 - subject = formulation claire pour alimenter le scénariste (pas le titre YouTube seul)"""
 
@@ -330,49 +332,55 @@ class ContentPlannerAgent(BaseAgent):
         production_date: date | None = None,
     ) -> int:
         prod_iso = (production_date or production_day()).isoformat()
+        cfg = resolve_channel_config(channel)
         created = 0
         async with AsyncSessionFactory() as session:
-            for idx, long_topic in enumerate(plan.long_videos):
-                shorts_for_long = [
-                    s.model_dump()
-                    for s in plan.short_videos
-                    if s.parent_long_index == idx
-                ]
-                project = Project(
-                    channel_id=channel.id,
-                    theme=long_topic.subject,
-                    title=long_topic.provisional_title,
-                    target_duration_seconds=long_topic.estimated_duration_s,
-                    status="pending",
-                    config={
-                        "source": "content_planner_agent",
-                        "production_date": prod_iso,
-                        "target_publish_date": target_publish_date.isoformat(),
-                        "planned_date": plan.plan_date,
-                        "content_plan": long_topic.model_dump(),
-                        "planned_shorts": shorts_for_long,
-                        "daily_plan_summary": {
-                            "theme_analysis": plan.theme_analysis.model_dump(),
-                            "selection_rationale": plan.selection_rationale,
-                            "short_count": len(shorts_for_long),
+            if cfg.production_mode != "shorts_only":
+                for idx, long_topic in enumerate(plan.long_videos):
+                    shorts_for_long = [
+                        s.model_dump()
+                        for s in plan.short_videos
+                        if s.parent_long_index == idx
+                    ]
+                    project = Project(
+                        channel_id=channel.id,
+                        theme=long_topic.subject,
+                        title=long_topic.provisional_title,
+                        target_duration_seconds=long_topic.estimated_duration_s,
+                        status="pending",
+                        config={
+                            "source": "content_planner_agent",
+                            "production_date": prod_iso,
+                            "target_publish_date": target_publish_date.isoformat(),
+                            "planned_date": plan.plan_date,
+                            "content_plan": long_topic.model_dump(),
+                            "planned_shorts": shorts_for_long,
+                            "format": "long",
                         },
-                    },
-                )
-                session.add(project)
-                created += 1
+                    )
+                    session.add(project)
+                    created += 1
+
+            short_topics = list(plan.short_videos)
+            if cfg.production_mode == "shorts_only" and not short_topics:
+                logger.warning("Plan shorts_only sans short_videos pour %s", channel.slug)
 
             orphan_shorts = [
                 s
-                for s in plan.short_videos
-                if s.parent_long_index is None
+                for s in short_topics
+                if cfg.production_mode == "shorts_only"
+                or s.parent_long_index is None
                 or s.parent_long_index >= len(plan.long_videos)
             ]
             for short_topic in orphan_shorts:
+                duration = short_topic.estimated_duration_s
+                if cfg.production_mode == "shorts_only":
+                    duration = cfg.short_duration_s
                 project = Project(
                     channel_id=channel.id,
                     theme=short_topic.subject,
                     title=short_topic.provisional_title,
-                    target_duration_seconds=short_topic.estimated_duration_s,
+                    target_duration_seconds=duration,
                     status="pending",
                     config={
                         "source": "content_planner_agent",
@@ -382,7 +390,7 @@ class ContentPlannerAgent(BaseAgent):
                         "content_plan": short_topic.model_dump(),
                         "planned_shorts": [],
                         "format_hint": "short_standalone",
-                        "note": "Pipeline actuel produit surtout des shorts depuis un long ; traiter comme angle prioritaire clipper.",
+                        "format": "short_standalone",
                     },
                 )
                 session.add(project)

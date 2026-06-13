@@ -14,7 +14,7 @@ import PendingIcon from '@mui/icons-material/Pending'
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward'
 import { fetcher } from '@/lib/api'
 
-const AGENTS = [
+const AGENTS_LONG = [
   { key: 'scenario_agent', label: 'Scénariste' },
   { key: 'media_agent', label: 'Chercheur Média' },
   { key: 'narrator_agent', label: 'Narrateur Voix' },
@@ -22,6 +22,16 @@ const AGENTS = [
   { key: 'subtitle_agent', label: 'Sous-titreur' },
   { key: 'critic_agent', label: 'Critique IA' },
   { key: 'clipper_agent', label: 'Découpeur Shorts' },
+  { key: 'short_editor_agent', label: 'Éditeur Shorts' },
+]
+
+const AGENTS_SHORT = [
+  { key: 'scenario_agent', label: 'Scénariste' },
+  { key: 'media_agent', label: 'Chercheur Média' },
+  { key: 'narrator_agent', label: 'Narrateur Voix' },
+  { key: 'editor_agent', label: 'Monteur Vidéo' },
+  { key: 'subtitle_agent', label: 'Sous-titreur' },
+  { key: 'critic_agent', label: 'Critique IA' },
   { key: 'short_editor_agent', label: 'Éditeur Shorts' },
 ]
 
@@ -34,18 +44,21 @@ function StatusIcon({ status }: { status: string }) {
 
 interface Props {
   projectId: string
+  isShort?: boolean
 }
 
-export default function PipelineVisualizer({ projectId }: Props) {
+export default function PipelineVisualizer({ projectId, isShort = false }: Props) {
   const { data: statuses } = useSWR<Record<string, string>>(
     `/api/v1/agents/status/${projectId}`,
     fetcher,
     { refreshInterval: 2000 },
   )
 
+  const agents = isShort ? AGENTS_SHORT : AGENTS_LONG
+
   return (
     <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
-      {AGENTS.map((agent, idx) => {
+      {agents.map((agent, idx) => {
         const status = statuses?.[agent.key] ?? 'pending'
         return (
           <Box key={agent.key} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -69,7 +82,7 @@ export default function PipelineVisualizer({ projectId }: Props) {
                 </Box>
               </CardContent>
             </Card>
-            {idx < AGENTS.length - 1 && (
+            {idx < agents.length - 1 && (
               <ArrowForwardIcon sx={{ color: 'text.disabled', fontSize: 18 }} />
             )}
           </Box>

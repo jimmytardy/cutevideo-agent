@@ -24,6 +24,8 @@ class ChannelUpdate(BaseModel):
     name: str | None = None
     theme_category: str | None = None
     niche_prompt: str | None = None
+    theme_prompt: str | None = None
+    brand_kit: dict[str, Any] | None = None
     config: dict[str, Any] | None = None
     youtube_channel_id: str | None = None
     youtube_channel_url: str | None = None
@@ -104,6 +106,7 @@ class RecommendedThemeResponse(BaseModel):
 
 
 class MarketAnalysisResponse(BaseModel):
+    id: UUID | None = None
     user_prompt: str
     market_summary: str
     saturation_verdict: str
@@ -115,6 +118,29 @@ class MarketAnalysisResponse(BaseModel):
     recommended_themes: list[RecommendedThemeResponse] = []
     avoid: list[str] = []
     next_steps: list[str] = []
+
+
+class MarketAnalysisListItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    prompt: str
+    saturation_verdict: str | None
+    market_summary: str | None
+    platforms_analyzed: list[str] | None = None
+    created_at: datetime
+
+
+class MarketAnalysisDetailResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    prompt: str
+    saturation_verdict: str | None
+    market_summary: str | None
+    platforms_analyzed: list[str] | None = None
+    report: dict | None = None
+    created_at: datetime
 
 
 class GenerateBrandRequest(BaseModel):
@@ -199,6 +225,10 @@ class ProjectCreate(BaseModel):
     config: dict[str, Any] | None = None
 
 
+class PublishRequest(BaseModel):
+    platform: str
+
+
 class ProjectResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -209,6 +239,7 @@ class ProjectResponse(BaseModel):
     title: str | None
     target_duration_seconds: int | None
     status: str
+    error_message: str | None = None
     config: dict | None
     created_at: datetime
     updated_at: datetime

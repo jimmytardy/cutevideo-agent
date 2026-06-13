@@ -21,7 +21,7 @@ from agent.core.market_research_models import (
     PlatformInsight,
     RecommendedTheme,
 )
-from agent.skills.market_research.youtube_discovery import discover_youtube_landscape
+from agent.skills.market_research.youtube_discovery import YouTubeAuthError, discover_youtube_landscape
 
 logger = logging.getLogger(__name__)
 
@@ -218,6 +218,8 @@ class ChannelPlannerAgent(BaseAgent):
                     region_code=region,
                     relevance_language=language,
                 )
+            except YouTubeAuthError:
+                raise
             except Exception as e:
                 logger.warning("Collecte YouTube marché échouée : %s", e)
                 youtube_data = {"error": str(e), "channels": [], "top_videos": []}
@@ -233,7 +235,7 @@ class ChannelPlannerAgent(BaseAgent):
             prompt,
             system=MARKET_SYSTEM,
             model=None,
-            max_tokens=int(cfg.get("max_tokens", 4096)),
+            max_tokens=int(cfg.get("max_tokens", 8192)),
             cacheable_context=f"Analyse marché créateurs FR — région {region}",
         )
         data = _parse_json(raw)
@@ -411,8 +413,23 @@ def _slugify(text: str) -> str:
 
 def _parse_json(raw: str) -> dict[str, Any]:
     text = raw.strip()
-    if "```" in text:
-        text = text.split("```")[1]
-        if text.startswith("json"):
-            text = text[4:]
-    return json.loads(text.strip())
+    # Extract content from the first ```[json]...``` block
+    m = re.search(r"```(?:json)?\s*\n?([\s\S]*?)\n?\s*```", text)
+    if m:
+        candidate = m.group(1).strip()
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            pass
+    # Fallback: find the outermost balanced { ... }
+    start = text.find("{")
+    if start != -1:
+        depth = 0
+        for i, ch in enumerate(text[start:], start):
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    return json.loads(text[start : i + 1])
+    return json.loads(text)

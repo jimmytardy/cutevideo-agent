@@ -5,7 +5,9 @@ from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
 
 from sqlalchemy import ForeignKey, String, Integer, Float, Boolean, BigInteger, Text, UniqueConstraint, func
-from sqlalchemy.dialects.postgresql import UUID, JSONB, TIMESTAMPTZ
+from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP, UUID
+
+TIMESTAMPTZ = TIMESTAMP(timezone=True)
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -81,6 +83,7 @@ class Project(Base):
     title: Mapped[str | None] = mapped_column(String, nullable=True)
     target_duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String, default="pending")
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMPTZ, server_default=func.now()
@@ -255,6 +258,36 @@ class ChannelLearningContext(Base):
     version: Mapped[int] = mapped_column(Integer, default=1)
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class SchedulerRun(Base):
+    __tablename__ = "scheduler_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    job_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True, index=True)
+    ended_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    result_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class MarketAnalysis(Base):
+    __tablename__ = "market_analyses"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    saturation_verdict: Mapped[str | None] = mapped_column(String, nullable=True)
+    market_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    platforms_analyzed: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    report: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now()
     )
 
 

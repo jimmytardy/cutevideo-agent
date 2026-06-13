@@ -31,7 +31,7 @@ def _channel_to_response(channel: Channel) -> ChannelResponse:
     return ChannelResponse.model_validate(channel)
 
 
-@router.get("/", response_model=list[ChannelResponse])
+@router.get("", response_model=list[ChannelResponse])
 async def list_channels(
     active_only: bool = Query(default=False),
     db: AsyncSession = Depends(get_db),
@@ -43,7 +43,7 @@ async def list_channels(
     return list(result.scalars().all())
 
 
-@router.post("/", response_model=ChannelResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=ChannelResponse, status_code=status.HTTP_201_CREATED)
 async def create_channel(
     body: ChannelCreate, db: AsyncSession = Depends(get_db)
 ) -> Channel:
@@ -189,8 +189,8 @@ async def connect_tiktok(channel_id: uuid.UUID, db: AsyncSession = Depends(get_d
 
 @router.get("/{channel_id}/connect/tiktok/callback")
 async def tiktok_oauth_callback(
+    channel_id: uuid.UUID,
     connection_id: str = Query(...),
-    channel_id: uuid.UUID | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
     resolved_channel_id = channel_id
@@ -220,6 +220,31 @@ async def tiktok_oauth_callback(
         "status": "connected",
         "channel_slug": channel.slug,
         "composio_tiktok_account_id": account_id,
+    }
+
+
+@router.get("/{channel_id}/runway-status")
+async def get_runway_status(
+    channel_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+) -> dict:
+    channel = await _get_channel_or_404(db, channel_id)
+
+    from agent.core.channel_config import resolve_channel_config
+    from agent.core.runway_budget import get_monthly_runway_cost_usd, get_runway_credit_error
+
+    cfg = resolve_channel_config(channel)
+    runway_cfg = cfg.runway
+    spent = await get_monthly_runway_cost_usd(str(channel_id))
+    credit_error = await get_runway_credit_error(str(channel_id))
+
+    return {
+        "enabled": runway_cfg.enabled,
+        "monthly_budget_usd": runway_cfg.monthly_budget_usd,
+        "spent_usd": round(spent, 2),
+        "remaining_usd": round(max(0.0, runway_cfg.monthly_budget_usd - spent), 2),
+        "credit_error": credit_error,
+        "model": runway_cfg.model,
+        "cost_per_clip_usd": round(runway_cfg.default_duration_s * runway_cfg.cost_per_second_usd, 2),
     }
 
 

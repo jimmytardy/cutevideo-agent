@@ -9,9 +9,10 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.agents.channel_planner_agent import ChannelPlannerAgent
+from agent.skills.market_research.youtube_discovery import YouTubeAuthError
 from agent.core.channel_brand import ChannelBrandKit, ThemeVariant, YouTubeBrand
 from agent.core.config import settings
-from agent.core.database import Channel, get_db
+from agent.core.database import Channel, MarketAnalysis, get_db
 from agent.skills.publisher import youtube_branding
 from api.models import (
     ChannelResponse,
@@ -44,16 +45,39 @@ def _config_from_brand_kit(brand_kit: dict[str, Any]) -> dict[str, Any]:
 
 
 @router.post("/onboarding/market-analysis", response_model=MarketAnalysisResponse)
-async def market_analysis(body: MarketAnalysisRequest) -> MarketAnalysisResponse:
+async def market_analysis(
+    body: MarketAnalysisRequest, db: AsyncSession = Depends(get_db)
+) -> MarketAnalysisResponse:
     """Analyse marché, concurrence et niches (YouTube API + synthèse multi-plateformes)."""
     planner = ChannelPlannerAgent()
-    report = await planner.analyze_market(
-        body.prompt,
-        platforms=body.platforms,
-        region=body.region,
-        language=body.language,
+    try:
+        report = await planner.analyze_market(
+            body.prompt,
+            platforms=body.platforms,
+            region=body.region,
+            language=body.language,
+        )
+    except YouTubeAuthError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("Erreur inattendue lors de l'analyse marché")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)) from e
+
+    report_dict = report.model_dump()
+    saved = MarketAnalysis(
+        prompt=body.prompt,
+        saturation_verdict=report.saturation_verdict,
+        market_summary=report.market_summary,
+        platforms_analyzed=report.platforms_analyzed,
+        report=report_dict,
     )
-    return MarketAnalysisResponse.model_validate(report.model_dump())
+    db.add(saved)
+    await db.commit()
+    await db.refresh(saved)
+
+    response = MarketAnalysisResponse.model_validate(report_dict)
+    response.id = saved.id
+    return response
 
 
 @router.post("/onboarding/suggest-themes", response_model=SuggestThemesResponse)
@@ -206,6 +230,12 @@ async def apply_youtube_branding(
         logger.error("Apply branding YouTube : %s", e)
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from e
 
+    # Génère et uploade la bannière en arrière-plan (non bloquant)
+    import asyncio as _asyncio
+
+    from agent.skills.publisher.youtube_channel_manager import generate_and_upload_banner
+    _asyncio.create_task(generate_and_upload_banner(channel))
+
     return {"status": "applied", "youtube_channel_id": channel.youtube_channel_id}
 
 
@@ -259,6 +289,18 @@ async def complete_onboarding(
                 else:
                     existing[key] = val
         channel.config = existing
+    # Demande à l'IA de choisir l'ordre optimal des sources médias pour cette chaîne
+    from agent.skills.media_sources.source_advisor import suggest_media_source_priority
+    priority = await suggest_media_source_priority(
+        channel_name=channel.name,
+        theme_category=channel.theme_category or "",
+        niche_prompt=channel.niche_prompt or "",
+    )
+    if priority:
+        cfg = channel.config or {}
+        cfg["media_source_priority"] = priority
+        channel.config = cfg
+
     channel.onboarding_step = "complete"
     channel.is_active = True
     await db.commit()

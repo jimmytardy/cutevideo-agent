@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     unsplash_access_key: str = ""
     pexels_api_key: str = ""
     pixabay_api_key: str = ""
+    freesound_api_key: str = ""
     europeana_api_key: str = ""
 
     # Plateformes de publication
@@ -47,6 +48,7 @@ class Settings(BaseSettings):
     instagram_page_id: str = ""
 
     composio_api_key: str = ""
+    runway_api_key: str = ""
     media_public_base_url: str = "http://localhost:8000"
     api_base_url: str = "http://localhost:8000"
     youtube_oauth_redirect_uri: str = "http://localhost:8000/api/v1/channels/youtube/oauth/callback"
@@ -63,6 +65,10 @@ class Settings(BaseSettings):
     s3_storage_buffer_bytes: int = 500 * 1024 * 1024
     aws_access_key_id: str = ""
     aws_secret_access_key: str = ""
+
+    # API
+    cors_origins: str = "http://localhost:3000"
+    scheduler_enabled: bool = True
 
     # TTS
     edge_tts_voice: str = "fr-FR-HenriNeural"

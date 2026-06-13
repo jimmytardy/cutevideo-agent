@@ -33,6 +33,7 @@ async def search(keywords: list[str], period: str = "") -> list[dict]:
                 timeout=aiohttp.ClientTimeout(total=15)
             ) as resp:
                 if resp.status != 200:
+                    logger.warning("Pexels HTTP %d pour la requête %r", resp.status, query)
                     return []
                 data = await resp.json()
 

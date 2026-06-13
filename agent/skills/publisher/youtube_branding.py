@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 from typing import Any
 
 from agent.core.channel_brand import YouTubeBrand
@@ -134,3 +135,115 @@ async def update_channel_branding(
 ) -> None:
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, _update_sync, youtube_channel_id, brand, refresh_token)
+
+
+# ── Banner ────────────────────────────────────────────────────────────────────
+
+def _upload_banner_sync(image_path: Path, youtube_channel_id: str, refresh_token: str | None) -> None:
+    from googleapiclient.discovery import build
+    from googleapiclient.http import MediaFileUpload
+
+    youtube = build("youtube", "v3", credentials=_build_credentials(refresh_token))
+
+    media = MediaFileUpload(str(image_path), mimetype="image/png", resumable=False)
+    banner_response = youtube.channelBanners().insert(
+        part="snippet", body={}, media_body=media
+    ).execute()
+
+    banner_url = banner_response.get("url", "")
+    if not banner_url:
+        raise RuntimeError("Pas d'URL retournée par channelBanners.insert")
+
+    youtube.channels().update(
+        part="brandingSettings",
+        body={
+            "id": youtube_channel_id,
+            "brandingSettings": {"image": {"bannerExternalUrl": banner_url}},
+        },
+    ).execute()
+
+
+async def upload_channel_banner(
+    image_path: Path,
+    youtube_channel_id: str,
+    refresh_token: str | None = None,
+) -> None:
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, _upload_banner_sync, image_path, youtube_channel_id, refresh_token)
+
+
+# ── Trailer ───────────────────────────────────────────────────────────────────
+
+def _set_trailer_sync(youtube_channel_id: str, yt_video_id: str, refresh_token: str | None) -> None:
+    from googleapiclient.discovery import build
+
+    youtube = build("youtube", "v3", credentials=_build_credentials(refresh_token))
+    youtube.channels().update(
+        part="brandingSettings",
+        body={
+            "id": youtube_channel_id,
+            "brandingSettings": {"channel": {"unsubscribedTrailer": yt_video_id}},
+        },
+    ).execute()
+
+
+async def set_channel_trailer(
+    youtube_channel_id: str,
+    yt_video_id: str,
+    refresh_token: str | None = None,
+) -> None:
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, _set_trailer_sync, youtube_channel_id, yt_video_id, refresh_token)
+
+
+# ── Playlists ─────────────────────────────────────────────────────────────────
+
+def _create_playlist_sync(title: str, description: str, refresh_token: str | None) -> str:
+    from googleapiclient.discovery import build
+
+    youtube = build("youtube", "v3", credentials=_build_credentials(refresh_token))
+    response = youtube.playlists().insert(
+        part="snippet,status",
+        body={
+            "snippet": {
+                "title": title[:100],
+                "description": description[:5000],
+                "defaultLanguage": "fr",
+            },
+            "status": {"privacyStatus": "public"},
+        },
+    ).execute()
+    return response["id"]
+
+
+async def create_playlist(
+    title: str,
+    description: str,
+    refresh_token: str | None = None,
+) -> str:
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _create_playlist_sync, title, description, refresh_token)
+
+
+def _add_to_playlist_sync(playlist_id: str, yt_video_id: str, refresh_token: str | None) -> None:
+    from googleapiclient.discovery import build
+
+    youtube = build("youtube", "v3", credentials=_build_credentials(refresh_token))
+    youtube.playlistItems().insert(
+        part="snippet",
+        body={
+            "snippet": {
+                "playlistId": playlist_id,
+                "resourceId": {"kind": "youtube#video", "videoId": yt_video_id},
+            }
+        },
+    ).execute()
+
+
+async def add_video_to_playlist(
+    playlist_id: str,
+    yt_video_id: str,
+    refresh_token: str | None = None,
+) -> None:
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, _add_to_playlist_sync, playlist_id, yt_video_id, refresh_token)

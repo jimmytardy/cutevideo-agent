@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects.postgresql import TIMESTAMPTZ
 
 revision = "003"
 down_revision = "002"
@@ -19,7 +18,7 @@ depends_on = None
 def upgrade() -> None:
     op.add_column("videos", sa.Column("storage_key", sa.String(), nullable=True))
     op.add_column("videos", sa.Column("file_size_bytes", sa.BigInteger(), nullable=True))
-    op.add_column("videos", sa.Column("file_purged_at", TIMESTAMPTZ(), nullable=True))
+    op.add_column("videos", sa.Column("file_purged_at", sa.DateTime(timezone=True), nullable=True))
 
 
 def downgrade() -> None:

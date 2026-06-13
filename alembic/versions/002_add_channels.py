@@ -10,7 +10,7 @@ import uuid
 
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects.postgresql import UUID, JSONB, TIMESTAMPTZ
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 
 revision = "002"
 down_revision = "001"
@@ -38,8 +38,8 @@ def upgrade() -> None:
         sa.Column("composio_tiktok_account_id", sa.String(), nullable=True),
         sa.Column("max_concurrent_pipelines", sa.Integer(), nullable=False, server_default="1"),
         sa.Column("is_active", sa.Boolean(), nullable=False, server_default="true"),
-        sa.Column("created_at", TIMESTAMPTZ(), nullable=False, server_default=sa.text("now()")),
-        sa.Column("updated_at", TIMESTAMPTZ(), nullable=False, server_default=sa.text("now()")),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
     )
 
     op.execute(
@@ -48,7 +48,7 @@ def upgrade() -> None:
             INSERT INTO channels (
                 id, slug, name, theme_category, niche_prompt, composio_user_id, is_active
             ) VALUES (
-                :id, 'default', 'Chaîne par défaut', 'default',
+                CAST(:id AS uuid), 'default', 'Chaîne par défaut', 'default',
                 'Vidéos éducatives généralistes', 'default', true
             )
             """
@@ -60,7 +60,7 @@ def upgrade() -> None:
         sa.Column("channel_id", UUID(as_uuid=True), nullable=True),
     )
     op.execute(
-        sa.text("UPDATE projects SET channel_id = :cid").bindparams(cid=DEFAULT_CHANNEL_ID)
+        sa.text("UPDATE projects SET channel_id = CAST(:cid AS uuid)").bindparams(cid=DEFAULT_CHANNEL_ID)
     )
     op.alter_column("projects", "channel_id", nullable=False)
     op.create_foreign_key(

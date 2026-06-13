@@ -33,7 +33,15 @@ export interface ThemeVariant {
   suggested_tags: string[]
 }
 
+export interface RecommendedTheme extends ThemeVariant {
+  differentiation_score: number
+  competition_level: string
+  why_you_can_win: string
+  risks: string[]
+}
+
 export interface MarketAnalysisReport {
+  id?: string | null
   user_prompt: string
   market_summary: string
   saturation_verdict: string
@@ -65,14 +73,22 @@ export interface MarketAnalysisReport {
     rationale: string
     differentiation_angle: string
   }[]
-  recommended_themes: ThemeVariant & {
-    differentiation_score: number
-    competition_level: string
-    why_you_can_win: string
-    risks: string[]
-  }[]
+  recommended_themes: RecommendedTheme[]
   avoid: string[]
   next_steps: string[]
+}
+
+export interface MarketAnalysisListItem {
+  id: string
+  prompt: string
+  saturation_verdict: string | null
+  market_summary: string | null
+  platforms_analyzed: string[] | null
+  created_at: string
+}
+
+export interface MarketAnalysisDetail extends MarketAnalysisListItem {
+  report: MarketAnalysisReport | null
 }
 
 export interface ChannelBrandKit {
@@ -116,6 +132,7 @@ export interface Project {
   title: string | null
   target_duration_seconds: number | null
   status: string
+  error_message: string | null
   config: Record<string, unknown> | null
   created_at: string
   updated_at: string
@@ -170,9 +187,30 @@ export interface Video {
   created_at: string
 }
 
-const fetcher = (url: string) => fetch(url).then((r) => r.json())
+const fetcher = async (url: string) => {
+  const r = await fetch(url)
+  if (!r.ok) {
+    const body = await r.json().catch(() => ({ detail: r.statusText }))
+    throw new Error(body?.detail ?? `HTTP ${r.status}`)
+  }
+  return r.json()
+}
 
 export { fetcher }
+
+export interface RunwayStatus {
+  enabled: boolean
+  monthly_budget_usd: number
+  spent_usd: number
+  remaining_usd: number
+  credit_error: boolean
+  model: string
+  cost_per_clip_usd: number
+}
+
+export async function fetchRunwayStatus(channelId: string): Promise<RunwayStatus> {
+  return fetcher(`${BASE}/channels/${channelId}/runway-status`)
+}
 
 export async function fetchChannels(activeOnly = false): Promise<Channel[]> {
   const q = activeOnly ? '?active_only=true' : ''
@@ -345,5 +383,35 @@ export async function completeOnboarding(channelId: string): Promise<Channel> {
 
 export async function fetchChannel(channelId: string): Promise<Channel> {
   const res = await fetch(`${BASE}/channels/${channelId}`)
+  return res.json()
+}
+
+export async function fetchProjectVideos(projectId: string): Promise<Video[]> {
+  const res = await fetch(`${BASE}/projects/${projectId}/videos`)
+  if (!res.ok) return []
+  return res.json()
+}
+
+export async function publishProject(projectId: string, platform: string): Promise<void> {
+  const res = await fetch(`${BASE}/projects/${projectId}/publish`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ platform }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error((err as { detail?: string }).detail || 'Erreur publication')
+  }
+}
+
+export async function listMarketAnalyses(): Promise<MarketAnalysisListItem[]> {
+  const res = await fetch(`${BASE}/markets`)
+  if (!res.ok) throw new Error('Erreur chargement analyses marché')
+  return res.json()
+}
+
+export async function getMarketAnalysis(id: string): Promise<MarketAnalysisDetail> {
+  const res = await fetch(`${BASE}/markets/${id}`)
+  if (!res.ok) throw new Error('Analyse introuvable')
   return res.json()
 }

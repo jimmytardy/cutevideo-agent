@@ -27,3 +27,16 @@ async def update_agent_config(body: dict[str, Any]) -> dict[str, Any]:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(body, ensure_ascii=False, indent=2), encoding="utf-8")
     return body
+
+
+AZURE_VOICES_FR = [
+    {"id": "fr-FR-HenriNeural", "label": "Henri (homme)", "styles": ["narration-professional", "newscast-formal"]},
+    {"id": "fr-FR-DeniseNeural", "label": "Denise (femme)", "styles": ["cheerful", "friendly", "narration-professional"]},
+    {"id": "fr-FR-EloiseNeural", "label": "Eloise (femme)", "styles": ["cheerful", "friendly"]},
+    {"id": "fr-FR-VivienneMultilingualNeural", "label": "Vivienne (multilingue)", "styles": ["friendly"]},
+]
+
+
+@router.get("/tts/voices")
+async def list_tts_voices() -> list[dict[str, Any]]:
+    return AZURE_VOICES_FR
