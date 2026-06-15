@@ -1,4 +1,4 @@
-name: cuteagent-video
+name: cutevideo
 
 networks:
   # Docker crée ce réseau en local s'il n'existe pas.
@@ -9,16 +9,10 @@ networks:
 
 services:
   app:
-    container_name: cuteagent-video
-    image: cuteagent-video:local
+    container_name: cutevideo
+    image: cutevideo:local
     build: .
     env_file: .env
-    environment:
-      DATABASE_URL: postgresql+asyncpg://cutevideo:cutevideo@shared-postgres:5432/cutevideo
-      REDIS_URL: redis://redis:6379
-      # L'API uvicorn tourne dans le même conteneur (voir docker-entrypoint.sh),
-      # donc le proxy Next.js doit viser localhost, pas l'hôte.
-      INTERNAL_API_URL: http://127.0.0.1:8000
     ports:
       - "${APP_HOST:-127.0.0.1}:${PORT:-3000}:3000"
     volumes:
@@ -34,8 +28,8 @@ services:
         condition: service_healthy
 
   worker:
-    container_name: cuteagent-video-worker
-    image: cuteagent-video:local
+    container_name: cutevideo-worker
+    image: cutevideo:local
     build: .
     env_file: .env
     environment:
@@ -57,7 +51,7 @@ services:
         condition: service_healthy
 
   app-dev:
-    container_name: cuteagent-video-dev
+    container_name: cutevideo-dev
     build:
       context: .
       dockerfile: Dockerfile.dev
@@ -98,7 +92,7 @@ services:
         condition: service_started
 
   worker-dev:
-    container_name: cuteagent-video-worker-dev
+    container_name: cutevideo-worker-dev
     build:
       context: .
       dockerfile: Dockerfile.dev

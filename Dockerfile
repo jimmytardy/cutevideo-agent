@@ -20,6 +20,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 COPY requirements.txt .
+# Torch CPU-only AVANT requirements : silero-vad/torchaudio tireraient sinon
+# ~4 Go de libs CUDA NVIDIA inutiles (le VPS tourne en CPU).
+RUN pip install --no-cache-dir torch torchaudio --index-url https://download.pytorch.org/whl/cpu
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY agent/ ./agent/

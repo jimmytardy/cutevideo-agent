@@ -8,13 +8,14 @@
 #    PORT             port externe (hôte) exposé — modifiable
 #    CONTAINER_PORT   port d'écoute DANS le conteneur (défaut: = PORT)
 #    APP_HOST         interface de bind (défaut: 0.0.0.0)
-#    DOCKER_NETWORK   réseau principal      (défaut: postgres_network)
+#    DOCKER_NETWORK   réseau principal (var env > .env > défaut local-network)
 #    EXTRA_NETWORKS   réseaux additionnels  (séparés par des virgules)
 #    WORKER_ENTRYPOINT  si défini, déploie aussi <app>-worker avec cet entrypoint
 # ─────────────────────────────────────────────
 
 GITHUB_USER="${GITHUB_USER:-jimmytardy}"
-DOCKER_NETWORK="${DOCKER_NETWORK:-postgres_network}"
+# Override éventuel via variable d'env ; sinon résolu depuis le .env plus bas.
+DOCKER_NETWORK_ENV="${DOCKER_NETWORK:-}"
 
 # Couleurs
 RED='\033[0;31m'
@@ -115,7 +116,23 @@ HOST_PORT="${PORT:-$(read_env_var "$ENV_PATH" PORT)}"
 CONTAINER_PORT="${CONTAINER_PORT:-$(read_env_var "$ENV_PATH" CONTAINER_PORT)}"
 APP_HOST="${APP_HOST:-$(read_env_var "$ENV_PATH" APP_HOST)}"
 EXTRA_NETWORKS="${EXTRA_NETWORKS:-$(read_env_var "$ENV_PATH" EXTRA_NETWORKS)}"
+EXTRA_VOLUMES="${EXTRA_VOLUMES:-$(read_env_var "$ENV_PATH" EXTRA_VOLUMES)}"
 WORKER_ENTRYPOINT="${WORKER_ENTRYPOINT:-$(read_env_var "$ENV_PATH" WORKER_ENTRYPOINT)}"
+
+# Réseau principal : variable d'env > .env > défaut local-network.
+DOCKER_NETWORK="${DOCKER_NETWORK_ENV:-$(read_env_var "$ENV_PATH" DOCKER_NETWORK)}"
+DOCKER_NETWORK="${DOCKER_NETWORK:-local-network}"
+
+# Volumes persistants (ex: cache Whisper partagé app/worker) — montés sur tous les conteneurs.
+VOLUME_OPT=""
+if [[ -n "$EXTRA_VOLUMES" ]]; then
+  IFS=',' read -ra _vols <<< "$EXTRA_VOLUMES"
+  for vol in "${_vols[@]}"; do
+    vol=$(echo "$vol" | tr -d ' ')
+    [[ -z "$vol" ]] && continue
+    VOLUME_OPT="$VOLUME_OPT -v $vol"
+  done
+fi
 
 # Port externe (hôte) — modifiable, défaut 3000.
 if [[ -n "$HOST_PORT" ]]; then
@@ -178,6 +195,7 @@ deploy_container() {
     --network "$DOCKER_NETWORK" \
     $port_mapping \
     $ENV_OPT \
+    $VOLUME_OPT \
     $entrypoint_opt \
     "$IMAGE" >/dev/null; then
 
@@ -225,6 +243,7 @@ echo -e "  Conteneur: ${CYAN}${APP_NAME}${RESET}"
 [[ -n "$WORKER_ENTRYPOINT" ]] && echo -e "  Worker   : ${CYAN}${APP_NAME}-worker${RESET}"
 echo -e "  Réseau   : ${CYAN}${DOCKER_NETWORK}${RESET}"
 [[ -n "$EXTRA_NETWORKS" ]] && echo -e "  Réseaux+ : ${CYAN}${EXTRA_NETWORKS}${RESET}"
+[[ -n "$EXTRA_VOLUMES" ]] && echo -e "  Volumes  : ${CYAN}${EXTRA_VOLUMES}${RESET}"
 echo -e "  Bind     : ${CYAN}${BIND_DESC} → ${CONTAINER_PORT}${RESET}"
 [[ -n "$ENV_OPT" ]] && echo -e "  Env file : ${CYAN}${ENV_PATH}${RESET}"
 echo ""
