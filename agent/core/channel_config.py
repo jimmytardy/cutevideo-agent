@@ -66,11 +66,12 @@ THEME_SOURCE_PRIORITY: dict[str, list[str]] = {
     "france":     ["gallica", "europeana", "wikimedia", "pexels"],
     "nature":     ["unsplash", "pexels", "pixabay", "wikimedia", "internet_archive"],
     "animaux":    ["pexels", "pixabay", "wikimedia", "internet_archive", "unsplash"],
-    "science":    ["wikimedia", "nasa", "pexels", "pixabay"],
+    "science":    ["nasa", "wikimedia", "pexels", "pixabay"],
     "art":        ["europeana", "wikimedia", "unsplash"],
     "finance":    ["pexels", "unsplash", "pixabay", "wikimedia"],
     "psychologie": ["pexels", "unsplash", "pixabay", "wikimedia"],
     "true_crime": ["wikimedia", "pexels", "internet_archive", "pixabay"],
+    "sport":    ["pexels", "pixabay", "wikimedia", "unsplash"],
     "tech":       ["pexels", "unsplash", "pixabay", "wikimedia"],
     "default":    ["pexels", "unsplash", "pixabay", "wikimedia", "internet_archive"],
 }
@@ -88,18 +89,74 @@ class MediaSourcesConfig(BaseModel):
     min_candidates_per_segment: int = 4
     enable_ai_fallback: bool = True
     images_per_segment: int = 4
+    prefer_video: bool = True
+    video_clips_per_segment: int = 1
     min_width_px: int = 1280
+    relevance_min_score: int = 60
+    max_search_iterations: int = 3
+    min_passing_candidates_multiplier: float = 1.5
+    relevance_min_score_high_precision: int = 75
+    niche_threshold_candidates: int = 2
+    enable_post_selection_audit: bool = True
+
+
+class VisualBeatsConfig(BaseModel):
+    enabled: bool = True
+    min_beats_per_short_segment: int = 3
+    max_beats_per_segment: int = 8
+    min_diagram_duration_s: float = 6.0
+    min_diagram_duration_short_s: float = 4.0
+
+
+class MediaLibraryConfig(BaseModel):
+    enabled: bool = True
+    pool_min_score: int = 70
+    reuse_min_score: int = 80
+    max_pool_size_per_project: int = 100
+    scope: str = "project"
+
+
+class ShortDerivationConfig(BaseModel):
+    strategy: Literal["crop", "native", "hybrid"] = "hybrid"
+    mode: Literal["reuse_pool_only", "free_sources_only", "full"] = "free_sources_only"
+    hybrid_teaser_max_clips: int = 2
+
+
+class GeminiTtsConfig(BaseModel):
+    apply_to: Literal["off", "shorts", "long", "both"] = "off"
+    model: str = "gemini-2.5-flash-preview-tts"
+    voice: str = "Leda"
+    language_code: str = "fr"
+
+
+class SubtitleConfig(BaseModel):
+    enabled: bool = True
+    style: Literal["karaoke"] = "karaoke"
+    max_words_per_line: int = 3
+    pause_threshold_ms: int = 400
+    font_name: str = "DejaVu Sans"
+    font_size: int = 68
+    primary_color: str = "#FFFFFF"
+    highlight_color: str = "#FFE600"
+    outline_color: str = "#000000"
+    outline_width: int = 4
+    vertical_position: float = 0.65
+    margin_v: int = 120
+    play_res_x: int = 1080
+    play_res_y: int = 1920
 
 
 class ChannelRuntimeConfig(BaseModel):
     media_source_priority: list[str] = Field(default_factory=lambda: THEME_SOURCE_PRIORITY["default"])
     media_sources: MediaSourcesConfig = Field(default_factory=MediaSourcesConfig)
     tts_engine: str = "azure"
-    tts_voice: str = "fr-FR-HenriNeural"
+    tts_voice: str = "fr-FR-Vivienne:DragonHDLatestNeural"
     tts_fallback_voice: str = "fr-FR-DeniseNeural"
-    tts_style: str = "narration-professional"
+    tts_style: str = "narration-relaxed"
     tts_rate: str = "+0%"
     tts_pitch: str = "+0Hz"
+    tts_insert_pauses: bool = True
+    gemini_tts: GeminiTtsConfig = Field(default_factory=GeminiTtsConfig)
     default_tags: list[str] = Field(default_factory=list)
     youtube_category_id: str = "27"
     auto_publish: bool = False
@@ -109,12 +166,16 @@ class ChannelRuntimeConfig(BaseModel):
     enabled_platforms: list[str] = Field(default_factory=lambda: list(DEFAULT_PLATFORMS))
     production_mode: Literal["mixed", "long_only", "shorts_only"] = "mixed"
     short_duration_s: int = 90
-    editorial_tone: str = "Pédagogique, accessible, engageant"
+    editorial_tone: str = ""
     editorial_target_audience: str = "Grand public curieux, français"
     editorial_differentiator: str = ""
-    min_critic_score: int = 70
-    max_critic_iterations: int = 3
+    creative_brief: str = ""
+    min_critic_score: int = 90
+    min_short_structure_score: int = 15
+    max_critic_iterations: int = 5
     min_image_duration_s: int = 4
+    min_image_duration_short_s: int = 2
+    content_language: str = "fr"
     music_theme: str = "default"
     auto_reply_comments: bool = True
     max_replies_per_run: int = 10
@@ -124,6 +185,116 @@ class ChannelRuntimeConfig(BaseModel):
     max_publications_per_engagement_run: int = 40
     ai_fallback: AiFallbackConfig = Field(default_factory=AiFallbackConfig)
     runway: RunwayConfig = Field(default_factory=RunwayConfig)
+    subtitles: SubtitleConfig = Field(default_factory=SubtitleConfig)
+    visual_beats: VisualBeatsConfig = Field(default_factory=VisualBeatsConfig)
+    media_library: MediaLibraryConfig = Field(default_factory=MediaLibraryConfig)
+    short_derivation: ShortDerivationConfig = Field(default_factory=ShortDerivationConfig)
+
+
+def _vb_cfg(global_cfg: dict[str, Any], pipeline: dict[str, Any]) -> dict[str, Any]:
+    vb = pipeline.get("visual_beats") or global_cfg.get("pipeline", {}).get("visual_beats", {})
+    return vb if isinstance(vb, dict) else {}
+
+
+def _ml_cfg(global_cfg: dict[str, Any], channel_overrides: dict[str, Any]) -> dict[str, Any]:
+    ml = channel_overrides.get("media_library") or global_cfg.get("media_library", {})
+    return ml if isinstance(ml, dict) else {}
+
+
+def _sd_cfg(global_cfg: dict[str, Any], channel_overrides: dict[str, Any]) -> dict[str, Any]:
+    sd = channel_overrides.get("production") or global_cfg.get("production", {})
+    return sd if isinstance(sd, dict) else {}
+
+
+def _resolve_short_derivation(channel_overrides: dict[str, Any]) -> ShortDerivationConfig:
+    global_cfg = load_agent_config()
+    merged = {**_sd_cfg(global_cfg, {}), **_sd_cfg(global_cfg, channel_overrides)}
+    strategy = str(merged.get("short_derivation_strategy", "hybrid"))
+    if strategy not in ("crop", "native", "hybrid"):
+        strategy = "hybrid"
+    mode = str(merged.get("short_derivation_mode", "free_sources_only"))
+    if mode not in ("reuse_pool_only", "free_sources_only", "full"):
+        mode = "free_sources_only"
+    return ShortDerivationConfig(
+        strategy=strategy,  # type: ignore[arg-type]
+        mode=mode,  # type: ignore[arg-type]
+        hybrid_teaser_max_clips=int(merged.get("hybrid_teaser_max_clips", 2)),
+    )
+
+
+def _resolve_content_language(
+    channel_overrides: dict[str, Any],
+    global_cfg: dict[str, Any],
+    tts_voice: str,
+) -> str:
+    whisper = channel_overrides.get("whisper") or {}
+    if isinstance(whisper, dict) and whisper.get("language"):
+        return str(whisper["language"])[:8]
+    global_whisper = global_cfg.get("whisper", {})
+    if isinstance(global_whisper, dict) and global_whisper.get("language"):
+        return str(global_whisper["language"])[:8]
+    if "-" in tts_voice:
+        return tts_voice.split("-", 1)[0].lower()
+    return "fr"
+
+
+def _resolve_gemini_tts(tts: dict[str, Any]) -> GeminiTtsConfig:
+    gemini = tts.get("gemini", {})
+    if not isinstance(gemini, dict):
+        gemini = {}
+    apply_to = str(gemini.get("apply_to", "off"))
+    if apply_to not in ("off", "shorts", "long", "both"):
+        apply_to = "off"
+    return GeminiTtsConfig(
+        apply_to=apply_to,  # type: ignore[arg-type]
+        model=str(gemini.get("model", "gemini-2.5-flash-preview-tts")),
+        voice=str(gemini.get("voice", "Leda")),
+        language_code=str(gemini.get("language_code", "fr")),
+    )
+
+
+def _resolve_subtitles(channel_overrides: dict[str, Any]) -> SubtitleConfig:
+    global_cfg = load_agent_config().get("subtitles", {})
+    channel_subs = channel_overrides.get("subtitles", {})
+    if not isinstance(channel_subs, dict):
+        channel_subs = {}
+    merged = {**global_cfg, **channel_subs}
+    return SubtitleConfig(
+        enabled=bool(merged.get("enabled", True)),
+        style="karaoke",
+        max_words_per_line=int(merged.get("max_words_per_line", 3)),
+        pause_threshold_ms=int(merged.get("pause_threshold_ms", 400)),
+        font_name=str(merged.get("font_name", "DejaVu Sans")),
+        font_size=int(merged.get("font_size", 68)),
+        primary_color=str(merged.get("primary_color", "#FFFFFF")),
+        highlight_color=str(merged.get("highlight_color", "#FFE600")),
+        outline_color=str(merged.get("outline_color", "#000000")),
+        outline_width=int(merged.get("outline_width", 4)),
+        vertical_position=float(merged.get("vertical_position", 0.65)),
+        margin_v=int(merged.get("margin_v", 120)),
+        play_res_x=int(merged.get("play_res_x", 1080)),
+        play_res_y=int(merged.get("play_res_y", 1920)),
+    )
+
+
+def _resolve_runway(channel_overrides: dict[str, Any]) -> RunwayConfig:
+    global_cfg = load_agent_config().get("runway", {})
+    channel_runway = channel_overrides.get("runway", {})
+    if not isinstance(channel_runway, dict):
+        channel_runway = {}
+    merged = {**global_cfg, **channel_runway}
+    duration = int(merged.get("default_duration_s", 5))
+    if duration not in (5, 10):
+        duration = 5
+    return RunwayConfig(
+        enabled=bool(merged.get("enabled", False)),
+        monthly_budget_usd=float(merged.get("monthly_budget_usd", 20.0)),
+        cost_per_second_usd=float(merged.get("cost_per_second_usd", 0.05)),
+        default_duration_s=duration,  # type: ignore[arg-type]
+        model=str(merged.get("model", "gen4_turbo")),
+        resolution=str(merged.get("resolution", "1280:720")),
+        max_clips_per_video=int(merged.get("max_clips_per_video", 3)),
+    )
 
 
 def _resolve_ai_fallback(channel_overrides: dict[str, Any]) -> AiFallbackConfig:
@@ -207,6 +378,8 @@ def resolve_channel_config(channel: Channel) -> ChannelRuntimeConfig:
 
     pipeline = {**global_cfg.get("pipeline", {}), **channel_overrides.get("pipeline", {})}
     tts = {**global_cfg.get("tts", {}), **channel_overrides.get("tts", {})}
+    tts_voice = str(tts.get("voice", "fr-FR-Vivienne:DragonHDLatestNeural"))
+    content_language = _resolve_content_language(channel_overrides, global_cfg, tts_voice)
     publishing = {**global_cfg.get("publishing", {}), **channel_overrides.get("publishing", {})}
     engagement = {**global_cfg.get("engagement", {}), **channel_overrides.get("engagement", {})}
     production = channel_overrides.get("production", {})
@@ -239,7 +412,26 @@ def resolve_channel_config(channel: Channel) -> ChannelRuntimeConfig:
         ),
         enable_ai_fallback=bool(media_channel.get("enable_ai_fallback", True)),
         images_per_segment=int(pipeline.get("images_per_segment", media_global.get("images_per_segment", 4))),
+        prefer_video=bool(media_channel.get("prefer_video", media_global.get("prefer_video", True))),
+        video_clips_per_segment=int(
+            media_channel.get(
+                "video_clips_per_segment",
+                media_global.get("video_clips_per_segment", 1),
+            )
+        ),
         min_width_px=int(media_global.get("min_width_px", 1280)),
+        relevance_min_score=int(media_global.get("relevance_min_score", 60)),
+        max_search_iterations=int(media_global.get("max_search_iterations", 3)),
+        min_passing_candidates_multiplier=float(
+            media_global.get("min_passing_candidates_multiplier", 1.5)
+        ),
+        relevance_min_score_high_precision=int(
+            media_global.get("relevance_min_score_high_precision", 75)
+        ),
+        niche_threshold_candidates=int(media_global.get("niche_threshold_candidates", 2)),
+        enable_post_selection_audit=bool(
+            media_global.get("enable_post_selection_audit", True)
+        ),
     )
 
     kit = channel.brand_kit or {}
@@ -247,11 +439,13 @@ def resolve_channel_config(channel: Channel) -> ChannelRuntimeConfig:
         media_source_priority=media_sources.priority,
         media_sources=media_sources,
         tts_engine=str(tts.get("engine", "azure")),
-        tts_voice=str(tts.get("voice", "fr-FR-HenriNeural")),
+        tts_voice=str(tts.get("voice", "fr-FR-Vivienne:DragonHDLatestNeural")),
         tts_fallback_voice=str(tts.get("fallback_voice", "fr-FR-DeniseNeural")),
-        tts_style=str(tts.get("style", tts.get("default_style", "narration-professional"))),
+        tts_style=str(tts.get("style", tts.get("default_style", "narration-relaxed"))),
         tts_rate=str(tts.get("rate", tts.get("default_rate", "+0%"))),
         tts_pitch=str(tts.get("pitch", "+0Hz")),
+        tts_insert_pauses=bool(tts.get("insert_pauses", True)),
+        gemini_tts=_resolve_gemini_tts(tts),
         default_tags=default_tags,
         youtube_category_id=str(publishing.get("youtube_category_id", "27")),
         auto_publish=bool(publishing.get("auto_publish", False)),
@@ -261,16 +455,55 @@ def resolve_channel_config(channel: Channel) -> ChannelRuntimeConfig:
         enabled_platforms=enabled_platforms,
         production_mode=production_mode,  # type: ignore[arg-type]
         short_duration_s=int(production.get("short_duration_s", global_cfg.get("content_planning", {}).get("default_short_duration_s", 60))),
-        editorial_tone=str(editorial.get("tone", "Pédagogique, accessible, engageant")),
+        editorial_tone=str(editorial.get("tone", "")),
         editorial_target_audience=str(editorial.get("target_audience", "Grand public curieux, français")),
         editorial_differentiator=str(editorial.get("differentiator", kit.get("content_angle", ""))),
-        min_critic_score=int(pipeline.get("min_critic_score", global_cfg.get("pipeline", {}).get("min_critic_score", 70))),
+        creative_brief=str(getattr(channel, "creative_brief", "") or ""),
+        min_critic_score=int(pipeline.get("min_critic_score", global_cfg.get("pipeline", {}).get("min_critic_score", 90))),
+        min_short_structure_score=int(
+            pipeline.get(
+                "min_short_structure_score",
+                global_cfg.get("pipeline", {}).get("min_short_structure_score", 15),
+            )
+        ),
         max_critic_iterations=int(
             pipeline.get("max_critic_iterations", global_cfg.get("pipeline", {}).get("max_critic_iterations", 3))
         ),
         min_image_duration_s=int(
             pipeline.get("min_image_duration_s", global_cfg.get("pipeline", {}).get("min_image_duration_s", 4))
         ),
+        min_image_duration_short_s=int(
+            pipeline.get(
+                "min_image_duration_short_s",
+                global_cfg.get("pipeline", {}).get("min_image_duration_short_s", 2),
+            )
+        ),
+        content_language=content_language,
+        visual_beats=VisualBeatsConfig(
+            enabled=bool(_vb_cfg(global_cfg, pipeline).get("enabled", True)),
+            min_beats_per_short_segment=int(
+                _vb_cfg(global_cfg, pipeline).get("min_beats_per_short_segment", 3)
+            ),
+            max_beats_per_segment=int(
+                _vb_cfg(global_cfg, pipeline).get("max_beats_per_segment", 8)
+            ),
+            min_diagram_duration_s=float(
+                _vb_cfg(global_cfg, pipeline).get("min_diagram_duration_s", 6.0)
+            ),
+            min_diagram_duration_short_s=float(
+                _vb_cfg(global_cfg, pipeline).get("min_diagram_duration_short_s", 4.0)
+            ),
+        ),
+        media_library=MediaLibraryConfig(
+            enabled=bool(_ml_cfg(global_cfg, channel_overrides).get("enabled", True)),
+            pool_min_score=int(_ml_cfg(global_cfg, channel_overrides).get("pool_min_score", 70)),
+            reuse_min_score=int(_ml_cfg(global_cfg, channel_overrides).get("reuse_min_score", 80)),
+            max_pool_size_per_project=int(
+                _ml_cfg(global_cfg, channel_overrides).get("max_pool_size_per_project", 100)
+            ),
+            scope=str(_ml_cfg(global_cfg, channel_overrides).get("scope", "project")),
+        ),
+        short_derivation=_resolve_short_derivation(channel_overrides),
         auto_reply_comments=bool(engagement.get("auto_reply_comments", True)),
         max_replies_per_run=int(engagement.get("max_replies_per_run", 10)),
         max_comments_fetched=int(engagement.get("max_comments_fetched", 50)),
@@ -283,4 +516,6 @@ def resolve_channel_config(channel: Channel) -> ChannelRuntimeConfig:
             )
         ),
         ai_fallback=_resolve_ai_fallback(channel_overrides),
+        runway=_resolve_runway(channel_overrides),
+        subtitles=_resolve_subtitles(channel_overrides),
     )

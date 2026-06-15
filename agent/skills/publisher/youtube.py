@@ -79,3 +79,34 @@ def _upload_sync(
         _, response = request.next_chunk()
 
     return response["id"]
+
+
+async def set_thumbnail(
+    video_id: str,
+    thumbnail_path: Path,
+    refresh_token: str | None = None,
+) -> None:
+    """Upload une miniature personnalisée pour une vidéo YouTube."""
+    loop = __import__("asyncio").get_event_loop()
+    await loop.run_in_executor(None, _set_thumbnail_sync, video_id, thumbnail_path, refresh_token)
+
+
+def _set_thumbnail_sync(video_id: str, thumbnail_path: Path, refresh_token: str | None) -> None:
+    from agent.core.config import settings
+    from google.oauth2.credentials import Credentials
+    from googleapiclient.discovery import build
+    from googleapiclient.http import MediaFileUpload
+
+    token = refresh_token or settings.youtube_refresh_token
+    creds = Credentials(
+        token=None,
+        refresh_token=token,
+        client_id=settings.youtube_client_id,
+        client_secret=settings.youtube_client_secret,
+        token_uri="https://oauth2.googleapis.com/token",
+    )
+    youtube = build("youtube", "v3", credentials=creds)
+    suffix = thumbnail_path.suffix.lstrip(".").lower() or "jpeg"
+    media = MediaFileUpload(str(thumbnail_path), mimetype=f"image/{suffix}")
+    youtube.thumbnails().set(videoId=video_id, media_body=media).execute()
+    logger.info("Miniature définie pour la vidéo YouTube %s", video_id)

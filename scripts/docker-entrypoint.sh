@@ -4,9 +4,19 @@ set -e
 echo "Applying database migrations..."
 alembic upgrade head
 
-echo "Starting API on port 8000..."
-uvicorn api.main:app --host 0.0.0.0 --port 8000 &
-API_PID=$!
+echo "Starting API supervisor on port 8000..."
+(
+  while true; do
+    echo "Starting uvicorn..."
+    uvicorn api.main:app --host 0.0.0.0 --port 8000 &
+    API_PID=$!
+    wait "$API_PID"
+    EXIT_CODE=$?
+    echo "API exited with code $EXIT_CODE — restarting in 2s..."
+    sleep 2
+  done
+) &
+SUPERVISOR_PID=$!
 
 echo "Waiting for API health check..."
 ready=0
@@ -20,11 +30,11 @@ done
 
 if [ "$ready" -ne 1 ]; then
     echo "API failed to become healthy within 60s"
-    kill "$API_PID" 2>/dev/null || true
+    kill "$SUPERVISOR_PID" 2>/dev/null || true
     exit 1
 fi
 
 echo "Starting dashboard on port 3000..."
 cd /app/dashboard
-trap 'kill "$API_PID" 2>/dev/null || true' EXIT INT TERM
+trap 'kill "$SUPERVISOR_PID" 2>/dev/null || true' EXIT INT TERM
 exec npm run start -- -p 3000 -H 0.0.0.0

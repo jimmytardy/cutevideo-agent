@@ -20,7 +20,7 @@ node_modules/
 # Données générées
 tmp/
 output/
-
+graphify-out
 # Environnement et secrets
 .env
 *.env.local
@@ -32,6 +32,7 @@ output/
 .DS_Store
 *.swp
 .cursor/
+.claude/
 
 # Tests et cache
 .pytest_cache/

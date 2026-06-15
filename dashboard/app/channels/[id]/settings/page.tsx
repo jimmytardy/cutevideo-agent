@@ -2,7 +2,7 @@
 
 
 
-import { use, useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 
 import useSWR from 'swr'
 
@@ -162,7 +162,7 @@ interface CostEstimate {
 
 interface Props {
 
-  params: Promise<{ id: string }>
+  params: { id: string }
 
 }
 
@@ -170,11 +170,13 @@ interface Props {
 
 export default function ChannelSettingsPage({ params }: Props) {
 
-  const { id } = use(params)
+  const { id } = params
 
   const { data: channel, isLoading, mutate } = useSWR<Channel>(`/api/v1/channels/${id}`, fetcher)
 
   const { data: voices } = useSWR('/api/v1/config/tts/voices', fetcher)
+
+  const { data: geminiVoices } = useSWR('/api/v1/config/tts/gemini-voices', fetcher)
 
   const { data: runwayStatus } = useSWR<RunwayStatus>(
     id ? `/api/v1/channels/${id}/runway-status` : null,
@@ -256,7 +258,11 @@ export default function ChannelSettingsPage({ params }: Props) {
 
     const tts = (cfg.tts as Record<string, unknown>) || {}
 
+    const gemini = (tts.gemini as Record<string, unknown>) || {}
+
     const media = (cfg.media_sources as Record<string, unknown>) || {}
+
+    const mediaValidation = (cfg.media_validation as Record<string, unknown>) || {}
 
     const ai = (media.ai_fallback as Record<string, unknown>) || {}
 
@@ -269,6 +275,12 @@ export default function ChannelSettingsPage({ params }: Props) {
       theme_prompt: channel.theme_prompt || '',
 
       niche_prompt: channel.niche_prompt || '',
+
+      creative_brief: channel.creative_brief || '',
+
+      media_validation_template: mediaValidation.media_validation_template || '',
+
+      default_min_relevance_score: mediaValidation.default_min_relevance_score ?? '',
 
       youtube_category_id: String((pub.youtube_category_id as string) || '27'),
 
@@ -288,11 +300,15 @@ export default function ChannelSettingsPage({ params }: Props) {
 
       enabled_platforms: (pub.enabled_platforms as string[]) || ['youtube', 'tiktok', 'instagram'],
 
-      tts_voice: tts.voice || 'fr-FR-HenriNeural',
+      tts_voice: tts.voice || 'fr-FR-Vivienne:DragonHDLatestNeural',
 
-      tts_style: tts.style || 'narration-professional',
+      tts_style: tts.style || 'narration-relaxed',
 
       tts_engine: tts.engine || 'azure',
+
+      gemini_apply_to: gemini.apply_to || 'off',
+
+      gemini_voice: gemini.voice || 'Leda',
 
       ai_plan: ai.plan || 'flux_pro',
 
@@ -376,6 +392,14 @@ export default function ChannelSettingsPage({ params }: Props) {
 
         style: form.tts_style,
 
+        gemini: {
+
+          apply_to: form.gemini_apply_to,
+
+          voice: form.gemini_voice,
+
+        },
+
       },
 
       media_sources: {
@@ -420,6 +444,18 @@ export default function ChannelSettingsPage({ params }: Props) {
 
       },
 
+      media_validation: {
+
+        media_validation_template: form.media_validation_template || '',
+
+        default_min_relevance_score: form.default_min_relevance_score
+
+          ? Number(form.default_min_relevance_score)
+
+          : null,
+
+      },
+
     }
 
     await fetch(`/api/v1/channels/${id}`, {
@@ -435,6 +471,8 @@ export default function ChannelSettingsPage({ params }: Props) {
         theme_prompt: form.theme_prompt,
 
         niche_prompt: form.niche_prompt,
+
+        creative_brief: form.creative_brief || null,
 
         config,
 
@@ -507,6 +545,44 @@ export default function ChannelSettingsPage({ params }: Props) {
           value={form.niche_prompt} sx={{ mb: 2 }}
 
           onChange={(e) => setForm({ ...form, niche_prompt: e.target.value })} />
+
+
+
+        <TextField
+          fullWidth
+          label="Brief créatif"
+          multiline
+          rows={6}
+          value={form.creative_brief}
+          sx={{ mb: 2 }}
+          onChange={(e) => setForm({ ...form, creative_brief: e.target.value })}
+          placeholder="Décris le ton, le style narratif, les thèmes récurrents, ce qui distingue la chaîne, les interdits éditoriaux…"
+          helperText="Injecté dans les prompts du scénariste, du critique et du découpeur shorts" />
+
+
+
+        <TextField
+          fullWidth
+          label="Template validation média (chaîne)"
+          multiline
+          rows={4}
+          value={form.media_validation_template as string}
+          sx={{ mb: 2 }}
+          onChange={(e) => setForm({ ...form, media_validation_template: e.target.value })}
+          placeholder="Règles permanentes pour valider les médias (ex: toujours vérifier l'espèce exacte, rejeter les reconstitutions CGI…)"
+          helperText="Fusionné dans le brief de validation de chaque vidéo" />
+
+
+
+        <TextField
+          fullWidth
+          label="Seuil pertinence par défaut (chaîne)"
+          type="number"
+          value={form.default_min_relevance_score as string | number}
+          sx={{ mb: 2 }}
+          onChange={(e) => setForm({ ...form, default_min_relevance_score: e.target.value })}
+          inputProps={{ min: 0, max: 100 }}
+          helperText="Optionnel — remplace le seuil global (60 par défaut, 75 pour sujets précis)" />
 
 
 
@@ -604,7 +680,7 @@ export default function ChannelSettingsPage({ params }: Props) {
 
 
 
-        <Typography variant="subtitle2" sx={{ mb: 1 }}>Voix Azure Neural</Typography>
+        <Typography variant="subtitle2" sx={{ mb: 1 }}>Voix Azure Neural (défaut)</Typography>
 
         <Box sx={{ display: 'flex', gap: 2, mb: 3 }}>
 
@@ -624,7 +700,49 @@ export default function ChannelSettingsPage({ params }: Props) {
 
             onChange={(e) => setForm({ ...form, tts_style: e.target.value })}
 
-            helperText="cheerful, narration-professional…" />
+            helperText="Styles Azure : cheerful, empathetic, excited, narration-professional… Le mood de chaque segment peut aussi varier le style." />
+
+        </Box>
+
+
+
+        <Typography variant="subtitle2" sx={{ mb: 1 }}>Gemini Flash TTS (optionnel)</Typography>
+
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+
+          Nécessite GOOGLE_GEMINI_API_KEY. Si absente ou désactivé, Azure/edge-tts est utilisé.
+
+        </Typography>
+
+        <Box sx={{ display: 'flex', gap: 2, mb: 3 }}>
+
+          <TextField select fullWidth label="Appliquer Gemini à" value={form.gemini_apply_to}
+
+            onChange={(e) => setForm({ ...form, gemini_apply_to: e.target.value })}>
+
+            <MenuItem value="off">Désactivé</MenuItem>
+
+            <MenuItem value="shorts">Shorts uniquement</MenuItem>
+
+            <MenuItem value="long">Longs uniquement</MenuItem>
+
+            <MenuItem value="both">Shorts et longs</MenuItem>
+
+          </TextField>
+
+          <TextField select fullWidth label="Voix Gemini" value={form.gemini_voice}
+
+            disabled={form.gemini_apply_to === 'off'}
+
+            onChange={(e) => setForm({ ...form, gemini_voice: e.target.value })}>
+
+            {(geminiVoices || []).map((v: { id: string; label: string }) => (
+
+              <MenuItem key={v.id} value={v.id}>{v.label}</MenuItem>
+
+            ))}
+
+          </TextField>
 
         </Box>
 

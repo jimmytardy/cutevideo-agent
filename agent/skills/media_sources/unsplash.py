@@ -11,8 +11,15 @@ logger = logging.getLogger(__name__)
 API_URL = "https://api.unsplash.com/search/photos"
 
 
-async def search(keywords: list[str], period: str = "") -> list[dict]:
+async def search(
+    keywords: list[str],
+    period: str = "",
+    *,
+    media_type: str = "image",
+) -> list[dict]:
     """Recherche sur Unsplash — photos libres de droits."""
+    if media_type == "video":
+        return []
     if not settings.unsplash_access_key:
         logger.debug("Unsplash access key non configurée, skip")
         return []
@@ -51,6 +58,7 @@ async def search(keywords: list[str], period: str = "") -> list[dict]:
                 "license": "Unsplash License (libre d'utilisation)",
                 "attribution": f"Photo par {name} sur Unsplash ({profile})",
                 "title": photo.get("alt_description") or query,
+                "asset_type": "image",
             })
     except Exception as e:
         logger.warning("Unsplash search error: %s", e)

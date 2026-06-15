@@ -24,6 +24,8 @@ async def generate_image(
     theme_category: str = "",
     editorial_tone: str = "",
     aspect_ratio: str = "16:9",
+    plan_override: str | None = None,
+    use_prompt_as_is: bool = False,
 ) -> dict | None:
     """Génère une image IA en secours via Flux ou Google Imagen 3."""
     if not ai_cfg.enabled or ai_cfg.plan.value == "off":
@@ -38,7 +40,22 @@ async def generate_image(
         aspect_ratio=aspect_ratio,
         image_width=width,
         image_height=height,
+        use_prompt_as_is=use_prompt_as_is,
     )
+
+    if plan_override:
+        result = await generate_with_plan(plan_override, request)
+        if result:
+            return {
+                "source": "ai_image",
+                "url": str(result.local_path),
+                "local_generated": str(result.local_path),
+                "license": result.license,
+                "attribution": result.attribution,
+                "title": result.title,
+                "provider_plan": result.provider_plan,
+            }
+        return None
 
     chain = ai_cfg.resolved_provider_chain()
     for plan_id in chain[:2]:

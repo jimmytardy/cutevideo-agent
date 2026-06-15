@@ -25,6 +25,7 @@ class ChannelUpdate(BaseModel):
     theme_category: str | None = None
     niche_prompt: str | None = None
     theme_prompt: str | None = None
+    creative_brief: str | None = None
     brand_kit: dict[str, Any] | None = None
     config: dict[str, Any] | None = None
     youtube_channel_id: str | None = None
@@ -189,6 +190,7 @@ class ChannelResponse(BaseModel):
     theme_category: str
     niche_prompt: str | None
     theme_prompt: str | None = None
+    creative_brief: str | None = None
     brand_kit: dict | None = None
     onboarding_step: str = "complete"
     tiktok_publish_defaults: dict | None = None
@@ -245,6 +247,18 @@ class ProjectResponse(BaseModel):
     updated_at: datetime
 
 
+class ResearchBriefResponse(BaseModel):
+    subject_entity: str = ""
+    key_facts: list[str] = Field(default_factory=list)
+    timeline: list[dict[str, str]] = Field(default_factory=list)
+    sources: list[dict[str, str]] = Field(default_factory=list)
+    visual_anchors: list[str] = Field(default_factory=list)
+    common_misconceptions: list[str] = Field(default_factory=list)
+    narrative_angles: list[str] = Field(default_factory=list)
+    confidence: float = 0.0
+    niche_risk: str = "medium"
+
+
 class ScenarioResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -269,6 +283,13 @@ class MediaAssetResponse(BaseModel):
     attribution: str | None
     asset_type: str | None
     selected: bool
+    relevance_score: int | None = None
+    relevance_reason: str | None = None
+    beat_index: int | None = None
+    library_status: str | None = None
+    generation_prompt: str | None = None
+    visual_type: str | None = None
+    iteration: int | None = None
     created_at: datetime
 
 
@@ -285,6 +306,29 @@ class VideoResponse(BaseModel):
     created_at: datetime
 
 
+class FinalPreviewResponse(BaseModel):
+    video: VideoResponse | None
+    stream_url: str | None
+    subtitles_available: bool
+    subtitles_download_url: str | None
+    subtitles_note: str | None = None
+
+
+class AudioFileResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    project_id: UUID
+    segment_order: int | None
+    local_path: str | None
+    duration_s: float | None
+    tts_engine: str | None
+    voice: str | None
+    transcript: str | None
+    word_timestamps: list | None = None
+    created_at: datetime
+
+
 class CriticReportResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -295,7 +339,49 @@ class CriticReportResponse(BaseModel):
     global_score: int | None
     feedback: dict | None
     requested_changes: list | None
+    video_analysis: dict | None = None
     created_at: datetime
+
+
+class ProjectConfigUpdate(BaseModel):
+    max_critic_iterations: int | None = None
+    media_validation_override: dict[str, Any] | None = None
+
+
+class MediaValidationOverrideBody(BaseModel):
+    must_include: list[str] = Field(default_factory=list)
+    must_exclude: list[str] = Field(default_factory=list)
+    validation_prompt: str | None = None
+    min_relevance_score: int | None = None
+
+
+class MediaValidationBriefResponse(BaseModel):
+    subject_entity: str = ""
+    subject_type: str = "general"
+    must_include: list[str] = Field(default_factory=list)
+    must_exclude: list[str] = Field(default_factory=list)
+    ambiguity_warnings: list[str] = Field(default_factory=list)
+    validation_prompt: str = ""
+    min_relevance_score: int = 60
+    niche_risk: str = "low"
+    segments: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    override: MediaValidationOverrideBody | None = None
+    source: str = "resolved"
+
+
+class RegenerateMediaValidationResponse(BaseModel):
+    brief: MediaValidationBriefResponse
+    message: str
+
+
+class MediaProgressResponse(BaseModel):
+    iteration: int
+    found: int
+    total: int
+    percent: int
+    segments_done: int
+    segments_total: int
+    agent_status: str
 
 
 class AgentRunResponse(BaseModel):

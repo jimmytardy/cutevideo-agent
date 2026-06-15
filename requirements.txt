@@ -1,6 +1,6 @@
 # IA
 anthropic>=0.25.0
-openai-whisper>=20231117
+faster-whisper>=1.0.0
 
 # Base de données
 asyncpg>=0.29.0
@@ -42,6 +42,7 @@ google-api-python-client>=2.130.0
 google-auth>=2.29.0
 google-auth-oauthlib>=1.2.0
 google-cloud-aiplatform>=1.60.0
+google-genai>=1.0.0
 
 # Scheduling
 apscheduler>=3.10.0

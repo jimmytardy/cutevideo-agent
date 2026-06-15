@@ -56,7 +56,7 @@ class PublisherAgent(BaseAgent):
             for video in videos:
                 if video.file_purged_at:
                     continue
-                if not video.storage_key and not (video.local_path and Path(video.local_path).exists()):
+                if not video.storage_key:
                     continue
 
                 platform = platform_for_video_type(video.video_type)

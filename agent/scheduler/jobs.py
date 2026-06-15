@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
@@ -9,7 +8,7 @@ from sqlalchemy import select
 from agent.core.concurrency import can_start_pipeline
 from agent.core.config import settings
 from agent.core.database import AsyncSessionFactory, Project
-from agent.core.orchestrator import Orchestrator
+from agent.core.pipeline_launcher import enqueue_pipeline
 from agent.scheduler.cleanup import purge_old_media_files
 from agent.scheduler.editorial_calendar import publication_target_iso
 from agent.scheduler.tracking import track_job_run
@@ -68,22 +67,11 @@ async def _run_pending_projects() -> dict[str, int]:
             target_iso,
             project.channel_id,
         )
-        task = asyncio.create_task(
-            Orchestrator().run_pipeline(project.id),
-            name=f"pipeline-{project.id}",
-        )
-        task.add_done_callback(_log_pipeline_task_result)
+        await enqueue_pipeline(project.id)
         launched_channels.add(project.channel_id)
         launched += 1
 
     return {"launched": launched, "errors": errors, "target_publish_date": target_iso}
-
-
-def _log_pipeline_task_result(task: "asyncio.Task[Any]") -> None:
-    if task.cancelled():
-        logger.warning("Pipeline task %s annulée", task.get_name())
-    elif task.exception():
-        logger.error("Pipeline task %s échouée : %s", task.get_name(), task.exception())
 
 
 def _project_targets_publication_date(project: Project, target_iso: str) -> bool:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 
 from agent.skills.media_sources.ai.base import ImageGenerationRequest, ImageGenerationResult
+from agent.skills.media_sources.ai.flux_2_dev import Flux2DevProvider
 from agent.skills.media_sources.ai.flux_pro import FluxProProvider
 from agent.skills.media_sources.ai.flux_pro_ultra import FluxUltraProvider
 from agent.skills.media_sources.ai.flux_schnell import FluxSchnellProvider
@@ -11,13 +12,14 @@ from agent.skills.media_sources.ai.imagen3 import Imagen3Provider
 logger = logging.getLogger(__name__)
 
 ALLOWED_PLANS = frozenset(
-    {"flux_schnell", "flux_pro", "flux_ultra", "imagen3_fast", "imagen3"}
+    {"flux_schnell", "flux_pro", "flux_ultra", "flux_2_dev", "imagen3_fast", "imagen3"}
 )
 
 _PROVIDERS: dict[str, object] = {
     "flux_schnell": FluxSchnellProvider(),
     "flux_pro": FluxProProvider(),
     "flux_ultra": FluxUltraProvider(),
+    "flux_2_dev": Flux2DevProvider(),
     "imagen3_fast": Imagen3Provider("imagen3_fast"),
     "imagen3": Imagen3Provider("imagen3"),
 }

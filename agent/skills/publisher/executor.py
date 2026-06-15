@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
 
 from sqlalchemy import select
 
@@ -56,7 +55,7 @@ async def publish_scheduled(
     if video.file_purged_at:
         await _mark_failed(publication.id, "video_file_purged")
         return None
-    if not video.storage_key and not (video.local_path and Path(video.local_path).exists()):
+    if not video.storage_key:
         await _mark_failed(publication.id, "video_file_missing")
         return None
 
@@ -94,23 +93,42 @@ async def _publish_youtube(
     description: str,
     tags: list[str],
 ) -> Publication | None:
-    from agent.skills.publisher.youtube import upload_video
+    import tempfile
+
+    from agent.skills.publisher.thumbnail import generate_thumbnail
+    from agent.skills.publisher.youtube import set_thumbnail, upload_video
     from agent.skills.publisher.youtube_channel_manager import post_publish_hook
 
     video_path = await resolve_local_path_for_upload(video)
+    refresh_token = channel.youtube_refresh_token or settings.youtube_refresh_token
     video_id = await upload_video(
         video_path=video_path,
         title=title,
         description=description,
         tags=tags,
         category_id=channel_config.youtube_category_id,
-        refresh_token=channel.youtube_refresh_token or settings.youtube_refresh_token,
+        refresh_token=refresh_token,
     )
     pub = await _mark_published(
         publication.id,
         platform_video_id=video_id,
         platform_url=f"https://youtube.com/watch?v={video_id}",
     )
+
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            thumbnail_path = await generate_thumbnail(
+                title=title,
+                theme=channel.theme_category or description[:80],
+                output_dir=Path(tmp),
+                ai_cfg=channel_config.ai_fallback,
+                editorial_tone=channel_config.editorial_tone,
+                aspect_ratio="16:9",
+            )
+            if thumbnail_path:
+                await set_thumbnail(video_id, thumbnail_path, refresh_token=refresh_token)
+    except Exception as e:
+        logger.warning("Miniature YouTube non définie (non bloquant) : %s", e)
 
     # Récupère le thème via le projet pour la playlist
     try:

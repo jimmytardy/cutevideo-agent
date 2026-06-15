@@ -53,6 +53,7 @@ class ChannelCostEstimate(BaseModel):
 PLAN_LABELS: dict[str, str] = {
     "off": "Désactivé",
     "flux_schnell": "Flux Schnell",
+    "flux_2_dev": "FLUX 2 Dev",
     "flux_pro": "Flux 1.1 Pro",
     "flux_ultra": "Flux Pro Ultra",
     "imagen3_fast": "Imagen 3 Fast",
@@ -64,6 +65,7 @@ def _plan_pricing_eur() -> dict[str, float]:
     cfg = load_agent_config().get("media_sources", {}).get("ai_fallback", {})
     defaults = {
         "flux_schnell": 0.003,
+        "flux_2_dev": 0.024,
         "flux_pro": 0.05,
         "flux_ultra": 0.07,
         "imagen3_fast": 0.018,

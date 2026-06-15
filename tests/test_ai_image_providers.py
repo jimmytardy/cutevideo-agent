@@ -52,6 +52,76 @@ async def test_flux_pro_success(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_flux_2_dev_success(tmp_path: Path) -> None:
+    request = ImageGenerationRequest(
+        prompt="forêt brumeuse documentaire",
+        output_dir=tmp_path,
+        theme_category="nature",
+        editorial_tone="calme",
+    )
+    fake_image = b"fake-jpeg"
+    flux_response = {"images": [{"url": "https://fal.ai/fake2.jpg"}]}
+
+    with (
+        patch("agent.skills.media_sources.ai.flux_common.settings") as mock_settings,
+        patch("aiohttp.ClientSession") as mock_session_cls,
+    ):
+        mock_settings.fal_key = "test-fal-key"
+        mock_session = AsyncMock()
+        mock_session_cls.return_value.__aenter__.return_value = mock_session
+
+        post_resp = AsyncMock()
+        post_resp.status = 200
+        post_resp.json = AsyncMock(return_value=flux_response)
+        post_resp.__aenter__.return_value = post_resp
+
+        get_resp = AsyncMock()
+        get_resp.status = 200
+        get_resp.read = AsyncMock(return_value=fake_image)
+        get_resp.__aenter__.return_value = get_resp
+
+        mock_session.post = MagicMock(return_value=post_resp)
+        mock_session.get = MagicMock(return_value=get_resp)
+
+        result = await generate_with_plan("flux_2_dev", request)
+
+    assert result is not None
+    assert result.provider_plan == "flux_2_dev"
+    assert result.local_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_generate_image_plan_override(tmp_path: Path) -> None:
+    from agent.skills.media_sources.ai_image import generate_image
+
+    ai_cfg = AiFallbackConfig(plan=AiImagePlan.FLUX_PRO, fallback_chain=[])
+    fake_result = ImageGenerationResult(
+        local_path=tmp_path / "dev.jpg",
+        attribution="FLUX 2 Dev",
+        license="synthetic-ai-generated",
+        title="test",
+        provider_plan="flux_2_dev",
+    )
+    fake_result.local_path.write_bytes(b"x")
+
+    with patch(
+        "agent.skills.media_sources.ai_image.generate_with_plan",
+        new=AsyncMock(return_value=fake_result),
+    ) as mock_gen:
+        result = await generate_image(
+            "test",
+            tmp_path,
+            ai_cfg=ai_cfg,
+            plan_override="flux_2_dev",
+        )
+
+    assert result is not None
+    assert result["provider_plan"] == "flux_2_dev"
+    mock_gen.assert_awaited_once()
+    assert mock_gen.await_args.args[0] == "flux_2_dev"
+
+
+@pytest.mark.asyncio
 async def test_flux_fails_returns_none_with_empty_fallback() -> None:
     from agent.skills.media_sources.ai_image import generate_image
 

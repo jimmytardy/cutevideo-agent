@@ -26,7 +26,7 @@ Sources disponibles :
 - pexels         : photos/vidéos stock modernes, lifestyle, nature
 - pixabay        : idem pexels, plus de variété
 - unsplash       : photos artistiques, ambiances, architecture
-- nasa           : espace, astronomie, science
+- nasa           : espace, astronomie, science (images + vidéos NASA)
 - ai             : génération IA images si aucune source réelle ne convient
 - runway         : génération vidéo IA Runway Gen-4, clips 5-10s haute qualité (coût par clip)
 

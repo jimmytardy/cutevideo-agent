@@ -23,7 +23,6 @@ from api.routes import (
     engagement,
     markets,
     media,
-    media_serve,
     projects,
     scheduler,
     cost,
@@ -67,8 +66,6 @@ app.add_middleware(
 app.include_router(channel_onboarding.router)
 app.include_router(channels.router)
 app.include_router(projects.router)
-if settings.storage_backend == "local":
-    app.include_router(media_serve.router)
 app.include_router(agents.router)
 app.include_router(media.router)
 app.include_router(analytics.router)
@@ -90,8 +87,26 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
     )
 
 
+@app.get("/storage/stats")
+async def storage_stats() -> dict:
+    from agent.core.config import get_storage_settings
+    from agent.core.storage import get_used_bytes
+
+    cfg = get_storage_settings()
+    used = await get_used_bytes()
+    max_bytes = cfg.max_storage_bytes
+    return {
+        "used_bytes": used,
+        "max_bytes": max_bytes,
+        "used_pct": round(used / max_bytes * 100, 1) if max_bytes else 0,
+        "bucket": cfg.bucket or None,
+    }
+
+
 @app.get("/health")
 async def health() -> dict:
+    from agent.core.storage import check_s3_connectivity
+
     db_ok = False
     redis_ok = False
     try:
@@ -105,10 +120,13 @@ async def health() -> dict:
         redis_ok = True
     except Exception:
         pass
-    status = "ok" if db_ok and redis_ok else "degraded"
+    s3_ok, s3_detail = await check_s3_connectivity()
+    overall = "ok" if db_ok and redis_ok and s3_ok else "degraded"
     return {
-        "status": status,
+        "status": overall,
         "database": "ok" if db_ok else "error",
         "redis": "ok" if redis_ok else "error",
         "scheduler": "running" if scheduler_service.running else "stopped",
+        "s3": "ok" if s3_ok else "error",
+        "s3_detail": s3_detail,
     }

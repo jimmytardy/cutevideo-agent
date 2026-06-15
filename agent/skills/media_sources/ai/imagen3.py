@@ -67,11 +67,15 @@ class Imagen3Provider:
             f"/locations/{location}/publishers/google/models/{model}:predict"
         )
 
-        full_prompt = build_documentary_prompt(
-            request.prompt,
-            theme_category=request.theme_category,
-            editorial_tone=request.editorial_tone,
-            aspect_ratio=request.aspect_ratio,
+        full_prompt = (
+            request.prompt
+            if request.use_prompt_as_is
+            else build_documentary_prompt(
+                request.prompt,
+                theme_category=request.theme_category,
+                editorial_tone=request.editorial_tone,
+                aspect_ratio=request.aspect_ratio,
+            )
         )
         aspect = "9:16" if request.aspect_ratio == "9:16" else "16:9"
 

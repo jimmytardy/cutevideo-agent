@@ -4,9 +4,29 @@ set -e
 echo "Applying database migrations..."
 alembic upgrade head
 
-echo "Starting API with hot reload on port 8000..."
-uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload &
-API_PID=$!
+start_api() {
+  uvicorn api.main:app --host 0.0.0.0 --port 8000 \
+    --reload \
+    --reload-dir /app/api \
+    --reload-dir /app/agent \
+    --reload-delay 2 \
+    --reload-exclude '*.pyc' \
+    --reload-exclude '*/__pycache__/*'
+}
+
+echo "Starting API supervisor with hot reload on port 8000..."
+(
+  while true; do
+    echo "Starting uvicorn..."
+    start_api &
+    API_PID=$!
+    wait "$API_PID"
+    EXIT_CODE=$?
+    echo "API exited with code $EXIT_CODE — restarting in 2s..."
+    sleep 2
+  done
+) &
+SUPERVISOR_PID=$!
 
 echo "Waiting for API health check..."
 ready=0
@@ -20,11 +40,11 @@ done
 
 if [ "$ready" -ne 1 ]; then
     echo "API failed to become healthy within 60s"
-    kill "$API_PID" 2>/dev/null || true
+    kill "$SUPERVISOR_PID" 2>/dev/null || true
     exit 1
 fi
 
 echo "Starting dashboard in dev mode on port 3000..."
 cd /app/dashboard
-trap 'kill "$API_PID" 2>/dev/null || true' EXIT INT TERM
+trap 'kill "$SUPERVISOR_PID" 2>/dev/null || true' EXIT INT TERM
 exec npm run dev -- -p 3000 -H 0.0.0.0

@@ -10,8 +10,15 @@ API_URL = "https://gallica.bnf.fr/SRU"
 THUMBNAIL_URL = "https://gallica.bnf.fr/ark:/12148/{ark}/f1.highres"
 
 
-async def search(keywords: list[str], period: str = "") -> list[dict]:
+async def search(
+    keywords: list[str],
+    period: str = "",
+    *,
+    media_type: str = "image",
+) -> list[dict]:
     """Recherche sur Gallica BnF — archives nationales françaises."""
+    if media_type == "video":
+        return []
     query_terms = " and ".join(f'"{kw}"' for kw in keywords[:2] if kw)
     if not query_terms:
         return []
@@ -70,6 +77,7 @@ async def search(keywords: list[str], period: str = "") -> list[dict]:
                 "license": "domaine public",
                 "attribution": f"Gallica BnF — {creator}" if creator else f"Gallica BnF — {title}",
                 "title": title,
+                "asset_type": "image",
             })
     except Exception as e:
         logger.warning("Gallica search error: %s", e)

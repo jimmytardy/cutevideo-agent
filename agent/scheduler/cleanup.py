@@ -17,14 +17,13 @@ logger = logging.getLogger(__name__)
 @dataclass
 class PurgeReport:
     s3_deleted: int = 0
-    local_deleted: int = 0
     dirs_removed: int = 0
     bytes_freed: int = 0
     errors: list[str] = field(default_factory=list)
 
 
 async def purge_video_files(videos: list[Video]) -> PurgeReport:
-    from agent.core.storage import delete_s3_object, is_s3_enabled
+    from agent.core.storage import delete_s3_object
 
     report = PurgeReport()
     now = datetime.now(timezone.utc)
@@ -32,19 +31,10 @@ async def purge_video_files(videos: list[Video]) -> PurgeReport:
     for video in videos:
         try:
             freed = video.file_size_bytes or 0
-            if video.storage_key and is_s3_enabled():
+            if video.storage_key:
                 await delete_s3_object(video.storage_key)
                 report.s3_deleted += 1
                 report.bytes_freed += freed
-
-            if video.local_path:
-                path = Path(video.local_path)
-                if path.exists():
-                    size = path.stat().st_size
-                    path.unlink()
-                    report.local_deleted += 1
-                    if not video.storage_key:
-                        report.bytes_freed += size
 
             async with AsyncSessionFactory() as session:
                 db_video = await session.get(Video, video.id)
@@ -52,7 +42,7 @@ async def purge_video_files(videos: list[Video]) -> PurgeReport:
                     db_video.file_purged_at = now
                     session.add(db_video)
                     await session.commit()
-        except OSError as e:
+        except Exception as e:
             report.errors.append(f"{video.id}: {e}")
             logger.warning("Erreur purge vidéo %s : %s", video.id, e)
 
@@ -64,7 +54,7 @@ async def purge_oldest_until_free(target_free_bytes: int) -> int:
         result = await session.execute(
             select(Video)
             .where(Video.file_purged_at.is_(None))
-            .where((Video.storage_key.isnot(None)) | (Video.local_path.isnot(None)))
+            .where(Video.storage_key.isnot(None))
             .order_by(Video.created_at.asc())
         )
         candidates = list(result.scalars().all())
@@ -100,10 +90,9 @@ async def purge_old_media_files(retention_days: int | None = None) -> PurgeRepor
     report.errors.extend(dirs_report.errors)
 
     logger.info(
-        "Purge planifiée (%d j) : s3=%d local=%d octets=%d dossiers=%d",
+        "Purge planifiée (%d j) : s3=%d octets=%d dossiers=%d",
         days,
         report.s3_deleted,
-        report.local_deleted,
         report.bytes_freed,
         report.dirs_removed,
     )

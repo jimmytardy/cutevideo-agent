@@ -106,7 +106,7 @@ ANTHROPIC_API_KEY=...              # requis pour onboarding (market-analysis, su
 YOUTUBE_REFRESH_TOKEN=...          # recommandé pour l'analyse marché (données concurrents YouTube live)
 ```
 
-Migration : `alembic upgrade head` (révision `005` — colonnes `brand_kit`, `theme_prompt`, `onboarding_step`, etc.).
+Migration : `alembic upgrade head` (révision courante `013`).
 
 Catégorie **`animaux`** : priorité médias `unsplash` → `pexels` → `wikimedia` (voir `data/agent_config.json` et `agent/core/channel_config.py`).
 
@@ -125,7 +125,9 @@ docker compose up -d
 # Dashboard : http://localhost:${APP_PORT:-3000}
 ```
 
-Les migrations Alembic s'appliquent automatiquement au démarrage du conteneur.
+Les migrations Alembic s'appliquent automatiquement au démarrage du conteneur (`app-dev`, `worker-dev`).
+Après un `git pull` avec de nouvelles migrations : `docker compose restart app-dev worker-dev`, ou manuellement :
+`docker compose run --rm --no-deps --entrypoint alembic app-dev upgrade head`.
 Au premier pipeline vidéo, Whisper télécharge le modèle configuré (`WHISPER_MODEL`) — le premier run peut être long.
 
 Pour OAuth YouTube/TikTok via le dashboard Docker, configure `API_BASE_URL` et `YOUTUBE_OAUTH_REDIRECT_URI` avec l'URL **externe** du dashboard (ex. `http://localhost:3000`), pas l'API interne.

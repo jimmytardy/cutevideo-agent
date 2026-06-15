@@ -15,7 +15,7 @@ from agent.core.content_plan_models import DailyContentPlan, ThemeAnalysis, Vide
 from agent.core.database import AsyncSessionFactory, Channel, Project
 from agent.core.learning_context import load_channel_context
 from agent.core.llm_config import compact_learning_context, is_planner_llm_day
-from agent.skills.content_planning.heuristic_planner import build_heuristic_plan
+from agent.skills.content_planning.heuristic_planner import build_heuristic_plan, find_similar_in_history
 from agent.scheduler.content_planning import (
     build_editorial_identity,
     count_planner_projects_for_publish_date,
@@ -116,7 +116,8 @@ Règles strictes :
 - Exactement {short_count} entrées dans short_videos
 - Chaque short_derived doit référencer un parent_long_index valide (< {long_count}) si long_count > 0
 - En mode shorts_only (long_count=0) : shorts autonomes, parent_long_index=null, format short_standalone
-- Voix/narration : optionnelle sur les shorts — privilégier visuel + texte à l'écran quand la voix n'apporte rien
+- Voix/narration : recommandée sur shorts éducatifs (needs_voice true) ; optionnelle pour formats purement visuels
+- Musique (needs_music) : optionnelle — false si voix seule ou son ambiant suffisent
 - Aucune répétition sémantique avec l'historique
 - subject = formulation claire pour alimenter le scénariste (pas le titre YouTube seul)"""
 
@@ -313,7 +314,7 @@ class ContentPlannerAgent(BaseAgent):
             extra_cacheable=compact_learning_context(learning),
         )
         data = self._parse_json(raw)
-        return self._build_plan(
+        plan = self._build_plan(
             channel,
             data,
             production_date,
@@ -323,6 +324,7 @@ class ContentPlannerAgent(BaseAgent):
             default_long_s,
             default_short_s,
         )
+        return self._dedup_plan_against_history(plan, history)
 
     async def _persist_plan(
         self,
@@ -479,6 +481,31 @@ class ContentPlannerAgent(BaseAgent):
             selection_rationale=str(data.get("selection_rationale", "")),
             evergreen_fallback_used=bool(data.get("evergreen_fallback_used", False)),
         )
+
+    @staticmethod
+    def _dedup_plan_against_history(
+        plan: DailyContentPlan, history: list[dict[str, Any]]
+    ) -> DailyContentPlan:
+        """Filtre les topics LLM trop similaires à l'historique (vérification post-génération)."""
+        live_history = list(history)
+
+        filtered_longs: list[VideoTopicPlan] = []
+        for topic in plan.long_videos:
+            if find_similar_in_history(topic.subject, live_history):
+                logger.warning("Topic LLM filtré post-génération (doublon) : %r", topic.subject)
+            else:
+                filtered_longs.append(topic)
+                live_history.append({"subject": topic.subject, "title": topic.provisional_title})
+
+        filtered_shorts: list[VideoTopicPlan] = []
+        for topic in plan.short_videos:
+            if find_similar_in_history(topic.subject, live_history):
+                logger.warning("Short LLM filtré post-génération (doublon) : %r", topic.subject)
+            else:
+                filtered_shorts.append(topic)
+                live_history.append({"subject": topic.subject, "title": topic.provisional_title})
+
+        return plan.model_copy(update={"long_videos": filtered_longs, "short_videos": filtered_shorts})
 
     @staticmethod
     def _parse_json(raw: str) -> dict[str, Any]:

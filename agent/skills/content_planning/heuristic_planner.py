@@ -31,6 +31,27 @@ def _is_too_similar(candidate: str, existing: list[str]) -> bool:
     return False
 
 
+def find_similar_in_history(
+    candidate: str,
+    history: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return history entries whose any text field is too similar to candidate."""
+    if not candidate.strip():
+        return []
+    results: list[dict[str, Any]] = []
+    for item in history:
+        for key in ("subject", "theme", "title", "provisional_title"):
+            val = item.get(key)
+            if val and fuzz.token_set_ratio(candidate, str(val).strip()) >= SIMILARITY_THRESHOLD:
+                results.append({
+                    "title": item.get("title") or item.get("provisional_title"),
+                    "theme": item.get("theme"),
+                    "created_at": item.get("created_at"),
+                })
+                break
+    return results
+
+
 def _pick_evergreen_topics(
     evergreen: list[str],
     count: int,
@@ -78,7 +99,7 @@ def build_heuristic_plan(
                 priority=i + 1,
                 format="long",
                 provisional_title=title,
-                angle="Exploration pédagogique du thème de la chaîne.",
+                angle="Exploration du thème de la chaîne.",
                 narrative_format="récit",
                 estimated_duration_s=default_long_s,
                 sub_theme=channel.theme_category,

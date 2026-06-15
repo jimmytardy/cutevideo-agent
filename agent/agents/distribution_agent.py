@@ -157,7 +157,7 @@ class DistributionAgent(BaseAgent):
 
         if video.file_purged_at:
             return False
-        if not video.storage_key and not (video.local_path and Path(video.local_path).exists()):
+        if not video.storage_key:
             return False
 
         if await self._has_publication_for_video(video.id, platform):

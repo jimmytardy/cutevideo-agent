@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import useSWR from 'swr'
 import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
@@ -13,42 +13,26 @@ import ToggleButtonGroup from '@mui/material/ToggleButtonGroup'
 import Stepper from '@mui/material/Stepper'
 import Step from '@mui/material/Step'
 import StepLabel from '@mui/material/StepLabel'
-import Chip from '@mui/material/Chip'
 import CircularProgress from '@mui/material/CircularProgress'
 import Alert from '@mui/material/Alert'
-import Divider from '@mui/material/Divider'
 import Paper from '@mui/material/Paper'
 import Stack from '@mui/material/Stack'
 import AccessTimeIcon from '@mui/icons-material/AccessTime'
 import MovieIcon from '@mui/icons-material/Movie'
-import CheckCircleIcon from '@mui/icons-material/CheckCircle'
-import DeleteIcon from '@mui/icons-material/Delete'
-import PublishIcon from '@mui/icons-material/Publish'
-import YouTubeIcon from '@mui/icons-material/YouTube'
+import RocketLaunchIcon from '@mui/icons-material/RocketLaunch'
 import AppShell from '@/components/AppShell'
-import PipelineVisualizer from '@/components/PipelineVisualizer'
 import {
   createProject,
-  deleteProject,
   fetchChannels,
-  fetchProjectVideos,
-  publishProject,
   runPipeline,
-  fetcher,
+  checkTopicSimilarity,
   type Channel,
-  type Project,
-  type Video,
+  type SimilarTopic,
 } from '@/lib/api'
 
 type VideoType = 'short' | 'long'
 
-const STEPS = ['Configurer', 'Estimation', 'Génération', 'Résultat']
-
-const PLATFORMS = [
-  { id: 'youtube', label: 'YouTube', icon: <YouTubeIcon sx={{ color: '#FF0000' }} /> },
-  { id: 'tiktok', label: 'TikTok', icon: <MovieIcon sx={{ color: '#010101' }} /> },
-  { id: 'instagram', label: 'Instagram', icon: <MovieIcon sx={{ color: '#E1306C' }} /> },
-]
+const STEPS = ['Configurer', 'Estimation', 'Lancement']
 
 function estimateMinutes(type: VideoType, durationSeconds: number): number {
   if (type === 'short') return 8
@@ -68,36 +52,33 @@ export default function CreatePage() {
   const [videoType, setVideoType] = useState<VideoType>('long')
   const [durationSeconds, setDurationSeconds] = useState(1200) // 20 min default
 
-  // Step 2 — pipeline
+  // Similarity check
+  const [similarTopics, setSimilarTopics] = useState<SimilarTopic[]>([])
+  const [checkingDuplicate, setCheckingDuplicate] = useState(false)
+
+  // Step 2 — projet lancé
   const [projectId, setProjectId] = useState<string | null>(null)
   const [launching, setLaunching] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
 
-  // Step 3 — result
-  const [videos, setVideos] = useState<Video[]>([])
-  const [publishingPlatform, setPublishingPlatform] = useState<string | null>(null)
-  const [publishSuccess, setPublishSuccess] = useState<string | null>(null)
-  const [publishError, setPublishError] = useState<string | null>(null)
-  const [deleting, setDeleting] = useState(false)
-
-  const { data: project } = useSWR<Project>(
-    projectId ? `/api/v1/projects/${projectId}` : null,
-    fetcher,
-    { refreshInterval: step === 2 ? 3000 : 0 },
-  )
-
-  // Advance to result step when pipeline finishes
-  const advancedRef = useRef(false)
   useEffect(() => {
-    if (step !== 2 || !project || advancedRef.current) return
-    if (project.status === 'approved' || project.status === 'failed') {
-      advancedRef.current = true
-      if (project.status === 'approved' && projectId) {
-        fetchProjectVideos(projectId).then(setVideos)
-      }
-      setStep(3)
+    if (!channelId || prompt.trim().length < 10) {
+      setSimilarTopics([])
+      return
     }
-  }, [project, step, projectId])
+    const timeout = setTimeout(async () => {
+      setCheckingDuplicate(true)
+      try {
+        const result = await checkTopicSimilarity(channelId, prompt.trim())
+        setSimilarTopics(result.similar_topics)
+      } catch {
+        // non-bloquant
+      } finally {
+        setCheckingDuplicate(false)
+      }
+    }, 600)
+    return () => clearTimeout(timeout)
+  }, [channelId, prompt])
 
   const selectedChannel = channels?.find((c) => c.id === channelId)
   const estimatedMin = estimateMinutes(videoType, durationSeconds)
@@ -114,7 +95,6 @@ export default function CreatePage() {
       const created = await createProject(channelId, prompt.trim(), targetSeconds)
       setProjectId(created.id)
       await runPipeline(created.id)
-      advancedRef.current = false
       setStep(2)
     } catch (e) {
       setCreateError(e instanceof Error ? e.message : 'Erreur inconnue')
@@ -122,39 +102,6 @@ export default function CreatePage() {
       setLaunching(false)
     }
   }
-
-  const handlePublish = async (platform: string) => {
-    if (!projectId) return
-    setPublishingPlatform(platform)
-    setPublishError(null)
-    try {
-      await publishProject(projectId, platform)
-      setPublishSuccess(platform)
-    } catch (e) {
-      setPublishError(e instanceof Error ? e.message : 'Erreur publication')
-    } finally {
-      setPublishingPlatform(null)
-    }
-  }
-
-  const handleDelete = async () => {
-    if (!projectId) return
-    setDeleting(true)
-    try {
-      await deleteProject(projectId)
-      // Reset to start
-      setStep(0)
-      setProjectId(null)
-      setVideos([])
-      setPrompt('')
-      setPublishSuccess(null)
-      advancedRef.current = false
-    } finally {
-      setDeleting(false)
-    }
-  }
-
-  const approvedVideo = videos.find((v) => v.status === 'approved') ?? videos[0] ?? null
 
   return (
     <AppShell>
@@ -197,6 +144,27 @@ export default function CreatePage() {
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
             />
+
+            {checkingDuplicate && (
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <CircularProgress size={14} />
+                <Typography variant="caption" color="text.secondary">Vérification des doublons…</Typography>
+              </Box>
+            )}
+
+            {similarTopics.length > 0 && (
+              <Alert severity="warning">
+                <Typography variant="body2" fontWeight={600} gutterBottom>
+                  {similarTopics.length} vidéo{similarTopics.length > 1 ? 's' : ''} similaire{similarTopics.length > 1 ? 's' : ''} déjà réalisée{similarTopics.length > 1 ? 's' : ''} sur cette chaîne
+                </Typography>
+                {similarTopics.map((t, i) => (
+                  <Typography key={i} variant="caption" display="block">
+                    • {t.title || t.theme || '(sans titre)'}
+                    {t.created_at ? ` — ${new Date(t.created_at).toLocaleDateString('fr-FR')}` : ''}
+                  </Typography>
+                ))}
+              </Alert>
+            )}
 
             <Box>
               <Typography variant="body2" sx={{ mb: 1.5 }}>
@@ -298,190 +266,34 @@ export default function CreatePage() {
           </Stack>
         )}
 
-        {/* ── Step 2 : Génération en cours ── */}
+        {/* ── Step 2 : Projet lancé ── */}
         {step === 2 && projectId && (
-          <Stack spacing={3} alignItems="center">
-            <Box sx={{ textAlign: 'center' }}>
-              <CircularProgress size={56} sx={{ mb: 2 }} />
-              <Typography variant="h6">Génération en cours…</Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-                Temps estimé : ~{estimatedMin} min · Pipeline en cours d&apos;exécution
-              </Typography>
-            </Box>
-
-            {project && (
-              <Chip
-                label={project.status}
-                color={
-                  project.status === 'running'
-                    ? 'warning'
-                    : project.status === 'approved'
-                    ? 'success'
-                    : project.status === 'failed'
-                    ? 'error'
-                    : 'default'
-                }
-              />
-            )}
-
-            <Box sx={{ width: '100%' }}>
-              <Typography variant="subtitle2" sx={{ mb: 1 }}>
-                Progression des agents
-              </Typography>
-              <PipelineVisualizer projectId={projectId} />
-            </Box>
-          </Stack>
-        )}
-
-        {/* ── Step 3 : Résultat ── */}
-        {step === 3 && projectId && (
-          <Stack spacing={3}>
-            {project?.status === 'failed' ? (
-              <Alert severity="error">
-                La génération a échoué. Consultez les détails dans{' '}
-                <a href={`/projects/${projectId}`}>la page projet</a>.
-              </Alert>
-            ) : (
-              <Alert severity="success" icon={<CheckCircleIcon />}>
-                Vidéo générée avec succès !
-              </Alert>
-            )}
-
-            {/* Video preview */}
-            {approvedVideo?.local_path && (
-              <Paper variant="outlined" sx={{ p: 2, borderRadius: 2 }}>
-                <Typography variant="subtitle2" sx={{ mb: 1.5 }}>
-                  Prévisualisation
-                </Typography>
-                <Box
-                  component="video"
-                  controls
-                  sx={{ width: '100%', borderRadius: 1, maxHeight: 420 }}
-                  src={`/api/v1/media/temp/${projectId}?path=${encodeURIComponent(approvedVideo.local_path)}`}
-                />
-                <Stack direction="row" spacing={1} sx={{ mt: 1.5 }}>
-                  {approvedVideo.video_type && (
-                    <Chip label={approvedVideo.video_type} size="small" />
-                  )}
-                  {approvedVideo.duration_s && (
-                    <Chip
-                      label={`${Math.round(approvedVideo.duration_s)}s`}
-                      size="small"
-                      variant="outlined"
-                    />
-                  )}
-                </Stack>
-              </Paper>
-            )}
-
-            {!approvedVideo?.local_path && project?.status === 'approved' && (
-              <Alert severity="info">
-                Vidéo approuvée — fichier non disponible localement (stockage S3 ou chemin inaccessible).
-              </Alert>
-            )}
-
-            <Divider />
-
-            {/* Publish */}
-            {project?.status === 'approved' && (
-              <Box>
-                <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 2 }}>
-                  Publier sur
-                </Typography>
-
-                {publishSuccess && (
-                  <Alert severity="success" sx={{ mb: 2 }}>
-                    Publication {publishSuccess} créée — sera envoyée lors du prochain passage du scheduler.
-                  </Alert>
-                )}
-                {publishError && (
-                  <Alert severity="error" sx={{ mb: 2 }}>
-                    {publishError}
-                  </Alert>
-                )}
-
-                <Stack direction="row" spacing={2} flexWrap="wrap">
-                  {PLATFORMS.map((p) => {
-                    const channelSupports =
-                      p.id === 'youtube'
-                        ? !!selectedChannel?.youtube_channel_id
-                        : p.id === 'tiktok'
-                        ? !!selectedChannel?.tiktok_enabled
-                        : p.id === 'instagram'
-                        ? !!selectedChannel?.instagram_page_id
-                        : false
-
-                    return (
-                      <Button
-                        key={p.id}
-                        variant={publishSuccess === p.id ? 'contained' : 'outlined'}
-                        color={publishSuccess === p.id ? 'success' : 'primary'}
-                        startIcon={
-                          publishingPlatform === p.id ? (
-                            <CircularProgress size={16} />
-                          ) : publishSuccess === p.id ? (
-                            <CheckCircleIcon />
-                          ) : (
-                            p.icon
-                          )
-                        }
-                        disabled={
-                          !channelSupports ||
-                          !!publishingPlatform ||
-                          publishSuccess === p.id
-                        }
-                        onClick={() => handlePublish(p.id)}
-                        title={!channelSupports ? `${p.label} non configuré sur cette chaîne` : undefined}
-                      >
-                        {p.label}
-                        {!channelSupports && (
-                          <Typography
-                            component="span"
-                            variant="caption"
-                            sx={{ ml: 0.5, opacity: 0.6 }}
-                          >
-                            (non configuré)
-                          </Typography>
-                        )}
-                      </Button>
-                    )
-                  })}
-                </Stack>
-              </Box>
-            )}
-
-            <Divider />
-
-            {/* Actions */}
-            <Stack direction="row" spacing={2} justifyContent="space-between">
+          <Stack spacing={3} alignItems="center" sx={{ textAlign: 'center', py: 4 }}>
+            <RocketLaunchIcon sx={{ fontSize: 56, color: 'primary.main' }} />
+            <Typography variant="h6">Projet créé — génération lancée</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 420 }}>
+              Le pipeline tourne en arrière-plan (estimation ~{estimatedMin} min).
+              Suivez l&apos;avancement, les agents et la vidéo finale depuis la page du projet.
+            </Typography>
+            <Stack direction="row" spacing={2} sx={{ mt: 1 }}>
+              <Button
+                variant="contained"
+                size="large"
+                href={`/projects/${projectId}`}
+              >
+                Voir l&apos;avancement du projet
+              </Button>
               <Button
                 variant="outlined"
-                color="error"
-                startIcon={deleting ? <CircularProgress size={16} /> : <DeleteIcon />}
-                disabled={deleting}
-                onClick={handleDelete}
+                onClick={() => {
+                  setStep(0)
+                  setProjectId(null)
+                  setPrompt('')
+                  setCreateError(null)
+                }}
               >
-                Supprimer le projet
+                Nouvelle vidéo
               </Button>
-              <Stack direction="row" spacing={1}>
-                <Button href={`/projects/${projectId}`} variant="outlined">
-                  Voir les détails
-                </Button>
-                <Button
-                  variant="contained"
-                  startIcon={<PublishIcon />}
-                  onClick={() => {
-                    setStep(0)
-                    setProjectId(null)
-                    setVideos([])
-                    setPrompt('')
-                    setPublishSuccess(null)
-                    advancedRef.current = false
-                  }}
-                >
-                  Nouvelle vidéo
-                </Button>
-              </Stack>
             </Stack>
           </Stack>
         )}

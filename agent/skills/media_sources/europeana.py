@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Literal
 
 import aiohttp
 
@@ -9,19 +10,26 @@ from agent.core.config import settings
 logger = logging.getLogger(__name__)
 
 API_URL = "https://api.europeana.eu/record/v2/search.json"
+MediaType = Literal["image", "video"]
 
 
-async def search(keywords: list[str], period: str = "") -> list[dict]:
-    """Recherche sur Europeana — patrimoine culturel européen."""
+async def search(
+    keywords: list[str],
+    period: str = "",
+    *,
+    media_type: MediaType = "image",
+) -> list[dict]:
+    """Recherche sur Europeana — patrimoine culturel européen (images ou vidéos)."""
     if not settings.europeana_api_key:
         logger.debug("Europeana API key non configurée, skip")
         return []
 
     query = " ".join(keywords[:3])
+    asset_filter = "TYPE:VIDEO" if media_type == "video" else "TYPE:IMAGE"
     params = {
         "wskey": settings.europeana_api_key,
         "query": query,
-        "qf": ["TYPE:IMAGE", "RIGHTS:*open*"],
+        "qf": [asset_filter, "RIGHTS:*open*"],
         "rows": "10",
         "profile": "rich",
     }
@@ -50,16 +58,25 @@ async def search(keywords: list[str], period: str = "") -> list[dict]:
             title = (item.get("title") or ["Europeana"])[0]
             creator = (item.get("dcCreator") or [""])[0]
             provider = (item.get("dataProvider") or ["Europeana"])[0]
+            preview = (item.get("edmPreview") or [None])[0]
 
-            results.append({
+            entry: dict = {
                 "source": "europeana",
                 "url": url,
                 "license": rights,
-                "attribution": f"{provider} via Europeana — {creator}" if creator else f"{provider} via Europeana",
+                "attribution": (
+                    f"{provider} via Europeana — {creator}"
+                    if creator
+                    else f"{provider} via Europeana"
+                ),
                 "title": title,
-            })
-    except Exception as e:
-        logger.warning("Europeana search error: %s", e)
+                "asset_type": "video" if media_type == "video" else "image",
+            }
+            if media_type == "video" and preview:
+                entry["thumbnail_url"] = preview
+            results.append(entry)
+    except Exception as exc:
+        logger.warning("Europeana search error: %s", exc)
 
     return results
 

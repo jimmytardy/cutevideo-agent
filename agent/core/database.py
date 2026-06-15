@@ -48,6 +48,7 @@ class Channel(Base):
     theme_category: Mapped[str] = mapped_column(String, nullable=False)
     niche_prompt: Mapped[str | None] = mapped_column(String, nullable=True)
     theme_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    creative_brief: Mapped[str | None] = mapped_column(Text, nullable=True)
     brand_kit: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     onboarding_step: Mapped[str] = mapped_column(String, default="complete", nullable=False)
     tiktok_publish_defaults: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
@@ -123,6 +124,13 @@ class MediaAsset(Base):
     attribution: Mapped[str | None] = mapped_column(String, nullable=True)
     asset_type: Mapped[str | None] = mapped_column(String, nullable=True)
     selected: Mapped[bool] = mapped_column(Boolean, default=False)
+    relevance_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    relevance_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    beat_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    library_status: Mapped[str] = mapped_column(String, default="selected")
+    generation_prompt: Mapped[str | None] = mapped_column(String, nullable=True)
+    visual_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    iteration: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMPTZ, server_default=func.now()
     )
@@ -141,6 +149,7 @@ class AudioFile(Base):
     tts_engine: Mapped[str | None] = mapped_column(String, nullable=True)
     voice: Mapped[str | None] = mapped_column(String, nullable=True)
     transcript: Mapped[str | None] = mapped_column(String, nullable=True)
+    word_timestamps: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMPTZ, server_default=func.now()
     )
@@ -178,6 +187,7 @@ class CriticReport(Base):
     global_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     feedback: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     requested_changes: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    video_analysis: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMPTZ, server_default=func.now()
     )

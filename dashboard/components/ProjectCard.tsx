@@ -11,8 +11,9 @@ import Tooltip from '@mui/material/Tooltip'
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline'
 import PlayArrowIcon from '@mui/icons-material/PlayArrow'
 import VisibilityIcon from '@mui/icons-material/Visibility'
+import DeleteIcon from '@mui/icons-material/Delete'
 import Link from 'next/link'
-import { runPipeline, type Project } from '@/lib/api'
+import { runPipeline, deleteProject, type Project } from '@/lib/api'
 
 const STATUS_COLOR: Record<string, 'default' | 'warning' | 'success' | 'error' | 'info'> = {
   pending: 'default',
@@ -36,6 +37,16 @@ export default function ProjectCard({ project, onRefresh }: ProjectCardProps) {
   const handleRun = async () => {
     await runPipeline(project.id)
     onRefresh()
+  }
+
+  const handleDelete = async () => {
+    if (!window.confirm(`Supprimer "${project.title || project.theme}" ? Cette action est irréversible.`)) return
+    try {
+      await deleteProject(project.id)
+      onRefresh()
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : 'Erreur suppression')
+    }
   }
 
   return (
@@ -94,6 +105,16 @@ export default function ProjectCard({ project, onRefresh }: ProjectCardProps) {
         >
           Détails
         </Button>
+        {project.status !== 'running' && (
+          <Button
+            size="small"
+            color="error"
+            startIcon={<DeleteIcon />}
+            onClick={handleDelete}
+          >
+            Supprimer
+          </Button>
+        )}
       </CardActions>
     </Card>
   )

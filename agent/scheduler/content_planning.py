@@ -21,7 +21,7 @@ def build_editorial_identity(channel: Channel) -> dict[str, str]:
         "niche_prompt": channel.niche_prompt or "",
         "content_angle": str(kit.get("content_angle", "")),
         "target_audience": str(editorial.get("target_audience", "Grand public curieux, français")),
-        "tone": str(editorial.get("tone", "Pédagogique, accessible, engageant")),
+        "tone": str(editorial.get("tone", "")),
         "differentiator": str(
             editorial.get("differentiator", kit.get("content_angle", "Angle documentaire distinctif"))
         ),

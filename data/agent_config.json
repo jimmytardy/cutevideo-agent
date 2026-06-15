@@ -1,16 +1,52 @@
 {
   "pipeline": {
-    "max_critic_iterations": 3,
-    "min_critic_score": 70,
+    "max_critic_iterations": 5,
+    "min_critic_score": 90,
+    "min_voice_score": 6,
+    "min_short_structure_score": 11,
     "min_image_duration_s": 4,
-    "images_per_segment": 4
+    "min_image_duration_short_s": 2,
+    "images_per_segment": 4,
+    "visual_beats": {
+      "enabled": true,
+      "min_beats_per_short_segment": 3,
+      "max_beats_per_segment": 8,
+      "min_diagram_duration_s": 6.0,
+      "min_diagram_duration_short_s": 4.0
+    }
+  },
+  "media_library": {
+    "enabled": true,
+    "pool_min_score": 70,
+    "reuse_min_score": 80,
+    "max_pool_size_per_project": 100,
+    "scope": "project"
+  },
+  "production": {
+    "short_derivation_strategy": "hybrid",
+    "short_derivation_mode": "free_sources_only",
+    "hybrid_teaser_max_clips": 2
   },
   "tts": {
     "engine": "azure",
-    "voice": "fr-FR-HenriNeural",
+    "voice": "fr-FR-Vivienne:DragonHDLatestNeural",
     "fallback_voice": "fr-FR-DeniseNeural",
-    "default_style": "narration-professional",
-    "default_rate": "+0%"
+    "default_style": "narration-relaxed",
+    "default_rate": "+0%",
+    "insert_pauses": true,
+    "gemini": {
+      "apply_to": "off",
+      "model": "gemini-2.5-flash-preview-tts",
+      "voice": "Leda",
+      "language_code": "fr"
+    }
+  },
+  "research": {
+    "enabled": true,
+    "model": "gemini-3.5-flash",
+    "fallback_model": "gemini-3.1-pro-preview",
+    "json_reformat_model": "gemini-2.5-flash-lite",
+    "max_sources": 8
   },
   "video": {
     "long": {
@@ -19,6 +55,14 @@
       "fps": 25,
       "bitrate": "8M",
       "audio_bitrate": "192k"
+    },
+    "ken_burns": {
+      "zoom_factor": 0.05,
+      "pan_enabled": false
+    },
+    "transitions": {
+      "enabled": true,
+      "duration_s": 0.4
     },
     "short": {
       "width": 1080,
@@ -35,7 +79,23 @@
     "model": "large-v3",
     "language": "fr"
   },
+  "subtitles": {
+    "enabled": true,
+    "style": "karaoke",
+    "max_words_per_line": 3,
+    "pause_threshold_ms": 400,
+    "font_name": "DejaVu Sans",
+    "font_size": 68,
+    "primary_color": "#FFFFFF",
+    "highlight_color": "#FFE600",
+    "outline_color": "#000000",
+    "outline_width": 4,
+    "vertical_position": 0.65,
+    "margin_v": 120
+  },
   "media_sources": {
+    "prefer_video": true,
+    "video_clips_per_segment": 1,
     "priority_by_theme": {
       "histoire": [
         "gallica",
@@ -58,12 +118,25 @@
         "wikimedia"
       ],
       "science": [
+        "nasa",
         "wikimedia",
-        "nasa"
+        "pexels",
+        "pixabay"
       ],
       "art": [
         "europeana",
         "wikimedia"
+      ],
+      "sport": [
+        "pexels",
+        "pixabay",
+        "wikimedia",
+        "unsplash"
+      ],
+      "true_crime": [
+        "wikimedia",
+        "pexels",
+        "internet_archive"
       ],
       "default": [
         "wikimedia",
@@ -71,7 +144,43 @@
         "pexels"
       ]
     },
+    "priority_by_visual_type": {
+      "sports_action": ["pexels", "pixabay", "wikimedia", "unsplash"],
+      "stadium_establishing": ["pexels", "unsplash", "pixabay", "wikimedia"],
+      "space_photo": ["nasa", "wikimedia", "pexels"],
+      "archival_footage": ["gallica", "europeana", "wikimedia", "internet_archive"],
+      "crime_documentary": ["wikimedia", "pexels", "internet_archive", "pixabay"],
+      "artwork": ["europeana", "wikimedia", "unsplash"]
+    },
+    "ai_only_visual_types": [
+      "scientific_diagram",
+      "infographic",
+      "data_chart",
+      "cross_section",
+      "timeline",
+      "map",
+      "quote_card",
+      "statistic_highlight",
+      "text_card",
+      "headline_overlay",
+      "battle_map",
+      "versus_card",
+      "lower_third",
+      "countdown_timer",
+      "ui_mockup",
+      "microscope_view",
+      "meme_template",
+      "cartoon",
+      "satirical_illustration",
+      "visual_pun"
+    ],
     "min_width_px": 1280,
+    "relevance_min_score": 60,
+    "max_search_iterations": 3,
+    "min_passing_candidates_multiplier": 1.5,
+    "relevance_min_score_high_precision": 75,
+    "niche_threshold_candidates": 2,
+    "enable_post_selection_audit": true,
     "niche_fallback_rates": {
       "histoire": 0.05,
       "france": 0.05,
@@ -91,8 +200,12 @@
       ],
       "max_images_per_segment": 2,
       "max_ai_images_per_video": 10,
+      "dev_plan": "flux_2_dev",
+      "dev_validation_attempts": 3,
+      "paid_validation_attempts": 3,
       "plan_pricing_eur": {
         "flux_schnell": 0.003,
+        "flux_2_dev": 0.024,
         "flux_pro": 0.05,
         "flux_ultra": 0.07,
         "imagen3_fast": 0.018,
@@ -100,6 +213,7 @@
       },
       "flux": {
         "schnell_model": "fal-ai/flux/schnell",
+        "dev_model": "fal-ai/flux-2",
         "pro_model": "fal-ai/flux-pro/v1.1",
         "ultra_model": "fal-ai/flux-pro/v1.1-ultra"
       },
@@ -260,5 +374,11 @@
     "model": "gen4_turbo",
     "resolution": "1280:720",
     "max_clips_per_video": 3
+  },
+  "audio_mix": {
+    "music_volume_with_voice": 0.06,
+    "music_volume_ambient_only": 0.04,
+    "music_volume_no_voice": 0.10,
+    "ducking_enabled": true
   }
 }

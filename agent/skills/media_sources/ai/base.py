@@ -14,6 +14,7 @@ class ImageGenerationRequest:
     aspect_ratio: str = "16:9"
     image_width: int = 1920
     image_height: int = 1080
+    use_prompt_as_is: bool = False
 
 
 @dataclass(frozen=True)

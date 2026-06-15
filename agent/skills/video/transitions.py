@@ -12,6 +12,23 @@ class TransitionType(str, Enum):
     WIPE_RIGHT = "wiperight"
 
 
+async def _has_audio_stream(path: Path) -> bool:
+    cmd = [
+        "ffprobe", "-v", "error",
+        "-select_streams", "a",
+        "-show_entries", "stream=index",
+        "-of", "csv=p=0",
+        str(path),
+    ]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, _ = await proc.communicate()
+    return bool(stdout.decode().strip())
+
+
 async def add_transition(
     clip_a: Path,
     clip_b: Path,
@@ -33,16 +50,27 @@ async def add_transition(
 
     offset = duration_a - duration_s
 
+    has_audio = await _has_audio_stream(clip_a) and await _has_audio_stream(clip_b)
+    xfade_filter = (
+        f"[0:v][1:v]xfade=transition={transition.value}:duration={duration_s}:offset={offset}[v]"
+    )
+    if has_audio:
+        filter_complex = f"{xfade_filter};[0:a][1:a]acrossfade=d={duration_s}[a]"
+        maps = ["-map", "[v]", "-map", "[a]"]
+        audio_codec = ["-c:a", "aac"]
+    else:
+        filter_complex = xfade_filter
+        maps = ["-map", "[v]"]
+        audio_codec = []
+
     cmd = [
         "ffmpeg", "-y",
         "-i", str(clip_a),
         "-i", str(clip_b),
-        "-filter_complex",
-        f"[0][1]xfade=transition={transition.value}:duration={duration_s}:offset={offset}[v];"
-        f"[0:a][1:a]acrossfade=d={duration_s}[a]",
-        "-map", "[v]", "-map", "[a]",
+        "-filter_complex", filter_complex,
+        *maps,
         "-c:v", "libx264", "-crf", "22",
-        "-c:a", "aac",
+        *audio_codec,
         str(output_path),
     ]
 

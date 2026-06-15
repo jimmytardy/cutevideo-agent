@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from pathlib import Path
 from typing import Any
 
 from agent.core.config import settings
@@ -160,10 +159,3 @@ async def _poll_publish_status(channel: Channel, publish_id: str) -> None:
     logger.warning("Timeout poll TikTok pour publish_id=%s", publish_id)
 
 
-def build_public_video_url(project_id: str, video_path: Path) -> str:
-    """Construit une URL publique pour TikTok (endpoint API temp)."""
-    from urllib.parse import quote
-
-    rel = quote(str(video_path.resolve()), safe="")
-    base = settings.media_public_base_url.rstrip("/")
-    return f"{base}/api/v1/media/temp/{project_id}?path={rel}"

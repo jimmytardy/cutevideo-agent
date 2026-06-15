@@ -16,9 +16,11 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://cutevideo:cutevideo@shared-postgres:5432/cutevideo
       REDIS_URL: redis://redis:6379
-      INTERNAL_API_URL: http://host.docker.internal:8000
+      # L'API uvicorn tourne dans le même conteneur (voir docker-entrypoint.sh),
+      # donc le proxy Next.js doit viser localhost, pas l'hôte.
+      INTERNAL_API_URL: http://127.0.0.1:8000
     ports:
-      - "${APP_HOST:-127.0.0.1}:${APP_PORT:-3000}:3000"
+      - "${APP_HOST:-127.0.0.1}:${PORT:-3000}:3000"
     volumes:
       - app_tmp:/app/tmp
       - app_output:/app/output
@@ -27,6 +29,32 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  worker:
+    container_name: cuteagent-video-worker
+    image: cuteagent-video:local
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://cutevideo:cutevideo@shared-postgres:5432/cutevideo
+      REDIS_URL: redis://redis:6379
+    volumes:
+      - app_tmp:/app/tmp
+      - app_output:/app/output
+    networks:
+      - local-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    entrypoint: ["./scripts/docker-entrypoint.worker.dev.sh"]
+    restart: unless-stopped
+    depends_on:
+      shared-postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   app-dev:
     container_name: cuteagent-video-dev
@@ -37,17 +65,21 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://cutevideo:cutevideo@shared-postgres:5432/cutevideo
       REDIS_URL: redis://redis:6379
+      # L'API uvicorn tourne dans le même conteneur (voir docker-entrypoint.dev.sh),
+      # donc le proxy Next.js doit viser localhost, pas l'hôte.
       INTERNAL_API_URL: http://127.0.0.1:8000
+      SCHEDULER_ENABLED: "false"
       WATCHPACK_POLLING: "true"
       CHOKIDAR_USEPOLLING: "true"
     ports:
-      - "${APP_PORT:-3000}:3000"
+      - "${PORT:-3000}:3000"
     volumes:
       - ./agent:/app/agent
       - ./api:/app/api
       - ./alembic:/app/alembic
       - ./alembic.ini:/app/alembic.ini
       - ./data:/app/data
+      - ./scripts:/app/scripts
       - ./dashboard:/app/dashboard
       - /app/dashboard/node_modules
       - /app/dashboard/.next
@@ -57,6 +89,38 @@ services:
       - local-network
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    depends_on:
+      shared-postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      worker-dev:
+        condition: service_started
+
+  worker-dev:
+    container_name: cuteagent-video-worker-dev
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://cutevideo:cutevideo@shared-postgres:5432/cutevideo
+      REDIS_URL: redis://redis:6379
+      SCHEDULER_ENABLED: "false"
+    volumes:
+      - ./agent:/app/agent
+      - ./api:/app/api
+      - ./alembic:/app/alembic
+      - ./alembic.ini:/app/alembic.ini
+      - ./data:/app/data
+      - ./scripts:/app/scripts
+      - app_tmp:/app/tmp
+      - app_output:/app/output
+    networks:
+      - local-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    entrypoint: ["./scripts/docker-entrypoint.worker.dev.sh"]
     depends_on:
       shared-postgres:
         condition: service_healthy

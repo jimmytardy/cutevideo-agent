@@ -21,7 +21,7 @@ CLIPPER_PROMPT_TEMPLATE = """Analyse ce scénario de vidéo éducative et identi
 pour créer des shorts viraux de 45 à 90 secondes.
 
 CHAÎNE : {channel_name} ({theme_category})
-SUJET : {theme}
+{creative_brief_block}SUJET : {theme}
 DURÉE TOTALE : {duration_s} secondes
 
 SEGMENTS :
@@ -85,21 +85,24 @@ class ClipperAgent(BaseAgent):
 
     name = "clipper_agent"
 
-    async def run(self, ctx: "PipelineContext") -> list[ClipCandidate]:  # type: ignore[override]
+    async def run(self, ctx: "PipelineContext", max_clips: int | None = None) -> list[ClipCandidate]:  # type: ignore[override]
         run = await self.start_run(ctx.project_id, {"theme": ctx.theme})
         try:
-            clips = await self._find_clips(ctx)
+            clips = await self._find_clips(ctx, max_clips=max_clips)
             await self.end_run(run, {"clips_count": len(clips)})
             return clips
         except Exception as e:
             await self.fail_run(run, e)
             raise
 
-    async def _find_clips(self, ctx: "PipelineContext") -> list[ClipCandidate]:
+    async def _find_clips(
+        self, ctx: "PipelineContext", max_clips: int | None = None
+    ) -> list[ClipCandidate]:
         async with AsyncSessionFactory() as session:
             scenario_result = await session.execute(
                 select(Scenario).where(Scenario.project_id == ctx.project_id)
                 .order_by(Scenario.created_at.desc())
+                .limit(1)
             )
             scenario = scenario_result.scalar_one_or_none()
 
@@ -107,15 +110,19 @@ class ClipperAgent(BaseAgent):
                 select(Video)
                 .where(Video.project_id == ctx.project_id, Video.video_type == "long")
                 .order_by(Video.created_at.desc())
+                .limit(1)
             )
             video = video_result.scalar_one_or_none()
 
         if not scenario:
             return []
 
+        brief = ctx.channel_config.creative_brief
+        creative_brief_block = f"BRIEF CRÉATIF :\n{brief.strip()}\n\n" if brief and brief.strip() else ""
         prompt = CLIPPER_PROMPT_TEMPLATE.format(
             channel_name=ctx.channel.name,
             theme_category=ctx.theme_category,
+            creative_brief_block=creative_brief_block,
             theme=ctx.theme,
             duration_s=video.duration_s if video else ctx.target_duration_seconds,
             segments_json=json.dumps(scenario.segments or [], ensure_ascii=False, indent=2),
@@ -134,8 +141,10 @@ class ClipperAgent(BaseAgent):
         ]
         clips.sort(key=lambda c: c.shortability_score, reverse=True)
 
-        max_clips = len(ctx.planned_shorts) if ctx.planned_shorts else 8
-        clips = clips[: max(max_clips, 1)]
+        max_clips_limit = max_clips if max_clips is not None else (
+            len(ctx.planned_shorts) if ctx.planned_shorts else 8
+        )
+        clips = clips[: max(max_clips_limit, 1)]
 
         logger.info("%d clips shorts identifiés", len(clips))
         return clips

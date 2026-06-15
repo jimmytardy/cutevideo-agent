@@ -6,34 +6,69 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-MUSIC_DIRS = {
-    "educational": Path("./data/music/educational"),
-    "dramatic": Path("./data/music/dramatic"),
-    "upbeat": Path("./data/music/upbeat"),
+VALID_MOODS = frozenset({
+    "energique", "calme", "dramatique", "mysterieux",
+    "inspirant", "humoristique", "tension", "revelateur",
+})
+
+MUSIC_BASE = Path("./data/music")
+
+# Alias dossiers legacy → moods pipeline
+_MOOD_DIR_ALIASES: dict[str, list[str]] = {
+    "energique": ["energique", "upbeat"],
+    "calme": ["calme", "educational"],
+    "dramatique": ["dramatique", "dramatic"],
+    "mysterieux": ["mysterieux"],
+    "inspirant": ["inspirant", "educational"],
+    "humoristique": ["humoristique", "upbeat"],
+    "tension": ["tension", "dramatic"],
+    "revelateur": ["revelateur", "dramatic", "inspirant"],
 }
 
-PERIOD_MOOD_MAP: dict[str, str] = {
-    "antiquité": "dramatic",
-    "moyen-âge": "dramatic",
-    "moderne": "educational",
-    "contemporain": "educational",
-    "n/a": "educational",
-}
+_FALLBACK_ORDER = ["calme", "inspirant", "energique", "dramatique", "mysterieux"]
 
 
-def select_music_for_period(historical_period: str) -> Path | None:
-    """Sélectionne un fichier musical CC adapté à la période historique."""
-    period_lower = (historical_period or "").lower()
-    mood = PERIOD_MOOD_MAP.get(period_lower, "educational")
-    music_dir = MUSIC_DIRS.get(mood, MUSIC_DIRS["educational"])
-
+def _tracks_in_dir(music_dir: Path) -> list[Path]:
     if not music_dir.exists():
-        logger.warning("Dossier musique introuvable : %s", music_dir)
-        return None
+        return []
+    return [
+        p for p in (*music_dir.glob("*.mp3"), *music_dir.glob("*.wav"), *music_dir.glob("*.ogg"))
+        if p.is_file() and p.stat().st_size > 0
+    ]
 
-    tracks = list(music_dir.glob("*.mp3")) + list(music_dir.glob("*.wav"))
-    if not tracks:
-        logger.warning("Aucune piste dans %s", music_dir)
-        return None
 
-    return random.choice(tracks)
+def select_music_for_mood(mood: str) -> Path | None:
+    """Sélectionne un fichier musical local adapté au mood YouTube/TikTok."""
+    normalized = (mood or "").lower().strip()
+    if normalized not in VALID_MOODS:
+        normalized = "calme"
+
+    seen_dirs: set[Path] = set()
+    candidates: list[str] = list(_MOOD_DIR_ALIASES.get(normalized, [normalized]))
+    candidates += [m for m in _FALLBACK_ORDER if m not in candidates]
+
+    for candidate in candidates:
+        for dirname in _MOOD_DIR_ALIASES.get(candidate, [candidate]):
+            music_dir = MUSIC_BASE / dirname
+            if music_dir in seen_dirs:
+                continue
+            seen_dirs.add(music_dir)
+            tracks = _tracks_in_dir(music_dir)
+            if tracks:
+                chosen = random.choice(tracks)
+                logger.debug("Musique locale sélectionnée : %s (mood=%s)", chosen.name, candidate)
+                return chosen
+
+    # Dernier recours : n'importe quelle piste dans data/music
+    all_tracks: list[Path] = []
+    if MUSIC_BASE.exists():
+        for subdir in MUSIC_BASE.iterdir():
+            if subdir.is_dir():
+                all_tracks.extend(_tracks_in_dir(subdir))
+    if all_tracks:
+        chosen = random.choice(all_tracks)
+        logger.debug("Musique locale (fallback global) : %s", chosen.name)
+        return chosen
+
+    logger.warning("Aucune piste musicale locale disponible dans %s", MUSIC_BASE)
+    return None
