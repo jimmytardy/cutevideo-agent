@@ -2,11 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from typing import Any
 
-import anthropic
-
-from agent.core.config import settings
 from agent.core.llm_config import resolve_max_tokens, resolve_model
 from agent.core.media_validation import (
     MediaValidationBrief,
@@ -83,8 +81,12 @@ async def build_validation_brief(
     theme_category: str,
     segments: list[dict[str, Any]],
     creative_brief: str = "",
+    user_id: uuid.UUID | None = None,
 ) -> MediaValidationBrief:
-    """Génère un brief de validation média via Claude."""
+    """Génère un brief de validation média via LLM."""
+    from agent.core.database import AsyncSessionFactory, User
+    from agent.core.llm_resolver import call_llm
+
     defaults = load_media_validation_defaults()
     segments_summary = _format_segments_summary(segments)
     prompt = BRIEF_PROMPT.format(
@@ -96,17 +98,17 @@ async def build_validation_brief(
         default_score=defaults["relevance_min_score_default"],
     )
 
-    client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
-    model = resolve_model("scenario_agent")
-    max_tokens = resolve_max_tokens("scenario_agent")
-
-    msg = await client.messages.create(
-        model=model,
-        max_tokens=max_tokens,
-        system=BRIEF_SYSTEM,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    raw = msg.content[0].text.strip()
+    async with AsyncSessionFactory() as session:
+        user = await session.get(User, user_id) if user_id else None
+        raw = await call_llm(
+            session,
+            user,
+            "validation_brief",
+            prompt,
+            system=BRIEF_SYSTEM,
+            max_tokens=resolve_max_tokens("scenario_agent"),
+            model_override=resolve_model("scenario_agent"),
+        )
     data = _parse_json(raw)
     brief = _parse_brief_payload(data, defaults)
     logger.info(

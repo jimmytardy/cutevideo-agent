@@ -22,6 +22,7 @@ from agent.core.database import (
     AudioFile,
     CriticReport,
     MediaAsset,
+    MontagePlan,
     PlatformComment,
     Publication,
     Scenario,
@@ -34,25 +35,37 @@ logger = logging.getLogger(__name__)
 
 # Ordered pipeline steps — the index drives what gets deleted
 PIPELINE_STEPS: list[str] = [
-    "research_agent",    # 0 → Project.config research_brief
-    "scenario_agent",    # 1 → Scenario
-    "media_agent",       # 2 → MediaAsset
-    "narrator_agent",    # 3 → AudioFile
-    "editor_agent",      # 4 → Video (long / short_master)
-    "subtitle_agent",    # 5 → same as editor (subtitles baked into file)
-    "critic_agent",      # 6 → CriticReport
-    "clipper_agent",     # 7 → no Video DB rows, only in-memory clips
-    "short_editor_agent",# 8 → Video (short_*)
+    "research_agent",        # 0 → Project.config research_brief
+    "scenario_agent",        # 1 → Scenario
+    "hook_optimizer_agent",  # 2 → hook segment (scenario kept)
+    "media_agent",           # 3 → MediaAsset
+    "narrator_agent",        # 4 → AudioFile
+    "montage_planner_agent", # 5 → MontagePlan
+    "editor_agent",          # 6 → Video (long / short_master)
+    "subtitle_agent",        # 7 → same as editor (subtitles baked into file)
+    "critic_agent",          # 8 → CriticReport
+    "clipper_agent",         # 9 → no Video DB rows, only in-memory clips
+    "short_editor_agent",    # 10 → Video (short_*)
 ]
 
 # Shown in the UI between scenario and media during critic revision loops.
 _REVISION_AGENT = "revision_agent"
 
+_PRE_MEDIA_AGENTS: list[str] = [
+    "fact_checker_agent",
+    "hook_optimizer_agent",
+    "diagram_specialist_agent",
+]
+
 # subtitle_agent re-bakes the video file via ffmpeg, so restarting from it
 # is equivalent to restarting from editor_agent (we must recreate the Video row).
 _EFFECTIVE_STEP: dict[str, str] = {
     "subtitle_agent": "editor_agent",
+    "revision_agent": "media_agent",
 }
+
+# Étapes autorisées pour POST /run-from/{step} (revision_agent = boucle critique).
+RUN_FROM_STEPS: frozenset[str] = frozenset([*PIPELINE_STEPS, "revision_agent"])
 
 
 def step_index(step: str) -> int:
@@ -73,7 +86,7 @@ async def cleanup_from_step(
     logger.info("Nettoyage projet %s depuis l'étape %s (idx=%d)", project_id, step, idx)
 
     # --- critic_agent: delete CriticReports BEFORE videos to avoid FK violation ---
-    if idx <= 6:
+    if idx <= 8:
         video_ids_q = await session.execute(
             select(Video.id).where(Video.project_id == project_id)
         )
@@ -84,7 +97,7 @@ async def cleanup_from_step(
             )
 
     # --- short_editor_agent: delete short_* videos ---
-    if idx <= 8:
+    if idx <= 10:
         short_vids_result = await session.execute(
             select(Video).where(
                 Video.project_id == project_id,
@@ -97,7 +110,7 @@ async def cleanup_from_step(
             await session.delete(v)
 
     # --- editor_agent / subtitle_agent: delete main videos (long, short_master) ---
-    if idx <= 5:
+    if idx <= 6:
         main_vids_result = await session.execute(
             select(Video).where(
                 Video.project_id == project_id,
@@ -109,14 +122,20 @@ async def cleanup_from_step(
                 await delete_s3_object(v.storage_key)
             await session.delete(v)
 
+    # --- montage_planner_agent: delete MontagePlan ---
+    if idx <= 5:
+        await session.execute(
+            delete(MontagePlan).where(MontagePlan.project_id == project_id)
+        )
+
     # --- narrator_agent: delete AudioFiles ---
-    if idx <= 3:
+    if idx <= 4:
         await session.execute(
             delete(AudioFile).where(AudioFile.project_id == project_id)
         )
 
-    # --- media_agent: delete MediaAssets ---
-    if idx <= 2:
+    # --- media_agent / hook_optimizer_agent: delete MediaAssets ---
+    if idx <= 3:
         await session.execute(
             delete(MediaAsset).where(MediaAsset.project_id == project_id)
         )
@@ -144,8 +163,12 @@ async def cleanup_from_step(
     affected_steps = PIPELINE_STEPS[idx:]
     agent_names_to_clear = list(affected_steps)
     # Revision runs during critic loops before media; stale status if we re-run that segment.
-    if idx <= 5:
+    if idx <= 6:
         agent_names_to_clear.append(_REVISION_AGENT)
+    if idx <= 2:
+        agent_names_to_clear.extend(
+            agent for agent in _PRE_MEDIA_AGENTS if agent not in agent_names_to_clear
+        )
 
     await session.execute(
         delete(AgentRun).where(

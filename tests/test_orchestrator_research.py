@@ -2,6 +2,7 @@
 
 from agent.agents.scenario_agent import (
     _format_content_plan_block,
+    _format_fact_check_feedback_block,
     _format_research_block,
 )
 from agent.core.orchestrator import AGENT_ORDER
@@ -43,3 +44,23 @@ def test_format_research_block() -> None:
     assert "RECHERCHE FACTUELLE" in block
     assert "Durée : 10 mois" in block
     assert "BNF" in block
+
+
+def test_format_fact_check_feedback_block_lists_corrections() -> None:
+    block = _format_fact_check_feedback_block([
+        {
+            "segment_order": 1,
+            "claim": "5 secondes de s'effondrer",
+            "issue": "Le brief indique 5,5° d'inclinaison, pas une durée en secondes",
+            "severity": "major",
+        },
+    ])
+    assert "CORRECTIONS FACTUELLES OBLIGATOIRES" in block
+    assert "5 secondes" in block
+    assert "5,5°" in block
+    assert "segment 1" in block
+
+
+def test_format_fact_check_feedback_block_empty() -> None:
+    assert _format_fact_check_feedback_block(None) == ""
+    assert _format_fact_check_feedback_block([]) == ""

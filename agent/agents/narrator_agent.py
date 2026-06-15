@@ -9,6 +9,7 @@ from sqlalchemy import delete
 
 from agent.core.base_agent import BaseAgent
 from agent.core.database import AsyncSessionFactory, AudioFile, Scenario
+from agent.core.scenario_integrity import scenario_expects_narration
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,9 @@ class NarratorAgent(BaseAgent):
             audio_files = await self._generate_all_audio(ctx, scenario)
             await self.end_run(run, {"audio_count": len(audio_files)})
             return audio_files
+        except asyncio.CancelledError:
+            await self.stop_run(run)
+            raise
         except Exception as e:
             await self.fail_run(run, e)
             raise
@@ -60,6 +64,9 @@ class NarratorAgent(BaseAgent):
             audio_files = await run_narration_for_short_derivation(self, ctx, plan)
             await self.end_run(run, {"audio_count": len(audio_files)})
             return audio_files
+        except asyncio.CancelledError:
+            await self.stop_run(run)
+            raise
         except Exception as e:
             await self.fail_run(run, e)
             raise
@@ -105,6 +112,12 @@ class NarratorAgent(BaseAgent):
                 f"mais 0 fichier audio généré — {detail}"
             )
 
+        if not audio_files and scenario_expects_narration(segments):
+            raise RuntimeError(
+                "Scénario attend de la narration (narration_text ou phrase_anchor) "
+                "mais 0 fichier audio généré — vérifier diagram_specialist / scénario actif"
+            )
+
         audio_files.sort(key=lambda a: a.segment_order or 0)
         logger.info("Narration : %d fichiers audio générés", len(audio_files))
         return audio_files
@@ -112,6 +125,7 @@ class NarratorAgent(BaseAgent):
     async def _generate_segment_audio(
         self, ctx: "PipelineContext", segment: dict, output_dir: Path
     ) -> AudioFile:
+        from agent.core.api_keys import fetch_api_key
         from agent.skills.audio.tts import generate_tts
 
         order = segment.get("order", 0)
@@ -122,6 +136,14 @@ class NarratorAgent(BaseAgent):
         cfg = ctx.channel_config
         from agent.skills.audio.tts import resolve_tts_settings
 
+        gemini_ctx = await fetch_api_key(
+            ctx.user_id, "gemini", purpose="gemini_tts", tier="free"
+        )
+        azure_ctx = await fetch_api_key(
+            ctx.user_id, "azure_speech", purpose="tts_azure", tier="paid"
+        )
+        azure_region = (azure_ctx.metadata or {}).get("region")
+
         tts_settings = resolve_tts_settings(
             default_engine=cfg.tts_engine,
             default_voice=cfg.tts_voice,
@@ -130,6 +152,9 @@ class NarratorAgent(BaseAgent):
             gemini_model=cfg.gemini_tts.model,
             gemini_language_code=cfg.gemini_tts.language_code,
             is_short=ctx.is_short_project or ctx.derivation_short_index is not None,
+            gemini_api_key=gemini_ctx.key,
+            azure_speech_key=azure_ctx.key,
+            azure_speech_region=azure_region,
         )
 
         duration_s, effective_engine = await generate_tts(
@@ -146,6 +171,9 @@ class NarratorAgent(BaseAgent):
             insert_pauses=cfg.tts_insert_pauses,
             gemini_model=tts_settings.gemini_model,
             gemini_language_code=tts_settings.gemini_language_code,
+            gemini_api_key=tts_settings.gemini_api_key,
+            azure_speech_key=tts_settings.azure_speech_key,
+            azure_speech_region=tts_settings.azure_speech_region,
         )
 
         word_timestamps: list[dict] | None = None

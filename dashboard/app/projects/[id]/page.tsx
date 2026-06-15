@@ -18,6 +18,7 @@ import TextField from '@mui/material/TextField'
 import Tooltip from '@mui/material/Tooltip'
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import StopIcon from '@mui/icons-material/Stop'
+import PlayArrowIcon from '@mui/icons-material/PlayArrow'
 import ReplayIcon from '@mui/icons-material/Replay'
 import AddIcon from '@mui/icons-material/Add'
 import DeleteIcon from '@mui/icons-material/Delete'
@@ -39,7 +40,7 @@ import {
   type CriticReport,
   type Scenario,
 } from '@/lib/api'
-import { selectionKey, type PipelineSelection } from '@/lib/pipeline'
+import { selectionKey, getResumeStep, type PipelineSelection } from '@/lib/pipeline'
 
 interface Props {
   params: { id: string }
@@ -72,7 +73,7 @@ export default function ProjectDetailPage({ params }: Props) {
   const { data: agentRuns } = useSWR<AgentRun[]>(
     `/api/v1/agents/runs/${id}`,
     fetcher,
-    { refreshInterval: project?.status === 'running' ? 3000 : 0 },
+    { refreshInterval: ['running', 'stopped', 'pending'].includes(project?.status ?? '') ? 3000 : 0 },
   )
   const { data: criticReports } = useSWR<CriticReport[]>(
     `/api/v1/projects/${id}/critic-reports`,
@@ -91,6 +92,13 @@ export default function ProjectDetailPage({ params }: Props) {
   const failedRuns = agentRuns?.filter((r) => r.status === 'failed' && r.error) ?? []
   const isRunning = project.status === 'running'
   const canRestart = ['failed', 'stopped', 'approved'].includes(project.status)
+  const isShort = project.config?.format === 'short_standalone' || project.config?.format === 'short'
+  const resumeTarget = getResumeStep(
+    agentRuns ?? [],
+    project.status,
+    criticReports ?? [],
+    isShort,
+  )
 
   const currentMaxIter: number = (project.config?.max_critic_iterations as number | undefined) ?? 5
   const iterCount = criticReports?.length ?? 0
@@ -152,10 +160,17 @@ export default function ProjectDetailPage({ params }: Props) {
         swrMutate(`/api/v1/agents/status/${id}`),
       ])
     } catch (e) {
-      setActionError(e instanceof Error ? e.message : 'Erreur inconnue')
+      const message = e instanceof Error ? e.message : 'Erreur inconnue'
+      setActionError(message)
+      throw e
     } finally {
       setActionLoading(false)
     }
+  }
+
+  const handleResume = async () => {
+    if (!resumeTarget) return
+    await handleRunFrom(resumeTarget.step)
   }
 
   const handleRestartFromCritic = async (reportId: string) => {
@@ -258,16 +273,28 @@ export default function ProjectDetailPage({ params }: Props) {
               Arrêter le pipeline
             </Button>
           )}
-          {canRestart && (
+          {resumeTarget && ['stopped', 'failed'].includes(project.status) && (
             <Button
               variant="contained"
+              color="primary"
+              size="small"
+              startIcon={actionLoading ? <CircularProgress size={16} color="inherit" /> : <PlayArrowIcon />}
+              onClick={handleResume}
+              disabled={actionLoading}
+            >
+              Reprendre — {resumeTarget.label}
+            </Button>
+          )}
+          {canRestart && (
+            <Button
+              variant={resumeTarget ? 'outlined' : 'contained'}
               color="primary"
               size="small"
               startIcon={actionLoading ? <CircularProgress size={16} color="inherit" /> : <ReplayIcon />}
               onClick={handleRestart}
               disabled={actionLoading}
             >
-              Relancer le pipeline
+              {resumeTarget ? 'Tout recommencer' : 'Relancer le pipeline'}
             </Button>
           )}
           {canRestart && (
@@ -328,15 +355,14 @@ export default function ProjectDetailPage({ params }: Props) {
           </Alert>
         )}
 
-        <Accordion defaultExpanded={['pending', 'stopped', 'failed'].includes(project.status)} sx={{ mb: 3 }}>
+        <Accordion sx={{ mb: 3 }}>
           <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-            <Typography variant="subtitle1">Validation média</Typography>
+            <Typography variant="subtitle1">Validation média (par beat)</Typography>
           </AccordionSummary>
           <AccordionDetails>
             <MediaValidationPanel
               projectId={id}
               projectStatus={project.status}
-              scenario={scenario}
             />
           </AccordionDetails>
         </Accordion>
@@ -386,16 +412,18 @@ export default function ProjectDetailPage({ params }: Props) {
         <Typography variant="h6" sx={{ mb: 2 }}>Pipeline agents</Typography>
         <PipelineVisualizer
           projectId={id}
-          isShort={project.config?.format === 'short_standalone' || project.config?.format === 'short'}
+          isShort={isShort}
           maxIterations={currentMaxIter}
           projectStatus={project.status}
           agentRuns={agentRuns ?? []}
           criticReports={criticReports ?? []}
           onRunFrom={handleRunFrom}
+          onStop={handleStop}
           onRestartFromCritic={handleRestartFromCritic}
           selection={selectedAgent ?? undefined}
           onSelect={handleSelectAgent}
           restartingReportId={restartingReportId}
+          actionLoading={actionLoading}
         />
 
         {selectedAgent ? (

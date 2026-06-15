@@ -1,11 +1,13 @@
 {
   "pipeline": {
+    "max_fact_check_iterations": 3,
     "max_critic_iterations": 5,
     "min_critic_score": 90,
     "min_voice_score": 6,
     "min_short_structure_score": 11,
     "min_image_duration_s": 4,
     "min_image_duration_short_s": 2,
+    "max_static_shot_s": 8,
     "images_per_segment": 4,
     "visual_beats": {
       "enabled": true,
@@ -57,12 +59,48 @@
       "audio_bitrate": "192k"
     },
     "ken_burns": {
-      "zoom_factor": 0.05,
+      "enabled": true,
+      "zoom_factor": 0.03,
       "pan_enabled": false
     },
     "transitions": {
       "enabled": true,
-      "duration_s": 0.4
+      "duration_s": 0.4,
+      "catalog": [
+        "fade",
+        "dissolve",
+        "circleopen",
+        "circleclose",
+        "pixelize",
+        "wiperight",
+        "wipeleft",
+        "wipedown",
+        "wipeup",
+        "diagtl",
+        "diagtr",
+        "hlslice",
+        "hrslice",
+        "vuslice",
+        "vdslice",
+        "fadeblack",
+        "fadewhite"
+      ],
+      "mood_defaults": {
+        "dramatique": "dissolve",
+        "tension": "dissolve",
+        "mysterieux": "dissolve",
+        "energique": "wipeleft",
+        "humoristique": "wiperight",
+        "calme": "fade"
+      },
+      "visual_type_defaults": {
+        "scientific_diagram": "fade",
+        "infographic": "dissolve",
+        "sports_action": "wipeleft",
+        "archival_footage": "fade",
+        "quote_card": "fade",
+        "statistic_highlight": "circleopen"
+      }
     },
     "short": {
       "width": 1080,
@@ -320,7 +358,11 @@
     "max_tokens": {
       "content_planner_agent": 2048,
       "critic_agent": 2048,
-      "comments_agent": 1024
+      "comments_agent": 1024,
+      "montage_planner_agent": 8192,
+      "fact_checker_agent": 4096,
+      "hook_optimizer_agent": 4096,
+      "diagram_specialist_agent": 4096
     },
     "engagement_run_weekdays": [
       0,

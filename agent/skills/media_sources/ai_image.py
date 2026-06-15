@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 
 from agent.core.channel_config import AiFallbackConfig
+from agent.core.api_keys import GcpCredentials
 from agent.skills.media_sources.ai.base import ImageGenerationRequest
 from agent.skills.media_sources.ai.registry import generate_with_plan
 
@@ -26,6 +27,9 @@ async def generate_image(
     aspect_ratio: str = "16:9",
     plan_override: str | None = None,
     use_prompt_as_is: bool = False,
+    visual_type: str = "",
+    fal_api_key: str | None = None,
+    gcp_credentials: GcpCredentials | None = None,
 ) -> dict | None:
     """Génère une image IA en secours via Flux ou Google Imagen 3."""
     if not ai_cfg.enabled or ai_cfg.plan.value == "off":
@@ -40,7 +44,11 @@ async def generate_image(
         aspect_ratio=aspect_ratio,
         image_width=width,
         image_height=height,
+        visual_type=visual_type,
         use_prompt_as_is=use_prompt_as_is,
+        fal_api_key=fal_api_key,
+        gcp_credentials=gcp_credentials,
+        user_resolved_keys=True,
     )
 
     if plan_override:
@@ -48,7 +56,7 @@ async def generate_image(
         if result:
             return {
                 "source": "ai_image",
-                "url": str(result.local_path),
+                "url": None,
                 "local_generated": str(result.local_path),
                 "license": result.license,
                 "attribution": result.attribution,
@@ -63,7 +71,7 @@ async def generate_image(
         if result:
             return {
                 "source": "ai_image",
-                "url": str(result.local_path),
+                "url": None,
                 "local_generated": str(result.local_path),
                 "license": result.license,
                 "attribution": result.attribution,

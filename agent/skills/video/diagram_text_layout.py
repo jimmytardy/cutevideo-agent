@@ -6,7 +6,6 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from agent.core.config import settings
 from agent.core.json_parse import parse_gemini_response
 from agent.core.visual_beats import DiagramLabel, TextOverlayPlacement
 
@@ -185,6 +184,7 @@ async def analyze_diagram_text_layout(
     vertical: bool = False,
     width: int = 1920,
     height: int = 1080,
+    api_key: str | None = None,
 ) -> list[TextOverlayPlacement]:
     if not labels:
         return []
@@ -193,8 +193,8 @@ async def analyze_diagram_text_layout(
     if cached and len(cached) >= len(labels):
         return cached[: len(labels)]
 
-    if not settings.google_gemini_api_key:
-        logger.warning("GOOGLE_GEMINI_API_KEY absente — fallback layout fixe")
+    if not api_key:
+        logger.warning("Clé Gemini absente — fallback layout fixe")
         return fallback_text_layout(labels, vertical=vertical, visual_type=visual_type)
 
     try:
@@ -204,6 +204,7 @@ async def analyze_diagram_text_layout(
             labels,
             narration_excerpt,
             language,
+            api_key,
         )
         if placements:
             placements = _resolve_overlaps(placements)
@@ -220,6 +221,7 @@ def _analyze_sync(
     labels: list[DiagramLabel],
     narration_excerpt: str,
     language: str,
+    api_key: str,
 ) -> list[TextOverlayPlacement]:
     from google import genai
     from google.genai import types
@@ -236,7 +238,7 @@ def _analyze_sync(
         prompt,
         types.Part.from_bytes(data=image_path.read_bytes(), mime_type=_mime_for(image_path)),
     ]
-    client = genai.Client(api_key=settings.google_gemini_api_key)
+    client = genai.Client(api_key=api_key)
     errors: list[str] = []
 
     for model_name in LAYOUT_MODELS:

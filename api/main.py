@@ -6,15 +6,19 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from sqlalchemy import text
+from sqlalchemy import select, text
 
+from agent.core.auth import decode_access_token
 from agent.core.config import settings
-from agent.core.database import AsyncSessionFactory
+from agent.core.database import AsyncSessionFactory, User
 from agent.core.queue import queue
 from agent.scheduler.service import scheduler_service
+from api.middleware_auth import is_public_api_path, resolve_request_auth_token, set_request_user_id
 from api.routes import (
     agents,
     analytics,
+    auth,
+    billing,
     channel_onboarding,
     channels,
     config,
@@ -22,10 +26,12 @@ from api.routes import (
     distribution,
     engagement,
     markets,
+    me,
     media,
     projects,
     scheduler,
     cost,
+    media_serve,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -63,11 +69,39 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def authenticate_api_requests(request: Request, call_next):
+    path = request.url.path
+    if path.startswith("/api/v1/") and not is_public_api_path(path):
+        token = resolve_request_auth_token(request)
+        if token:
+            try:
+                user_id = decode_access_token(token)
+                async with AsyncSessionFactory() as session:
+                    result = await session.execute(
+                        select(User).where(User.id == user_id, User.is_active.is_(True))
+                    )
+                    user = result.scalar_one_or_none()
+                if user is None:
+                    return JSONResponse(status_code=401, content={"detail": "Utilisateur invalide"})
+                set_request_user_id(request, user.id)
+            except ValueError:
+                return JSONResponse(status_code=401, content={"detail": "Token invalide"})
+        else:
+            return JSONResponse(status_code=401, content={"detail": "Authentification requise"})
+    return await call_next(request)
+
+
+app.include_router(auth.router)
+app.include_router(me.router)
+app.include_router(billing.router)
 app.include_router(channel_onboarding.router)
 app.include_router(channels.router)
 app.include_router(projects.router)
 app.include_router(agents.router)
 app.include_router(media.router)
+app.include_router(media_serve.router)
 app.include_router(analytics.router)
 app.include_router(content_planning.router)
 app.include_router(distribution.router)

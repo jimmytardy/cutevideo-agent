@@ -7,8 +7,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from agent.core.json_parse import parse_gemini_response
+from agent.core.json_parse import is_json_parse_failure, parse_gemini_response
+from agent.core.beat_validation import BeatValidationContext
 from agent.core.media_validation import MediaValidationBrief, SegmentValidationBrief
+from agent.core.visual_beats import VisualBeat
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +62,22 @@ Règles :
 - score entre 0 et 100
 - un score par média fourni (index 0 à N-1)
 - reason : maximum 80 caractères
-- rejection_category : ok | wrong_species | generic | anachronism | wrong_place | wrong_person | off_topic | low_quality"""
+- rejection_category : ok | wrong_species | generic | anachronism | wrong_place | wrong_person | off_topic | low_quality | text_artifact
+- NE PAS ajouter de virgule après le dernier élément du tableau scores"""
+
+DIAGRAM_TEXT_ARTIFACT_CRITERIA = """
+CRITÈRES ANTI-TEXTE (schémas / infographies / diagrammes) :
+- Score < 30 si texte lisible, pseudo-texte, lettres ou chiffres incrustés dans l'image
+- Score < 30 si cadres vides type infographie, bandeau titre ou placeholders de légende
+- rejection_category = text_artifact dans ces cas (même si le concept visuel est pertinent)
+- Concept pertinent SANS artefact texte : score normal"""
+
+JSON_REFORMAT_PROMPT = """Ce texte est une réponse JSON mal formée pour un scoring de pertinence média.
+Corrige UNIQUEMENT la syntaxe JSON. Ne modifie pas les scores, index ni le sens des raisons.
+Conserve tous les champs et valeurs présents.
+
+TEXTE À CORRIGER :
+{raw}"""
 
 VALIDATION_CRITERIA_TEMPLATE = """CRITÈRES OBLIGATOIRES :
 - Sujet précis : {subject_entity}
@@ -68,6 +85,9 @@ VALIDATION_CRITERIA_TEMPLATE = """CRITÈRES OBLIGATOIRES :
 - DOIT montrer : {must_include}
 - NE DOIT PAS montrer : {must_exclude}
 - Pièges connus : {ambiguity_warnings}
+- Pénaliser (-30) réutilisation d'une même source_url déjà sélectionnée dans le projet
+- Préférer diversité : image unique score 75 > doublon score 90
+- Vidéos : pénaliser motion_score < 40, static_ratio > 0.7, useful_duration_s < 3s
 {validation_prompt}"""
 
 
@@ -83,6 +103,51 @@ class MediaRelevanceScoringError(RuntimeError):
     """Échec du scoring Gemini — le pipeline ne doit pas continuer sans validation."""
 
 
+def is_text_artifact_rejection(rejection_category: str, reason: str = "") -> bool:
+    if rejection_category == "text_artifact":
+        return True
+    lower = (reason or "").lower()
+    markers = (
+        "pseudo-texte",
+        "texte illisible",
+        "illisible",
+        "cadres vides",
+        "bandeau titre",
+        "placeholder",
+    )
+    return any(marker in lower for marker in markers)
+
+
+BEAT_INTENTION_TEMPLATE = """
+INTENTION VISUELLE DU BEAT :
+- Type visuel attendu : {visual_type}
+- Ancre narration : {phrase_anchor}
+- Prompt visuel : {beat_prompt}
+"""
+
+
+def _format_beat_context_criteria(
+    *,
+    brief: MediaValidationBrief,
+    video_subject: str,
+    beat_context: BeatValidationContext,
+) -> str:
+    base = VALIDATION_CRITERIA_TEMPLATE.format(
+        subject_entity=brief.subject_entity or video_subject,
+        subject_type=brief.subject_type,
+        must_include=", ".join(beat_context.must_include) or "(non spécifié)",
+        must_exclude=", ".join(beat_context.must_exclude) or "(non spécifié)",
+        ambiguity_warnings=", ".join(brief.ambiguity_warnings) or "(aucun)",
+        validation_prompt=beat_context.validation_prompt or "(aucun)",
+    )
+    intention = BEAT_INTENTION_TEMPLATE.format(
+        visual_type=beat_context.visual_type,
+        phrase_anchor=beat_context.phrase_anchor[:200],
+        beat_prompt=beat_context.prompt[:300],
+    )
+    return base + intention
+
+
 def build_relevance_prompt(
     *,
     video_subject: str,
@@ -91,8 +156,23 @@ def build_relevance_prompt(
     segment_narration: str,
     validation_brief: MediaValidationBrief | SegmentValidationBrief | None = None,
     segment_order: int | None = None,
+    beat: VisualBeat | None = None,
+    beat_context: BeatValidationContext | None = None,
 ) -> str:
-    if validation_brief is None:
+    if beat_context is not None and isinstance(validation_brief, MediaValidationBrief):
+        validation_criteria = _format_beat_context_criteria(
+            brief=validation_brief,
+            video_subject=video_subject,
+            beat_context=beat_context,
+        )
+    elif beat is not None and isinstance(validation_brief, MediaValidationBrief) and segment_order is not None:
+        ctx = validation_brief.beat_context(segment_order, beat)
+        validation_criteria = _format_beat_context_criteria(
+            brief=validation_brief,
+            video_subject=video_subject,
+            beat_context=ctx,
+        )
+    elif validation_brief is None:
         validation_criteria = (
             "Pénalise les visuels trop génériques, hors-sujet ou anachroniques."
         )
@@ -124,6 +204,12 @@ def build_relevance_prompt(
             ambiguity_warnings=", ".join(validation_brief.ambiguity_warnings) or "(aucun)",
             validation_prompt=validation_brief.validation_prompt,
         )
+
+    if beat is not None:
+        from agent.skills.media_sources.ai.prompt_builder import is_diagram_visual_type
+
+        if is_diagram_visual_type(beat.visual_type):
+            validation_criteria = f"{validation_criteria}\n{DIAGRAM_TEXT_ARTIFACT_CRITERIA}"
 
     return RELEVANCE_PROMPT_BASE.format(
         video_subject=video_subject[:200],
@@ -169,8 +255,67 @@ def _is_retriable_scoring_error(exc: Exception) -> bool:
     )
 
 
-def _parse_scoring_payload(response: Any, model_name: str) -> dict[str, Any]:
-    return parse_gemini_response(response, model_name, required_field="scores")
+def _load_json_reformat_model() -> str:
+    from agent.skills.research.gemini_grounding import load_research_config
+
+    return str(load_research_config()["json_reformat_model"])
+
+
+def _reformat_scoring_json(
+    client: Any,
+    types: Any,
+    broken_raw: str,
+    reformat_model: str,
+) -> dict[str, Any]:
+    """Dernier recours : modèle texte-only pour corriger la syntaxe JSON."""
+    prompt = JSON_REFORMAT_PROMPT.format(raw=broken_raw[:12000])
+    response = client.models.generate_content(
+        model=reformat_model,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            temperature=0,
+            max_output_tokens=8192,
+            response_mime_type="application/json",
+            response_json_schema=SCORING_RESPONSE_SCHEMA,
+        ),
+    )
+    return parse_gemini_response(response, reformat_model, required_field="scores")
+
+
+def _parse_scoring_payload(
+    response: Any,
+    model_name: str,
+    *,
+    client: Any | None = None,
+    types: Any | None = None,
+    reformat_model: str | None = None,
+) -> dict[str, Any]:
+    try:
+        return parse_gemini_response(response, model_name, required_field="scores")
+    except ValueError as exc:
+        if not is_json_parse_failure(exc) or client is None or types is None:
+            raise
+        raw = (getattr(response, "text", None) or "").strip()
+        if not raw:
+            raise
+        reform_model = reformat_model or _load_json_reformat_model()
+        logger.warning(
+            "JSON scoring invalide (%s) — reformatage via %s",
+            model_name,
+            reform_model,
+        )
+        return _reformat_scoring_json(client, types, raw, reform_model)
+
+
+def resolve_scoring_model_chain(primary_model: str | None = None) -> tuple[str, ...]:
+    """Construit la chaîne de modèles vision pour le scoring média."""
+    if not primary_model:
+        return RELEVANCE_MODELS
+    chain: list[str] = [primary_model]
+    for fallback in RELEVANCE_MODELS:
+        if fallback not in chain:
+            chain.append(fallback)
+    return tuple(chain)
 
 
 async def score_media_candidates(
@@ -184,6 +329,9 @@ async def score_media_candidates(
     cache_dir: Path | None = None,
     validation_brief: MediaValidationBrief | SegmentValidationBrief | None = None,
     segment_order: int | None = None,
+    beat: VisualBeat | None = None,
+    beat_context: BeatValidationContext | None = None,
+    scoring_models: tuple[str, ...] | None = None,
 ) -> list[ScoredCandidate]:
     """Score les candidats médias via Gemini Flash vision. Retourne liste triée par score décroissant."""
     if not candidates:
@@ -216,14 +364,18 @@ async def score_media_candidates(
         segment_narration=segment_narration,
         validation_brief=validation_brief,
         segment_order=segment_order,
+        beat=beat,
+        beat_context=beat_context,
     )
     contents = _build_contents(candidates, thumb_paths, prompt)
+
+    models = scoring_models or RELEVANCE_MODELS
 
     def _score() -> list[ScoredCandidate]:
         errors: list[str] = []
         for auth_attempt in range(2):
             client = genai.Client(api_key=api_key)
-            for model_name in RELEVANCE_MODELS:
+            for model_name in models:
                 try:
                     return _score_with_model(
                         client,
@@ -255,7 +407,7 @@ async def score_media_candidates(
                 break
         raise MediaRelevanceScoringError(
             "Scoring de pertinence média impossible : tous les modèles Gemini ont échoué "
-            f"({', '.join(RELEVANCE_MODELS)}) — {' ; '.join(errors)}"
+            f"({', '.join(models)}) — {' ; '.join(errors)}"
         )
 
     return await asyncio.to_thread(_score)
@@ -297,12 +449,19 @@ def _score_with_model(
         contents=contents,
         config=types.GenerateContentConfig(
             temperature=0.1,
-            max_output_tokens=max(2048, len(candidates) * 256),
+            max_output_tokens=max(4096, len(candidates) * 384),
             response_mime_type="application/json",
             response_json_schema=SCORING_RESPONSE_SCHEMA,
         ),
     )
-    data = _parse_scoring_payload(response, model_name)
+    reformat_model = _load_json_reformat_model()
+    data = _parse_scoring_payload(
+        response,
+        model_name,
+        client=client,
+        types=types,
+        reformat_model=reformat_model,
+    )
     score_map: dict[int, tuple[int, str, str]] = {}
     for item in data.get("scores", []):
         if isinstance(item, dict) and "index" in item:

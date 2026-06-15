@@ -6,7 +6,7 @@ VISUAL_BEATS (OBLIGATOIRE si needs_voice true) :
 - Short : {min_beats_short} à {max_beats} beats par segment | Long : 5 à {max_beats} beats pour segments explicatifs
 - phrase_anchor : extrait EXACT ou quasi-exact tiré de narration_text (début du plan)
 - visual_type : clé EXACTE du catalogue ci-dessous — ne jamais inventer de type hors catalogue ; utiliser "custom" + style_hint si aucun type ne convient
-- prompt : description visuelle en ANGLAIS, adaptée au visual_type, SANS texte à afficher
+- prompt : description visuelle en français (sans mention de texte à afficher — traduite automatiquement pour FLUX)
 - Langue des labels : {content_language} (identique à la narration)
 - Types diagramme (scientific_diagram, infographic, data_chart, cross_section, timeline, map, quote_card, statistic_highlight, battle_map) :
   - diagram_labels OBLIGATOIRE : 1 à 6 entrées {{"text": "...", "role": "organe|flux|étape|..."}} en {content_language}
@@ -14,6 +14,12 @@ VISUAL_BEATS (OBLIGATOIRE si needs_voice true) :
   - Max 1–2 diagrammes par segment explicatif
 - on_screen_text : rétrocompat (1 seul label court) si diagram_labels absent
 - Varier les visual_type — ne pas répéter documentary_photo sur tous les beats
+- 1 visual_beat = 1 idée visuelle UNIQUE — interdit 2 beats sur le même concept
+- Max 1 documentary_photo CONSÉCUTIF ; alterner photo / schéma / vidéo / carte
+- duration_hint_s par beat : défaut ≤ 6 s (sauf diagrammes ≥ min diagramme)
+- Segment 1 (hook) : question rhétorique obligatoire dans les ~15 premières secondes de narration
+- Structure narrative longue : arc tension → révélation → payoff explicite dans les titres de segments
+- Exploiter les 3 faits surprenants du brief recherche dans le hook ou segment 2
 - Segment explicatif (science, mécanisme) : au moins 1 scientific_diagram, infographic ou comparison
 - Chaîne sport : privilégier sports_action, stadium_establishing, sports_celebration, athlete_portrait
 - Chaîne true_crime : privilégier crime_documentary, courtroom, evidence_detail, document_closeup
@@ -30,7 +36,7 @@ VISUAL_BEATS_JSON = """
           "order": 1,
           "phrase_anchor": "extrait exact de la narration",
           "visual_type": "scientific_diagram",
-          "prompt": "English visual description without text",
+          "prompt": "Description visuelle en français sans texte à afficher",
           "style_hint": "",
           "diagram_labels": [
             {{"text": "Label court", "role": "element"}}

@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 
 GeminiTtsApplyTo = Literal["off", "shorts", "long", "both"]
 
+_NOT_PASSED = object()
+
 
 @dataclass(frozen=True)
 class ResolvedTtsSettings:
@@ -24,6 +26,27 @@ class ResolvedTtsSettings:
     voice: str
     gemini_model: str = DEFAULT_GEMINI_TTS_MODEL
     gemini_language_code: str = DEFAULT_GEMINI_LANGUAGE
+    gemini_api_key: str | None = None
+    azure_speech_key: str | None = None
+    azure_speech_region: str | None = None
+
+
+def _resolved_gemini_key(gemini_api_key: str | None | object) -> str:
+    if gemini_api_key is _NOT_PASSED:
+        return (settings.google_gemini_api_key or "").strip()
+    return (gemini_api_key or "").strip() if gemini_api_key is not None else ""
+
+
+def _resolved_azure_key(azure_speech_key: str | None | object) -> str:
+    if azure_speech_key is _NOT_PASSED:
+        return (settings.azure_speech_key or "").strip()
+    return (azure_speech_key or "").strip() if azure_speech_key is not None else ""
+
+
+def _resolved_azure_region(azure_speech_region: str | None | object) -> str:
+    if azure_speech_region is _NOT_PASSED:
+        return settings.azure_speech_region
+    return (azure_speech_region or settings.azure_speech_region).strip()
 
 
 async def normalize_wav(src: Path, dst: Path) -> Path:
@@ -69,21 +92,37 @@ async def probe_duration(path: Path) -> float:
         raise RuntimeError(f"Durée invalide retournée par ffprobe pour {path}: {raw!r}") from exc
 
 
-def resolve_engine(requested: str | None) -> str:
+def resolve_engine(
+    requested: str | None,
+    *,
+    gemini_api_key: str | None | object = _NOT_PASSED,
+    azure_speech_key: str | None | object = _NOT_PASSED,
+) -> str:
     engine = requested or settings.tts_engine or "azure"
-    if engine == "azure" and not settings.azure_speech_key:
+    azure_key = _resolved_azure_key(azure_speech_key)
+    gemini_key = _resolved_gemini_key(gemini_api_key)
+    if engine == "azure" and not azure_key:
         logger.warning("Azure Speech non configuré — fallback edge-tts")
         return "edge-tts"
-    if engine == "gemini" and not settings.google_gemini_api_key:
-        logger.warning("Gemini TTS demandé mais GOOGLE_GEMINI_API_KEY absente — fallback azure/edge-tts")
-        return resolve_engine("azure")
+    if engine == "gemini" and not gemini_key:
+        logger.warning("Gemini TTS demandé mais clé Gemini absente — fallback azure/edge-tts")
+        return resolve_engine(
+            "azure",
+            gemini_api_key=gemini_api_key,
+            azure_speech_key=azure_speech_key,
+        )
     return engine
 
 
-def should_use_gemini_tts(gemini_apply_to: str, *, is_short: bool) -> bool:
+def should_use_gemini_tts(
+    gemini_apply_to: str,
+    *,
+    is_short: bool,
+    gemini_api_key: str | None | object = _NOT_PASSED,
+) -> bool:
     if gemini_apply_to == "off":
         return False
-    if not settings.google_gemini_api_key:
+    if not _resolved_gemini_key(gemini_api_key):
         return False
     if gemini_apply_to == "both":
         return True
@@ -103,20 +142,34 @@ def resolve_tts_settings(
     gemini_model: str = DEFAULT_GEMINI_TTS_MODEL,
     gemini_language_code: str = DEFAULT_GEMINI_LANGUAGE,
     is_short: bool = False,
+    gemini_api_key: str | None | object = _NOT_PASSED,
+    azure_speech_key: str | None | object = _NOT_PASSED,
+    azure_speech_region: str | None | object = _NOT_PASSED,
 ) -> ResolvedTtsSettings:
     """Résout le moteur et la voix effectifs selon le format vidéo et les clés API."""
-    if should_use_gemini_tts(gemini_apply_to, is_short=is_short):
+    effective_gemini = _resolved_gemini_key(gemini_api_key)
+    effective_azure = _resolved_azure_key(azure_speech_key)
+    effective_region = _resolved_azure_region(azure_speech_region)
+    gemini_key_arg = None if gemini_api_key is _NOT_PASSED else gemini_api_key
+    azure_key_arg = None if azure_speech_key is _NOT_PASSED else azure_speech_key
+
+    if should_use_gemini_tts(
+        gemini_apply_to, is_short=is_short, gemini_api_key=gemini_api_key
+    ):
         return ResolvedTtsSettings(
             engine="gemini",
             voice=gemini_voice,
             gemini_model=gemini_model,
             gemini_language_code=gemini_language_code,
+            gemini_api_key=effective_gemini or None,
+            azure_speech_key=effective_azure or None,
+            azure_speech_region=effective_region,
         )
 
-    if gemini_apply_to != "off" and not settings.google_gemini_api_key:
+    if gemini_apply_to != "off" and not effective_gemini:
         scope = "shorts" if is_short else "long"
         logger.warning(
-            "Gemini TTS activé pour %s (apply_to=%s) mais GOOGLE_GEMINI_API_KEY absente — "
+            "Gemini TTS activé pour %s (apply_to=%s) mais clé Gemini absente — "
             "utilisation du moteur par défaut (%s)",
             scope,
             gemini_apply_to,
@@ -124,10 +177,17 @@ def resolve_tts_settings(
         )
 
     return ResolvedTtsSettings(
-        engine=resolve_engine(default_engine),
+        engine=resolve_engine(
+            default_engine,
+            gemini_api_key=gemini_api_key,
+            azure_speech_key=azure_speech_key,
+        ),
         voice=default_voice,
         gemini_model=gemini_model,
         gemini_language_code=gemini_language_code,
+        gemini_api_key=effective_gemini or None,
+        azure_speech_key=effective_azure or None,
+        azure_speech_region=effective_region,
     )
 
 
@@ -146,12 +206,25 @@ async def generate_tts(
     *,
     gemini_model: str = DEFAULT_GEMINI_TTS_MODEL,
     gemini_language_code: str = DEFAULT_GEMINI_LANGUAGE,
+    gemini_api_key: str | None | object = _NOT_PASSED,
+    azure_speech_key: str | None | object = _NOT_PASSED,
+    azure_speech_region: str | None | object = _NOT_PASSED,
 ) -> tuple[float, str]:
     """Génère un fichier audio WAV depuis un texte. Retourne (durée_s, moteur_effectif)."""
-    resolved = resolve_engine(engine)
+    resolved = resolve_engine(
+        engine,
+        gemini_api_key=gemini_api_key,
+        azure_speech_key=azure_speech_key,
+    )
+    effective_gemini = _resolved_gemini_key(gemini_api_key)
+    effective_azure = _resolved_azure_key(azure_speech_key)
+    effective_region = _resolved_azure_region(azure_speech_region)
+
     if resolved == "gemini":
         from agent.skills.audio.gemini_tts import synthesize_gemini_tts
 
+        if not effective_gemini:
+            raise RuntimeError("Clé Gemini non configurée pour la synthèse TTS")
         duration = await synthesize_gemini_tts(
             text,
             output_path,
@@ -161,6 +234,7 @@ async def generate_tts(
             mood=mood,
             editorial_tone=editorial_tone,
             tts_style=tts_style,
+            api_key=effective_gemini,
         )
         return duration, "gemini"
 
@@ -179,7 +253,13 @@ async def generate_tts(
             default_pitch=tts_pitch,
             insert_pauses=insert_pauses,
         )
-        duration = await synthesize_ssml(ssml, output_path, voice)
+        duration = await synthesize_ssml(
+            ssml,
+            output_path,
+            voice,
+            subscription_key=effective_azure or None,
+            region=effective_region,
+        )
         return duration, "azure"
 
     duration = await _generate_edge_tts(text, output_path, voice)

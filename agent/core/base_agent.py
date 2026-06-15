@@ -7,19 +7,55 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Any, Generic, TypeVar
 
-import anthropic
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.core.config import settings
-from agent.core.database import AgentRun, AsyncSessionFactory
-from agent.core.llm_config import (
-    compact_learning_context,
-    resolve_max_tokens,
-    resolve_model,
-)
+from agent.core.database import AgentRun, AsyncSessionFactory, User
+from agent.core.llm_config import compact_learning_context, resolve_max_tokens
+from agent.core.llm_resolver import call_llm
 from agent.core.learning_context import load_channel_context
 
 logger = logging.getLogger(__name__)
+
+_STOPPED_BY_USER = "Arrêté manuellement"
+
+
+async def stop_running_agent_runs(
+    project_id: uuid.UUID,
+    *,
+    agent_name: str | None = None,
+    reason: str = _STOPPED_BY_USER,
+) -> int:
+    """Marque les AgentRun encore en ``running`` comme ``stopped`` (annulation pipeline)."""
+    async with AsyncSessionFactory() as session:
+        query = select(AgentRun).where(
+            AgentRun.project_id == project_id,
+            AgentRun.status == "running",
+        )
+        if agent_name is not None:
+            query = query.where(AgentRun.agent_name == agent_name)
+        result = await session.execute(query)
+        runs = list(result.scalars().all())
+        if not runs:
+            return 0
+
+        now = datetime.now(timezone.utc)
+        for run in runs:
+            run.status = "stopped"
+            run.error = reason
+            run.ended_at = now
+            session.add(run)
+        await session.commit()
+
+        for run in runs:
+            logger.info(
+                "AgentRun %s (%s) marqué stopped — projet %s",
+                run.id,
+                run.agent_name,
+                project_id,
+            )
+        return len(runs)
+
 
 InputT = TypeVar("InputT")
 OutputT = TypeVar("OutputT")
@@ -31,8 +67,11 @@ class BaseAgent(ABC, Generic[InputT, OutputT]):
     name: str = "base_agent"
 
     def __init__(self) -> None:
-        self.claude = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
         self._logger = logging.getLogger(f"agent.{self.name}")
+        self._user_id: uuid.UUID | None = None
+
+    def bind_user(self, user_id: uuid.UUID | None) -> None:
+        self._user_id = user_id
 
     @abstractmethod
     async def run(self, input_data: InputT) -> OutputT:
@@ -76,6 +115,16 @@ class BaseAgent(ABC, Generic[InputT, OutputT]):
             await session.commit()
             self._logger.error("Agent %s échoué — run %s : %s", self.name, run.id, error)
 
+    async def stop_run(self, run: AgentRun, reason: str = _STOPPED_BY_USER) -> None:
+        """Enregistre l'arrêt manuel d'un run en DB."""
+        async with AsyncSessionFactory() as session:
+            run.status = "stopped"
+            run.error = reason
+            run.ended_at = datetime.now(timezone.utc)
+            session.add(run)
+            await session.commit()
+            self._logger.info("Agent %s arrêté — run %s", self.name, run.id)
+
     async def _call_claude(
         self,
         prompt: str,
@@ -84,37 +133,21 @@ class BaseAgent(ABC, Generic[InputT, OutputT]):
         system: str | None = None,
         cacheable_context: str | None = None,
     ) -> str:
-        """Appel standardisé à Claude avec résolution modèle/tokens et prompt caching."""
-        resolved_model = model or resolve_model(self.name)
-        resolved_max_tokens = resolve_max_tokens(self.name, max_tokens)
-
-        user_content: list[dict[str, Any]] = []
-        if cacheable_context and cacheable_context.strip():
-            user_content.append(
-                {
-                    "type": "text",
-                    "text": cacheable_context.strip(),
-                    "cache_control": {"type": "ephemeral"},
-                }
+        """Appel LLM (Gemini par défaut, Anthropic si configuré) via llm_resolver."""
+        async with AsyncSessionFactory() as session:
+            user: User | None = None
+            if self._user_id is not None:
+                user = await session.get(User, self._user_id)
+            return await call_llm(
+                session,
+                user,
+                self.name,
+                prompt,
+                system=system,
+                max_tokens=max_tokens,
+                cacheable_context=cacheable_context,
+                model_override=model,
             )
-        user_content.append({"type": "text", "text": prompt})
-
-        kwargs: dict[str, Any] = {
-            "model": resolved_model,
-            "max_tokens": resolved_max_tokens,
-            "messages": [{"role": "user", "content": user_content}],
-        }
-        if system and system.strip():
-            kwargs["system"] = [
-                {
-                    "type": "text",
-                    "text": system.strip(),
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ]
-
-        response = await self.claude.messages.create(**kwargs)
-        return response.content[0].text
 
     async def _call_claude_for_channel(
         self,

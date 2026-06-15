@@ -1,4 +1,4 @@
-import type { AgentRun, CriticReport } from '@/lib/api'
+import type { AgentProgressItem, AgentRun, CriticReport, PipelineProgressResponse } from '@/lib/api'
 
 export interface PipelineSelection {
   step: string
@@ -7,14 +7,22 @@ export interface PipelineSelection {
 
 export type AgentStatus = 'pending' | 'running' | 'success' | 'failed' | 'stopped' | 'planned'
 
-export type IterationRowState = 'planned' | 'active' | 'done' | 'failed'
+export type IterationRowState = 'planned' | 'active' | 'done' | 'failed' | 'stopped'
+
+export interface ResumeTarget {
+  step: string
+  iteration?: number
+  label: string
+}
 
 export const AGENT_LABELS: Record<string, string> = {
   research_agent: 'Chercheur',
   scenario_agent: 'Scénariste',
+  hook_optimizer_agent: 'Optimiseur accroche',
   revision_agent: 'Agent Révision',
   media_agent: 'Chercheur Média',
   narrator_agent: 'Narrateur Voix',
+  montage_planner_agent: 'Planificateur montage',
   editor_agent: 'Monteur Vidéo',
   subtitle_agent: 'Sous-titreur',
   critic_agent: 'Critique IA',
@@ -22,10 +30,17 @@ export const AGENT_LABELS: Record<string, string> = {
   short_editor_agent: 'Éditeur Shorts',
 }
 
+export const PREPARATION_AGENT_KEYS = [
+  'research_agent',
+  'scenario_agent',
+  'hook_optimizer_agent',
+] as const
+
 export const ITERATION_AGENT_KEYS = [
   'revision_agent',
   'media_agent',
   'narrator_agent',
+  'montage_planner_agent',
   'editor_agent',
   'subtitle_agent',
   'critic_agent',
@@ -34,6 +49,7 @@ export const ITERATION_AGENT_KEYS = [
 export const ITERATION_1_AGENT_KEYS = [
   'media_agent',
   'narrator_agent',
+  'montage_planner_agent',
   'editor_agent',
   'subtitle_agent',
   'critic_agent',
@@ -42,9 +58,18 @@ export const ITERATION_1_AGENT_KEYS = [
 export const DELETION_SUMMARY: Record<string, string[]> = {
   research_agent: ['Brief recherche', 'Scénarios', 'Médias', 'Fichiers audio', 'Vidéos', 'Rapports critiques'],
   scenario_agent: ['Scénarios (visual beats)', 'Médias', 'Fichiers audio', 'Vidéos', 'Rapports critiques'],
+  hook_optimizer_agent: [
+    'Accroche optimisée (segment 1)',
+    'Médias (beats hook)',
+    'Fichiers audio',
+    'Plan de montage',
+    'Vidéos',
+    'Rapports critiques',
+  ],
   revision_agent: ['Scénario révisé (visual beats)', 'Médias', 'Fichiers audio', 'Vidéos', 'Rapports critiques'],
   media_agent: ['Médias (par beat + bibliothèque)', 'Fichiers audio', 'Vidéos', 'Rapports critiques'],
-  narrator_agent: ['Fichiers audio', 'Vidéos', 'Rapports critiques'],
+  narrator_agent: ['Fichiers audio', 'Plan de montage', 'Vidéos', 'Rapports critiques'],
+  montage_planner_agent: ['Plan de montage', 'Vidéos', 'Rapports critiques'],
   editor_agent: ['Vidéos', 'Rapports critiques'],
   subtitle_agent: ['Vidéos', 'Rapports critiques'],
   critic_agent: ['Rapports critiques', 'Vidéos courtes'],
@@ -70,22 +95,51 @@ function reportIteration(report: CriticReport, fallback: number): number {
   return report.iteration ?? fallback
 }
 
+const PIPELINE_ITERATION_AGENTS = new Set<string>([
+  ...ITERATION_AGENT_KEYS,
+  ...ITERATION_1_AGENT_KEYS,
+])
+
+function isPipelineIterationAgent(agentName: string | null): boolean {
+  return agentName != null && PIPELINE_ITERATION_AGENTS.has(agentName)
+}
+
+function getHighestIterationFromRuns(agentRuns: AgentRun[]): number {
+  const iterations = agentRuns
+    .filter((r) => isPipelineIterationAgent(r.agent_name))
+    .map((r) => r.iteration)
+  if (iterations.length === 0) return 0
+  return Math.max(...iterations)
+}
+
+function iterationHasAgentRuns(agentRuns: AgentRun[], iteration: number): boolean {
+  return agentRuns.some(
+    (r) => r.iteration === iteration && isPipelineIterationAgent(r.agent_name),
+  )
+}
+
 export function getActiveCriticIteration(
   criticReports: CriticReport[],
   projectStatus: string,
+  agentRuns: AgentRun[] = [],
 ): number {
+  const runsIter = getHighestIterationFromRuns(agentRuns)
+
   if (criticReports.length === 0) {
-    return projectStatus === 'running' ? 1 : 0
+    if (projectStatus === 'running') {
+      return Math.max(1, runsIter)
+    }
+    return runsIter
   }
+
   const last = criticReports[criticReports.length - 1]
   const lastIter = reportIteration(last, criticReports.length)
   if (last.decision === 'approve') {
     return lastIter
   }
-  if (projectStatus === 'running') {
-    return lastIter + 1
-  }
-  return lastIter
+  // Rapport rejeté : les corrections s'appliquent à l'itération suivante
+  const nextIter = lastIter + 1
+  return Math.max(nextIter, runsIter)
 }
 
 export function isCriticLoopApproved(criticReports: CriticReport[]): boolean {
@@ -108,18 +162,21 @@ export function getIterationRowState(
     return hasFailed ? 'failed' : 'done'
   }
 
-  const activeIter = getActiveCriticIteration(criticReports, projectStatus)
+  const activeIter = getActiveCriticIteration(criticReports, projectStatus, agentRuns)
 
   if (activeIter === 0) {
     return 'planned'
   }
 
-  if (iteration === activeIter && projectStatus === 'running') {
-    return 'active'
+  if (iteration === activeIter) {
+    if (projectStatus === 'running') return 'active'
+    if (projectStatus === 'stopped') return 'stopped'
+    if (iterationHasAgentRuns(agentRuns, iteration)) return 'failed'
+    return 'planned'
   }
 
   if (iteration < activeIter) {
-    return projectStatus === 'running' ? 'active' : 'failed'
+    return projectStatus === 'running' ? 'active' : projectStatus === 'stopped' ? 'stopped' : 'failed'
   }
 
   return 'planned'
@@ -163,6 +220,12 @@ export function deriveAgentStatus(
     if (redis === 'running' || redis === 'stopped' || redis === 'failed') {
       return redis as AgentStatus
     }
+  }
+
+  if (projectStatus === 'stopped' && rowState === 'stopped') {
+    const redis = redisStatuses?.[agentName]
+    if (redis === 'stopped') return 'stopped'
+    if (redis === 'running') return 'running'
   }
 
   if (rowState === 'done') {
@@ -213,6 +276,28 @@ export function deriveScenarioStatus(
   return 'pending'
 }
 
+export function deriveHookOptimizerStatus(
+  agentRuns: AgentRun[],
+  redisStatuses: Record<string, string> | undefined,
+  projectStatus: string,
+  scenarioStatus: AgentStatus,
+): AgentStatus {
+  const run = getAgentRunForStep(agentRuns, 'hook_optimizer_agent')
+  if (run?.status === 'failed') return 'failed'
+  if (run?.status === 'stopped') return 'stopped'
+  if (run?.status === 'success') return 'success'
+  if (run?.status === 'running') return 'running'
+  if (projectStatus === 'running' && scenarioStatus === 'success') {
+    const redis = redisStatuses?.hook_optimizer_agent
+    if (redis === 'running' || redis === 'stopped' || redis === 'failed') {
+      return redis as AgentStatus
+    }
+  }
+  if (scenarioStatus === 'success' && run?.status === 'success') return 'success'
+  if (scenarioStatus === 'success' || scenarioStatus === 'running') return 'pending'
+  return 'planned'
+}
+
 export function derivePostProdStatus(
   agentName: string,
   agentRuns: AgentRun[],
@@ -250,4 +335,81 @@ export function getCriticReportForIteration(
   iteration: number,
 ): CriticReport | undefined {
   return criticReports.find((r, idx) => reportIteration(r, idx + 1) === iteration)
+}
+
+function isAgentStepComplete(
+  agentRuns: AgentRun[],
+  step: string,
+  iteration?: number,
+): boolean {
+  return getAgentRunForStep(agentRuns, step, iteration)?.status === 'success'
+}
+
+/** Prochaine étape à exécuter après un arrêt ou un échec partiel. */
+export function getResumeStep(
+  agentRuns: AgentRun[],
+  projectStatus: string,
+  criticReports: CriticReport[],
+  isShort: boolean,
+): ResumeTarget | null {
+  if (projectStatus === 'approved' || projectStatus === 'running') return null
+  if (projectStatus === 'pending' && agentRuns.length === 0) return null
+
+  if (!isAgentStepComplete(agentRuns, 'research_agent')) {
+    return { step: 'research_agent', label: AGENT_LABELS.research_agent }
+  }
+  if (!isAgentStepComplete(agentRuns, 'scenario_agent')) {
+    return { step: 'scenario_agent', label: AGENT_LABELS.scenario_agent }
+  }
+  if (
+    !isAgentStepComplete(agentRuns, 'hook_optimizer_agent')
+    && !isAgentStepComplete(agentRuns, 'media_agent', 1)
+  ) {
+    return { step: 'hook_optimizer_agent', label: AGENT_LABELS.hook_optimizer_agent }
+  }
+
+  const activeIter = Math.max(1, getActiveCriticIteration(criticReports, projectStatus, agentRuns))
+  const iterationSteps = activeIter === 1 ? ITERATION_1_AGENT_KEYS : ITERATION_AGENT_KEYS
+
+  for (const step of iterationSteps) {
+    if (!isAgentStepComplete(agentRuns, step, activeIter)) {
+      return { step, iteration: activeIter, label: AGENT_LABELS[step] ?? step }
+    }
+  }
+
+  if (isCriticLoopApproved(criticReports)) {
+    const postSteps = isShort ? ['short_editor_agent'] : ['clipper_agent', 'short_editor_agent']
+    for (const step of postSteps) {
+      if (!isAgentStepComplete(agentRuns, step)) {
+        return { step, label: AGENT_LABELS[step] ?? step }
+      }
+    }
+  }
+
+  return null
+}
+
+export function isResumeTarget(
+  step: string,
+  iteration: number | undefined,
+  resume: ResumeTarget | null,
+): boolean {
+  if (!resume || resume.step !== step) return false
+  if (resume.iteration != null) return iteration === resume.iteration
+  return iteration == null
+}
+
+export function pickAgentProgress(
+  progress: PipelineProgressResponse | undefined,
+  agent: string,
+  iteration?: number,
+): AgentProgressItem | undefined {
+  if (!progress) return undefined
+  if (iteration != null) {
+    return progress.iterations[String(iteration)]?.[agent]
+  }
+  if (progress.preparation[agent]) {
+    return progress.preparation[agent]
+  }
+  return progress.post_production[agent]
 }

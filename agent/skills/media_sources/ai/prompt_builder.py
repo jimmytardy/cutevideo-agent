@@ -31,8 +31,9 @@ DIAGRAM_VISUAL_TYPES: frozenset[str] = frozenset({
 })
 
 DIAGRAM_NO_TEXT_RULE = (
-    "No text, no labels, no numbers, no letters. Icons, arrows and shapes only. "
-    "Leave clear empty zones near each visual element for future text overlays."
+    "No text, no labels, no numbers, no letters anywhere. Icons, arrows and shapes only. "
+    "No caption boxes, no title banner, no rectangular text placeholders. "
+    "Clean illustration without annotation areas."
 )
 
 VISUAL_TYPE_FAMILIES: dict[str, list[str]] = {
@@ -239,13 +240,13 @@ VISUAL_TYPE_REGISTRY: dict[str, VisualTypeEntry] = {
         description_fr="Vue microscopique, cellules",
     ),
     "scientific_diagram": VisualTypeEntry(
-        "Educational scientific cross-section diagram with arrows showing process flow, dark background, empty zones for labels. Subject: {subject}.",
+        "Educational scientific cross-section diagram with arrows showing process flow, dark background, clean illustration without annotation areas. Subject: {subject}.",
         allows_text=True,
         editorial_tags=("science", "documentaire", "education"),
         description_fr="Schéma scientifique avec flux et flèches",
     ),
     "infographic": VisualTypeEntry(
-        "Clean modern infographic illustration, vector style, empty zones for labels. Subject: {subject}.",
+        "Clean modern infographic illustration, vector style, clean illustration without annotation areas. Subject: {subject}.",
         allows_text=True,
         editorial_tags=("science", "education", "documentaire"),
         description_fr="Infographie moderne épurée",
@@ -274,7 +275,7 @@ VISUAL_TYPE_REGISTRY: dict[str, VisualTypeEntry] = {
         description_fr="Carte géographique avec lieu mis en avant",
     ),
     "cross_section": VisualTypeEntry(
-        "Technical cross-section cutaway illustration, empty zones near each part. Subject: {subject}.",
+        "Technical cross-section cutaway illustration, clean illustration without annotation areas. Subject: {subject}.",
         allows_text=True,
         editorial_tags=("science", "documentaire"),
         description_fr="Coupe technique en éclaté",

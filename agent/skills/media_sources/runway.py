@@ -75,15 +75,15 @@ async def generate_video_clip(
     runway_cfg: "RunwayConfig",  # type: ignore[name-defined]
     channel_id: str,
     timezone: str = "Europe/Paris",
+    api_key: str | None = None,
 ) -> dict | None:
     """Generate a short B-roll video clip via Runway, respecting the monthly budget cap."""
-    from agent.core.config import settings
     from agent.core.runway_budget import add_monthly_runway_cost, check_runway_budget
 
     if not runway_cfg.enabled:
         return None
-    if not settings.runway_api_key:
-        logger.debug("RUNWAY_API_KEY non configurée, skip")
+    if not api_key:
+        logger.debug("Clé Runway absente, skip")
         return None
 
     cost_usd = runway_cfg.default_duration_s * runway_cfg.cost_per_second_usd
@@ -107,7 +107,7 @@ async def generate_video_clip(
             _generate_sync,
             prompt=prompt,
             output_path=output_path,
-            api_key=settings.runway_api_key,
+            api_key=api_key,
             model=runway_cfg.model,
             duration=runway_cfg.default_duration_s,
             ratio=runway_cfg.resolution,

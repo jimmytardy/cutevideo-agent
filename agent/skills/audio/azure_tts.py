@@ -7,18 +7,27 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
-async def synthesize_ssml(ssml: str, output_path: Path, voice: str) -> float:
+async def synthesize_ssml(
+    ssml: str,
+    output_path: Path,
+    voice: str,
+    *,
+    subscription_key: str | None = None,
+    region: str | None = None,
+) -> float:
     """Synthèse Azure Neural TTS depuis SSML."""
     import azure.cognitiveservices.speech as speechsdk
 
     from agent.core.config import settings
 
-    if not settings.azure_speech_key:
-        raise RuntimeError("AZURE_SPEECH_KEY non configurée")
+    speech_key = (subscription_key or settings.azure_speech_key or "").strip()
+    speech_region = (region or settings.azure_speech_region).strip()
+    if not speech_key:
+        raise RuntimeError("Clé Azure Speech non configurée")
 
     speech_config = speechsdk.SpeechConfig(
-        subscription=settings.azure_speech_key,
-        region=settings.azure_speech_region,
+        subscription=speech_key,
+        region=speech_region,
     )
     speech_config.speech_synthesis_voice_name = voice
 

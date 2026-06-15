@@ -4,14 +4,17 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import json
 import pytest
 from pydantic import BaseModel
 
 from agent.core.json_parse import (
+    extract_array_objects,
     is_json_parse_failure,
     parse_gemini_response,
     parse_json_text,
     repair_gemini_array_corruption,
+    repair_truncated_json,
 )
 
 
@@ -103,3 +106,58 @@ def test_parse_gemini_response_required_field_from_text() -> None:
 def test_is_json_parse_failure_detects_json_errors() -> None:
     assert is_json_parse_failure(ValueError("JSON invalide de gemini-test : {}")) is True
     assert is_json_parse_failure(RuntimeError("quota")) is False
+
+
+def test_repair_truncated_json_closes_unterminated_string() -> None:
+    raw = '{"segments": [{"order": 1, "narration_text": "Texte tronqu'
+    repaired = repair_truncated_json(raw)
+    data = json.loads(repaired)
+    assert data["segments"][0]["order"] == 1
+
+
+def test_repair_truncated_json_closes_scores_array() -> None:
+    raw = """{
+  "scores": [
+    {
+      "index": 0,
+      "score": 70,
+      "reason": "Montre la Tour de Pise et son inclinaison, mais pas la base ni le sol environnant.",
+      "rejection_category": "ok"
+    },"""
+    data = parse_json_text(repair_truncated_json(raw))
+    assert len(data["scores"]) == 1
+    assert data["scores"][0]["score"] == 70
+
+
+def test_extract_array_objects_recovers_complete_scores() -> None:
+    raw = """{
+  "scores": [
+    {
+      "index": 0,
+      "score": 90,
+      "reason": "L'image montre la tour de Pise, mais pas l'inclinaison ou les fondations.",
+      "rejection_category": "ok"
+    },
+    {
+      "index": 1,
+      "score": 95,
+      "reason": "Montre la tour de Pise et son inclinaison, mais """
+    objects = extract_array_objects(raw, "scores")
+    assert objects is not None
+    assert len(objects) == 1
+    assert objects[0]["index"] == 0
+
+
+def test_parse_gemini_response_extracts_partial_scores() -> None:
+    raw = """{
+  "scores": [
+    {
+      "index": 0,
+      "score": 70,
+      "reason": "Montre la Tour de Pise",
+      "rejection_category": "ok"
+    },"""
+    response = SimpleNamespace(parsed=None, text=raw)
+    data = parse_gemini_response(response, "gemini-2.5-flash", required_field="scores")
+    assert len(data["scores"]) == 1
+    assert data["scores"][0]["score"] == 70

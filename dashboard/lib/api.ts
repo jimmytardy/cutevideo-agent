@@ -1,4 +1,63 @@
 const BASE = '/api/v1'
+const AUTH_TOKEN_KEY = 'cutevideo_auth_token'
+
+export function getAuthToken(): string | null {
+  if (typeof window === 'undefined') return null
+  return localStorage.getItem(AUTH_TOKEN_KEY)
+}
+
+export function setAuthToken(token: string): void {
+  localStorage.setItem(AUTH_TOKEN_KEY, token)
+}
+
+export function clearAuthToken(): void {
+  localStorage.removeItem(AUTH_TOKEN_KEY)
+}
+
+export function authHeaders(): HeadersInit {
+  const token = getAuthToken()
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
+/** URL média avec JWT en query string (balises video/img ne supportent pas Authorization). */
+export function authenticatedMediaUrl(path: string): string {
+  const token = getAuthToken()
+  if (!token) return path
+  const sep = path.includes('?') ? '&' : '?'
+  return `${path}${sep}access_token=${encodeURIComponent(token)}`
+}
+
+export interface AuthUser {
+  id: string
+  email: string
+  display_name: string | null
+  avatar_url: string | null
+  plan_slug: string
+  is_admin: boolean
+}
+
+export interface SubscriptionInfo {
+  plan_slug: string
+  plan_name: string
+  is_unlimited: boolean
+  limits: Record<string, unknown>
+  usage: Record<string, unknown>
+}
+
+export async function getGoogleLoginUrl(): Promise<{ authorization_url: string; state: string }> {
+  const redirectAfter = `${window.location.origin}/login`
+  const res = await fetch(`${BASE}/auth/google/login?redirect_after=${encodeURIComponent(redirectAfter)}`)
+  if (!res.ok) throw new Error('Impossible de démarrer la connexion Google')
+  return res.json()
+}
+
+export async function fetchMe(): Promise<AuthUser> {
+  return fetcher(`${BASE}/auth/me`)
+}
+
+export async function fetchMySubscription(): Promise<SubscriptionInfo> {
+  return fetcher(`${BASE}/me/subscription`)
+}
 
 export interface Channel {
   id: string
@@ -206,11 +265,33 @@ export interface MediaProgress {
   agent_status: string
 }
 
-export interface MediaValidationOverride {
-  must_include?: string[]
-  must_exclude?: string[]
-  validation_prompt?: string | null
-  min_relevance_score?: number | null
+export interface AgentProgressItem {
+  done: number
+  total: number
+  percent: number
+  detail?: string | null
+  segments_done?: number | null
+  segments_total?: number | null
+}
+
+export interface PipelineProgressResponse {
+  preparation: Record<string, AgentProgressItem>
+  iterations: Record<string, Record<string, AgentProgressItem>>
+  post_production: Record<string, AgentProgressItem>
+}
+
+export interface BeatValidationResolved {
+  segment_order: number
+  beat_order: number | null
+  segment_title: string
+  visual_type: string | null
+  phrase_anchor: string | null
+  prompt: string | null
+  must_include: string[]
+  must_exclude: string[]
+  validation_prompt: string
+  min_relevance_score: number
+  layers: string[]
 }
 
 export interface MediaValidationBrief {
@@ -223,7 +304,7 @@ export interface MediaValidationBrief {
   min_relevance_score: number
   niche_risk: string
   segments: Record<string, Record<string, unknown>>
-  override?: MediaValidationOverride | null
+  resolved_beats: BeatValidationResolved[]
   source: string
 }
 
@@ -314,6 +395,44 @@ export interface AudioFile {
   created_at: string
 }
 
+export interface EffectiveBeat {
+  order: number
+  phrase_anchor: string
+  visual_type: string
+  on_screen_text: string
+  adaptation: string
+  source_beat_orders: number[]
+}
+
+export interface BeatClipPlan {
+  beat_order: number
+  source_beat_orders: number[]
+  asset_path: string
+  asset_type: string
+  timeline_start_s: number
+  timeline_end_s: number
+  source_trim_start_s: number
+  source_trim_end_s: number | null
+  trim_reason: string
+  on_screen_text: string
+}
+
+export interface SegmentMontagePlan {
+  segment_order: number
+  effective_beats: EffectiveBeat[]
+  clips: BeatClipPlan[]
+  adaptation_notes: string
+}
+
+export interface MontagePlan {
+  id: string
+  project_id: string
+  iteration: number
+  segments: SegmentMontagePlan[]
+  planner_notes: string
+  created_at: string
+}
+
 export interface CriticReport {
   id: string
   video_id: string
@@ -349,9 +468,16 @@ const MAX_FETCH_RETRIES = 3
 
 async function fetchWithRetry(url: string, init?: RequestInit): Promise<Response> {
   let lastError: unknown
+  const mergedInit: RequestInit = {
+    ...init,
+    headers: {
+      ...authHeaders(),
+      ...(init?.headers ?? {}),
+    },
+  }
   for (let attempt = 0; attempt < MAX_FETCH_RETRIES; attempt++) {
     try {
-      const response = await fetch(url, init)
+      const response = await fetch(url, mergedInit)
       if (response.ok || (response.status < 500 && response.status !== 408)) {
         return response
       }
@@ -372,14 +498,20 @@ async function fetchWithRetry(url: string, init?: RequestInit): Promise<Response
   throw lastError
 }
 
-const fetcher = async (url: string) => {
-  const r = await fetchWithRetry(url)
-  if (!r.ok) {
-    const body = await r.json().catch(() => ({ detail: r.statusText }))
-    throw new Error(body?.detail ?? `HTTP ${r.status}`)
+async function parseJsonResponse<T>(response: Response): Promise<T> {
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({ detail: response.statusText }))
+    throw new Error(body?.detail ?? `HTTP ${response.status}`)
   }
-  return r.json()
+  return response.json() as Promise<T>
 }
+
+async function apiJson<T>(url: string, init?: RequestInit): Promise<T> {
+  const response = await fetchWithRetry(url, init)
+  return parseJsonResponse<T>(response)
+}
+
+const fetcher = async (url: string) => apiJson(url)
 
 export function swrOnErrorRetry(
   error: unknown,
@@ -412,8 +544,7 @@ export async function fetchRunwayStatus(channelId: string): Promise<RunwayStatus
 
 export async function fetchChannels(activeOnly = false): Promise<Channel[]> {
   const q = activeOnly ? '?active_only=true' : ''
-  const res = await fetch(`${BASE}/channels${q}`)
-  return res.json()
+  return apiJson<Channel[]>(`${BASE}/channels${q}`)
 }
 
 export async function createChannel(data: {
@@ -422,22 +553,22 @@ export async function createChannel(data: {
   theme_category: string
   niche_prompt?: string
 }): Promise<Channel> {
-  const res = await fetch(`${BASE}/channels`, {
+  return apiJson<Channel>(`${BASE}/channels`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   })
-  return res.json()
 }
 
 export async function fetchChannelIntegrations(channelId: string): Promise<ChannelIntegrations> {
-  const res = await fetch(`${BASE}/channels/${channelId}/integrations`)
-  return res.json()
+  return apiJson<ChannelIntegrations>(`${BASE}/channels/${channelId}/integrations`)
 }
 
 export async function connectTikTok(channelId: string): Promise<{ redirect_url: string; connection_id: string }> {
-  const res = await fetch(`${BASE}/channels/${channelId}/connect/tiktok`, { method: 'POST' })
-  return res.json()
+  return apiJson<{ redirect_url: string; connection_id: string }>(
+    `${BASE}/channels/${channelId}/connect/tiktok`,
+    { method: 'POST' },
+  )
 }
 
 export async function createProject(
@@ -445,149 +576,81 @@ export async function createProject(
   theme: string,
   target_duration_seconds: number,
 ): Promise<Project> {
-  const res = await fetch(`${BASE}/projects`, {
+  return apiJson<Project>(`${BASE}/projects`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ channel_id: channelId, theme, target_duration_seconds }),
   })
-  return res.json()
 }
 
 export async function runPipeline(projectId: string): Promise<void> {
-  const res = await fetch(`${BASE}/projects/${projectId}/run`, { method: 'POST' })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error(err.detail || 'Échec du lancement du pipeline')
-  }
+  await apiJson<unknown>(`${BASE}/projects/${projectId}/run`, { method: 'POST' })
 }
 
 export async function stopPipeline(projectId: string): Promise<void> {
-  const res = await fetch(`${BASE}/projects/${projectId}/stop`, { method: 'POST' })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error(err.detail || 'Échec de l\'arrêt du pipeline')
-  }
+  await apiJson<unknown>(`${BASE}/projects/${projectId}/stop`, { method: 'POST' })
 }
 
 export async function restartPipeline(projectId: string): Promise<void> {
-  const res = await fetch(`${BASE}/projects/${projectId}/restart`, { method: 'POST' })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error(err.detail || 'Échec du redémarrage du pipeline')
-  }
+  await apiJson<unknown>(`${BASE}/projects/${projectId}/restart`, { method: 'POST' })
 }
 
 export async function runFromStep(projectId: string, step: string): Promise<void> {
-  const res = await fetch(`${BASE}/projects/${projectId}/run-from/${step}`, { method: 'POST' })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error((err as { detail?: string }).detail || `Échec du redémarrage depuis ${step}`)
-  }
+  await apiJson<unknown>(`${BASE}/projects/${projectId}/run-from/${step}`, { method: 'POST' })
 }
 
 export async function restartFromCriticIteration(
   projectId: string,
   reportId: string,
 ): Promise<{ critic_start_from: string }> {
-  const res = await fetch(`${BASE}/projects/${projectId}/restart-from-critic/${reportId}`, { method: 'POST' })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error((err as { detail?: string }).detail || 'Erreur relance depuis itération critique')
-  }
-  return res.json()
+  return apiJson<{ critic_start_from: string }>(
+    `${BASE}/projects/${projectId}/restart-from-critic/${reportId}`,
+    { method: 'POST' },
+  )
 }
 
 export async function fetchCriticReports(projectId: string): Promise<CriticReport[]> {
-  const res = await fetch(`${BASE}/projects/${projectId}/critic-reports`)
+  const res = await fetchWithRetry(`${BASE}/projects/${projectId}/critic-reports`)
   if (!res.ok) return []
   return res.json()
 }
 
 export async function deleteProject(projectId: string): Promise<void> {
-  const res = await fetch(`${BASE}/projects/${projectId}`, { method: 'DELETE' })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error((err as { detail?: string }).detail || 'Erreur suppression du projet')
-  }
+  await apiJson<unknown>(`${BASE}/projects/${projectId}`, { method: 'DELETE' })
 }
 
 export async function updateProjectMaxIterations(projectId: string, maxIterations: number): Promise<Project> {
-  const res = await fetch(`${BASE}/projects/${projectId}/config`, {
+  return apiJson<Project>(`${BASE}/projects/${projectId}/config`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ max_critic_iterations: maxIterations }),
   })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error((err as { detail?: string }).detail || 'Erreur mise à jour config')
-  }
-  return res.json()
 }
 
 export async function fetchProjectMediaValidation(projectId: string): Promise<MediaValidationBrief> {
-  const res = await fetch(`${BASE}/projects/${projectId}/media-validation`)
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error((err as { detail?: string }).detail || 'Brief validation introuvable')
-  }
-  return res.json()
-}
-
-export async function updateProjectMediaValidation(
-  projectId: string,
-  override: MediaValidationOverride,
-): Promise<MediaValidationBrief> {
-  const res = await fetch(`${BASE}/projects/${projectId}/media-validation`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(override),
-  })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error((err as { detail?: string }).detail || 'Erreur mise à jour validation')
-  }
-  return res.json()
-}
-
-export async function regenerateProjectMediaValidation(
-  projectId: string,
-): Promise<{ brief: MediaValidationBrief; message: string }> {
-  const res = await fetch(`${BASE}/projects/${projectId}/media-validation/regenerate`, {
-    method: 'POST',
-  })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error((err as { detail?: string }).detail || 'Erreur régénération brief')
-  }
-  return res.json()
+  return apiJson<MediaValidationBrief>(`${BASE}/projects/${projectId}/media-validation`)
 }
 
 export async function analyzeMarket(
   prompt: string,
   platforms: string[] = ['youtube', 'tiktok', 'instagram'],
 ): Promise<MarketAnalysisReport> {
-  const res = await fetch(`${BASE}/channels/onboarding/market-analysis`, {
+  return apiJson<MarketAnalysisReport>(`${BASE}/channels/onboarding/market-analysis`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ prompt, platforms }),
   })
-  if (!res.ok) {
-    throw new Error((await res.json().catch(() => ({}))).detail || 'Erreur analyse marché')
-  }
-  return res.json()
 }
 
 export async function suggestThemes(
   prompt: string,
   marketContext?: string | null,
 ): Promise<ThemeVariant[]> {
-  const res = await fetch(`${BASE}/channels/onboarding/suggest-themes`, {
+  const data = await apiJson<{ variants: ThemeVariant[] }>(`${BASE}/channels/onboarding/suggest-themes`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ prompt, market_context: marketContext ?? undefined }),
   })
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'Erreur suggest-themes')
-  const data = await res.json()
   return data.variants
 }
 
@@ -595,119 +658,129 @@ export async function generateBrandKit(
   variant: ThemeVariant,
   marketContext?: string | null,
 ): Promise<ChannelBrandKit> {
-  const res = await fetch(`${BASE}/channels/onboarding/generate-brand`, {
+  return apiJson<ChannelBrandKit>(`${BASE}/channels/onboarding/generate-brand`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ variant, market_context: marketContext ?? undefined }),
   })
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'Erreur generate-brand')
-  return res.json()
 }
 
 export async function createOnboardingDraft(
   themePrompt: string,
   brandKit: ChannelBrandKit,
 ): Promise<Channel> {
-  const res = await fetch(`${BASE}/channels/onboarding/draft`, {
+  return apiJson<Channel>(`${BASE}/channels/onboarding/draft`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ theme_prompt: themePrompt, brand_kit: brandKit }),
   })
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'Erreur draft')
-  return res.json()
 }
 
 export async function getYoutubeOAuthUrl(channelId?: string): Promise<{ authorization_url: string; state: string }> {
   const q = channelId ? `?channel_id=${channelId}` : ''
-  const res = await fetch(`${BASE}/channels/youtube/oauth-url${q}`)
-  return res.json()
+  return apiJson<{ authorization_url: string; state: string }>(`${BASE}/channels/youtube/oauth-url${q}`)
 }
 
 export async function listYoutubeChannels(channelId?: string): Promise<YouTubeChannelItem[]> {
   const q = channelId ? `?channel_id=${channelId}` : ''
-  const res = await fetch(`${BASE}/channels/youtube/list${q}`)
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'Erreur liste YouTube')
-  return res.json()
+  return apiJson<YouTubeChannelItem[]>(`${BASE}/channels/youtube/list${q}`)
 }
 
 export async function patchOnboardingYoutube(
   channelId: string,
   data: { youtube_channel_id: string; youtube_channel_url?: string },
 ): Promise<Channel> {
-  const res = await fetch(`${BASE}/channels/${channelId}/onboarding/youtube`, {
+  return apiJson<Channel>(`${BASE}/channels/${channelId}/onboarding/youtube`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   })
-  return res.json()
 }
 
 export async function applyYoutubeBranding(channelId: string): Promise<void> {
-  const res = await fetch(`${BASE}/channels/${channelId}/apply-youtube-branding`, { method: 'POST' })
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'Erreur branding YouTube')
+  await apiJson<unknown>(`${BASE}/channels/${channelId}/apply-youtube-branding`, { method: 'POST' })
 }
 
 export async function patchOnboardingTiktok(
   channelId: string,
   tiktok_publish_defaults: Record<string, unknown>,
 ): Promise<Channel> {
-  const res = await fetch(`${BASE}/channels/${channelId}/onboarding/tiktok`, {
+  return apiJson<Channel>(`${BASE}/channels/${channelId}/onboarding/tiktok`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ tiktok_publish_defaults }),
   })
-  return res.json()
 }
 
 export async function patchOnboardingInstagram(
   channelId: string,
   data: { instagram_page_id: string; instagram_profile?: Record<string, unknown> },
 ): Promise<Channel> {
-  const res = await fetch(`${BASE}/channels/${channelId}/onboarding/instagram`, {
+  return apiJson<Channel>(`${BASE}/channels/${channelId}/onboarding/instagram`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   })
-  return res.json()
 }
 
 export async function completeOnboarding(channelId: string): Promise<Channel> {
-  const res = await fetch(`${BASE}/channels/${channelId}/onboarding/complete`, { method: 'POST' })
-  return res.json()
+  return apiJson<Channel>(`${BASE}/channels/${channelId}/onboarding/complete`, { method: 'POST' })
 }
 
 export async function fetchChannel(channelId: string): Promise<Channel> {
-  const res = await fetch(`${BASE}/channels/${channelId}`)
-  return res.json()
+  return apiJson<Channel>(`${BASE}/channels/${channelId}`)
 }
 
 export async function fetchProjectVideos(projectId: string): Promise<Video[]> {
-  const res = await fetch(`${BASE}/projects/${projectId}/videos`)
+  const res = await fetchWithRetry(`${BASE}/projects/${projectId}/videos`)
   if (!res.ok) return []
   return res.json()
 }
 
 export async function publishProject(projectId: string, platform: string): Promise<void> {
-  const res = await fetch(`${BASE}/projects/${projectId}/publish`, {
+  await apiJson<unknown>(`${BASE}/projects/${projectId}/publish`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ platform }),
   })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error((err as { detail?: string }).detail || 'Erreur publication')
-  }
 }
 
-export async function fetchProjectScenario(projectId: string): Promise<Scenario | null> {
-  const res = await fetch(`${BASE}/projects/${projectId}/scenario`)
+export function projectScenarioUrl(
+  projectId: string,
+  opts?: { scenarioId?: string; atAgent?: string },
+): string {
+  const base = `${BASE}/projects/${projectId}/scenario`
+  const params = new URLSearchParams()
+  if (opts?.scenarioId) params.set('scenario_id', opts.scenarioId)
+  if (opts?.atAgent) params.set('at_agent', opts.atAgent)
+  const qs = params.toString()
+  return qs ? `${base}?${qs}` : base
+}
+
+export async function fetchProjectScenario(
+  projectId: string,
+  opts?: { scenarioId?: string; atAgent?: string },
+): Promise<Scenario | null> {
+  const res = await fetchWithRetry(projectScenarioUrl(projectId, opts))
   if (!res.ok) return null
   return res.json()
 }
 
 export async function fetchProjectMediaAssets(projectId: string): Promise<MediaAsset[]> {
-  const res = await fetch(`${BASE}/projects/${projectId}/media-assets`)
+  const res = await fetchWithRetry(`${BASE}/projects/${projectId}/media-assets`)
   if (!res.ok) return []
+  return res.json()
+}
+
+export function pipelineProgressUrl(projectId: string): string {
+  return `${BASE}/projects/${projectId}/pipeline-progress`
+}
+
+export async function fetchProjectPipelineProgress(
+  projectId: string,
+): Promise<PipelineProgressResponse | null> {
+  const res = await fetchWithRetry(pipelineProgressUrl(projectId))
+  if (!res.ok) return null
   return res.json()
 }
 
@@ -717,17 +790,23 @@ export function mediaProgressUrl(projectId: string, iteration?: number): string 
   return base
 }
 
+export function montagePlanUrl(projectId: string, iteration?: number): string {
+  const base = `${BASE}/projects/${projectId}/montage-plan`
+  if (iteration != null) return `${base}?iteration=${iteration}`
+  return base
+}
+
 export async function fetchProjectMediaProgress(
   projectId: string,
   iteration?: number,
 ): Promise<MediaProgress | null> {
-  const res = await fetch(mediaProgressUrl(projectId, iteration))
+  const res = await fetchWithRetry(mediaProgressUrl(projectId, iteration))
   if (!res.ok) return null
   return res.json()
 }
 
 export async function fetchProjectAudio(projectId: string): Promise<AudioFile[]> {
-  const res = await fetch(`${BASE}/projects/${projectId}/audio`)
+  const res = await fetchWithRetry(`${BASE}/projects/${projectId}/audio`)
   if (!res.ok) return []
   return res.json()
 }
@@ -800,13 +879,9 @@ export async function checkTopicSimilarity(
 }
 
 export async function listMarketAnalyses(): Promise<MarketAnalysisListItem[]> {
-  const res = await fetch(`${BASE}/markets`)
-  if (!res.ok) throw new Error('Erreur chargement analyses marché')
-  return res.json()
+  return apiJson<MarketAnalysisListItem[]>(`${BASE}/markets`)
 }
 
 export async function getMarketAnalysis(id: string): Promise<MarketAnalysisDetail> {
-  const res = await fetch(`${BASE}/markets/${id}`)
-  if (!res.ok) throw new Error('Analyse introuvable')
-  return res.json()
+  return apiJson<MarketAnalysisDetail>(`${BASE}/markets/${id}`)
 }

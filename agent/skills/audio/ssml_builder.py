@@ -153,12 +153,18 @@ def _resolve_prosody(
 
 
 def _insert_pauses(escaped_body: str) -> str:
-    """Ajoute des pauses SSML après ponctuation forte."""
-    return re.sub(
+    """Ajoute des pauses SSML après ponctuation forte et avant chiffres/dates."""
+    text = re.sub(
         r"([.!?])(\s)",
         r"\1<break time='300ms'/>\2",
         escaped_body,
     )
+    text = re.sub(
+        r"(\s)(\d{3,4}|\d{1,2}\s*(?:siècle|av\.|ap\.|°|%))",
+        r"\1<break time='200ms'/>\2",
+        text,
+    )
+    return text
 
 
 def _apply_emphasis(escaped_body: str, text: str, emphasis_words: list[Any]) -> str:

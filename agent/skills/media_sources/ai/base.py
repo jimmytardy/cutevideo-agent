@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from agent.core.api_keys import GcpCredentials
+
 
 @dataclass(frozen=True)
 class ImageGenerationRequest:
@@ -14,7 +16,11 @@ class ImageGenerationRequest:
     aspect_ratio: str = "16:9"
     image_width: int = 1920
     image_height: int = 1080
+    visual_type: str = ""
     use_prompt_as_is: bool = False
+    fal_api_key: str | None = None
+    gcp_credentials: GcpCredentials | None = None
+    user_resolved_keys: bool = False
 
 
 @dataclass(frozen=True)

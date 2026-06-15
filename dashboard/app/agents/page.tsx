@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import useSWR from 'swr'
 import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
@@ -13,7 +14,11 @@ import TableHead from '@mui/material/TableHead'
 import TableBody from '@mui/material/TableBody'
 import TableRow from '@mui/material/TableRow'
 import TableCell from '@mui/material/TableCell'
+import Tabs from '@mui/material/Tabs'
+import Tab from '@mui/material/Tab'
 import AppShell from '@/components/AppShell'
+import AuthGuard from '@/components/AuthGuard'
+import AgentLlmConfigPanel from '@/components/AgentLlmConfigPanel'
 import { fetcher, type AgentRun } from '@/lib/api'
 
 const STATUS_COLOR: Record<string, 'default' | 'warning' | 'success' | 'error'> = {
@@ -24,7 +29,7 @@ const STATUS_COLOR: Record<string, 'default' | 'warning' | 'success' | 'error'> 
   skipped: 'default',
 }
 
-export default function AgentsPage() {
+function AgentsMonitoringTab() {
   const { data: projects, isLoading: loadingProjects } = useSWR('/api/v1/projects', fetcher, {
     refreshInterval: 5000,
   })
@@ -40,73 +45,101 @@ export default function AgentsPage() {
   const isLoading = loadingProjects || loadingRuns
 
   return (
-    <AppShell>
-      <Box sx={{ maxWidth: 1100, mx: 'auto' }}>
-        <Typography variant="h5" sx={{ mb: 1 }}>Monitoring agents</Typography>
-        {latestProject && (
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-            Projet actif : {latestProject.title || latestProject.theme}
-          </Typography>
-        )}
+    <>
+      {latestProject && (
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+          Projet actif : {latestProject.title || latestProject.theme}
+        </Typography>
+      )}
 
-        {isLoading && <CircularProgress />}
-        {!isLoading && !latestProject && (
-          <Alert severity="info">Aucun projet trouvé — créez-en un d&apos;abord.</Alert>
-        )}
+      {isLoading && <CircularProgress />}
+      {!isLoading && !latestProject && (
+        <Alert severity="info">Aucun projet trouvé — créez-en un d&apos;abord.</Alert>
+      )}
 
-        {runs && runs.length > 0 && (
-          <Card>
-            <CardContent sx={{ p: 0 }}>
-              <Table size="small">
-                <TableHead>
-                  <TableRow>
-                    <TableCell>Agent</TableCell>
-                    <TableCell>Statut</TableCell>
-                    <TableCell>Itération</TableCell>
-                    <TableCell>Durée</TableCell>
-                    <TableCell>Erreur</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {runs.map((run) => {
-                    const duration =
-                      run.started_at && run.ended_at
-                        ? `${((new Date(run.ended_at).getTime() - new Date(run.started_at).getTime()) / 1000).toFixed(1)}s`
-                        : run.started_at
+      {runs && runs.length > 0 && (
+        <Card>
+          <CardContent sx={{ p: 0 }}>
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>Agent</TableCell>
+                  <TableCell>Statut</TableCell>
+                  <TableCell>Itération</TableCell>
+                  <TableCell>Durée</TableCell>
+                  <TableCell>Erreur</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {runs.map((run) => {
+                  const duration =
+                    run.started_at && run.ended_at
+                      ? `${((new Date(run.ended_at).getTime() - new Date(run.started_at).getTime()) / 1000).toFixed(1)}s`
+                      : run.started_at
                         ? 'En cours…'
                         : '-'
-                    return (
-                      <TableRow key={run.id}>
-                        <TableCell>
-                          <Typography variant="body2" fontWeight={600}>
-                            {run.agent_name}
+                  return (
+                    <TableRow key={run.id}>
+                      <TableCell>
+                        <Typography variant="body2" fontWeight={600}>
+                          {run.agent_name}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Chip
+                          label={run.status ?? 'unknown'}
+                          color={STATUS_COLOR[run.status ?? ''] ?? 'default'}
+                          size="small"
+                        />
+                      </TableCell>
+                      <TableCell>{run.iteration}</TableCell>
+                      <TableCell>{duration}</TableCell>
+                      <TableCell>
+                        {run.error ? (
+                          <Typography
+                            variant="caption"
+                            color="error"
+                            noWrap
+                            sx={{ maxWidth: 200, display: 'block' }}
+                          >
+                            {run.error}
                           </Typography>
-                        </TableCell>
-                        <TableCell>
-                          <Chip
-                            label={run.status ?? 'unknown'}
-                            color={STATUS_COLOR[run.status ?? ''] ?? 'default'}
-                            size="small"
-                          />
-                        </TableCell>
-                        <TableCell>{run.iteration}</TableCell>
-                        <TableCell>{duration}</TableCell>
-                        <TableCell>
-                          {run.error ? (
-                            <Typography variant="caption" color="error" noWrap sx={{ maxWidth: 200, display: 'block' }}>
-                              {run.error}
-                            </Typography>
-                          ) : '-'}
-                        </TableCell>
-                      </TableRow>
-                    )
-                  })}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-        )}
-      </Box>
-    </AppShell>
+                        ) : (
+                          '-'
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
+    </>
+  )
+}
+
+export default function AgentsPage() {
+  const [tab, setTab] = useState(0)
+
+  return (
+    <AuthGuard>
+      <AppShell>
+        <Box sx={{ maxWidth: 1100, mx: 'auto' }}>
+          <Typography variant="h5" sx={{ mb: 2 }}>
+            Agents
+          </Typography>
+
+          <Tabs value={tab} onChange={(_, value) => setTab(value)} sx={{ mb: 3 }}>
+            <Tab label="Monitoring" />
+            <Tab label="Modèles IA" />
+          </Tabs>
+
+          {tab === 0 && <AgentsMonitoringTab />}
+          {tab === 1 && <AgentLlmConfigPanel />}
+        </Box>
+      </AppShell>
+    </AuthGuard>
   )
 }

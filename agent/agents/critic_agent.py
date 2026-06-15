@@ -93,7 +93,8 @@ start_from (étape de reprise, obligatoire si decision = "iterate") :
 - "scenario_agent" : l'angle éditorial, le hook ou la structure narrative est fondamentalement à revoir
 - "media_agent"    : les images sont hors-sujet ou non pertinentes, mais la narration est solide
 - "narrator_agent" : durée, rythme, monotonie vocale ou delivery_style à corriger
-- "editor_agent"   : problème d'assemblage ou de timing uniquement, contenu et audio OK
+- "montage_planner_agent" : rythme visuel, plans trop longs, mauvaise synchro beats/médias
+- "editor_agent"   : problème d'assemblage FFmpeg uniquement, plan de montage OK
 
 """
 
@@ -238,6 +239,7 @@ class CriticAgent(BaseAgent):
         )
         feedback = raw_feedback if isinstance(raw_feedback, dict) else {}
         feedback["start_from"] = start_from_value
+        feedback = self._normalize_feedback(feedback)
         data["feedback"] = feedback
 
         score = data.get("global_score", 0)
@@ -252,6 +254,11 @@ class CriticAgent(BaseAgent):
             min_critic_score=ctx.channel_config.min_critic_score,
             min_short_structure_score=ctx.channel_config.min_short_structure_score,
         )
+        data, decision, start_from_value = self._apply_routing_overrides(
+            data, decision, start_from_value, video_analysis, ctx,
+        )
+        feedback["start_from"] = start_from_value
+        data["feedback"] = feedback
 
         analysis_dict = self._build_video_analysis_dict(video_analysis, gemini_status)
 
@@ -291,13 +298,56 @@ class CriticAgent(BaseAgent):
         return vtype == "short_master" or vtype.startswith("short_")
 
     @staticmethod
+    def _normalize_criterion_value(raw: object) -> int | None:
+        if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+            return int(raw)
+        if isinstance(raw, dict):
+            score = raw.get("score")
+            if isinstance(score, (int, float)) and not isinstance(score, bool):
+                return int(score)
+        return None
+
+    @staticmethod
+    def _normalize_feedback(feedback: dict) -> dict:
+        """Aplatit les critères {score, comments} renvoyés parfois par le LLM."""
+        normalized: dict = {}
+        extra_comments: list[str] = []
+
+        for key, value in feedback.items():
+            if key == "comments":
+                if isinstance(value, str):
+                    normalized["comments"] = value
+                elif isinstance(value, list):
+                    parts = [item for item in value if isinstance(item, str)]
+                    if parts:
+                        normalized["comments"] = "\n".join(parts)
+                continue
+
+            criterion_score = CriticAgent._normalize_criterion_value(value)
+            if criterion_score is not None:
+                normalized[key] = criterion_score
+                if isinstance(value, dict):
+                    nested = value.get("comments")
+                    if isinstance(nested, str) and nested.strip():
+                        extra_comments.append(f"{key}: {nested.strip()}")
+                continue
+
+            if key in ("start_from",):
+                normalized[key] = value
+
+        if extra_comments:
+            existing = normalized.get("comments")
+            merged = "\n".join(extra_comments)
+            normalized["comments"] = f"{existing}\n{merged}" if isinstance(existing, str) else merged
+
+        return normalized
+
+    @staticmethod
     def _extract_structure_score(feedback: dict | list | None) -> int:
         if not isinstance(feedback, dict):
             return 0
-        try:
-            return int(feedback.get("structure") or 0)
-        except (TypeError, ValueError):
-            return 0
+        score = CriticAgent._normalize_criterion_value(feedback.get("structure"))
+        return score if score is not None else 0
 
     @staticmethod
     def _resolve_decision(
@@ -327,6 +377,50 @@ class CriticAgent(BaseAgent):
             )
             return "iterate"
         return "approve"
+
+    @staticmethod
+    def _apply_routing_overrides(
+        data: dict,
+        decision: str,
+        start_from: str,
+        video_analysis: "VideoAnalysis | None",
+        ctx: "PipelineContext",
+    ) -> tuple[dict, str, str]:
+        """Force reprise montage/media si plans statiques détectés."""
+        max_static = float(ctx.channel_config.max_static_shot_s)
+        feedback = data.get("feedback") if isinstance(data.get("feedback"), dict) else {}
+        rhythm = CriticAgent._normalize_criterion_value(feedback.get("rhythm")) or 0
+        visual = CriticAgent._normalize_criterion_value(feedback.get("visual_quality")) or 0
+
+        static_issue = False
+        if video_analysis and video_analysis.issues:
+            for issue in video_analysis.issues:
+                desc = (issue.get("description") or "").lower()
+                if "statique" in desc or "static" in desc or "long" in desc:
+                    static_issue = True
+                    break
+
+        if static_issue or rhythm < 12 or visual < 12:
+            decision = "iterate"
+            if start_from in ("editor_agent", "subtitle_agent"):
+                start_from = "montage_planner_agent"
+            changes = list(data.get("requested_changes") or [])
+            if not any(c.get("agent") == "montage_planner_agent" for c in changes):
+                changes.append({
+                    "agent": "montage_planner_agent",
+                    "change_description": (
+                        f"Raccourcir les plans > {max_static:.0f}s et varier les visuels par beat"
+                    ),
+                })
+            data["requested_changes"] = changes
+
+        if data.get("requested_changes"):
+            agents = [c.get("agent") for c in data["requested_changes"] if c.get("agent")]
+            if "media_agent" in agents and start_from == "editor_agent":
+                start_from = "media_agent"
+
+        data["start_from"] = start_from
+        return data, decision, start_from
 
     @staticmethod
     def _build_video_analysis_dict(

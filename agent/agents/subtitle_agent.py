@@ -122,17 +122,117 @@ class SubtitleAgent(BaseAgent):
 
 
 
-        from agent.skills.audio.whisper_utils import transcribe_to_srt
+        from agent.skills.audio.whisper_utils import transcribe_to_words
+
+        from agent.skills.video.viral_subtitles import group_words_into_lines, write_srt_from_lines
+
+
+
+        words = await transcribe_to_words(audio_paths, model_name=model_name, language=language)
+
+        if not words:
+
+            logger.warning("Aucun mot transcrit pour SRT — projet %s", ctx.project_id)
+
+            return None
+
+
+
+        subs_cfg = ctx.channel_config.subtitles
+
+        lines = group_words_into_lines(
+
+            words,
+
+            max_words=subs_cfg.max_words_per_line,
+
+            pause_threshold_s=subs_cfg.pause_threshold_ms / 1000.0,
+
+        )
+
+        if not lines:
+
+            return None
+
+
+
+        lines = await self._proofread_subtitle_lines(lines)
 
 
 
         srt_path = output_dir / "subtitles.srt"
 
-        await transcribe_to_srt(audio_paths, srt_path, model_name=model_name, language=language)
+        write_srt_from_lines(lines, srt_path)
 
         logger.info("Sous-titres SRT générés : %s", srt_path)
 
         return srt_path
+
+
+
+    async def _proofread_subtitle_lines(
+
+        self,
+
+        lines: list,
+
+    ) -> list:
+
+        from agent.skills.subtitle.subtitle_proofreader import proofread_subtitle_segments
+
+        from agent.skills.video.viral_subtitles import SubtitleLine
+
+
+
+        segments = [
+
+            {
+
+                "start": line.start,
+
+                "end": line.end,
+
+                "text": " ".join(w.word for w in line.words),
+
+            }
+
+            for line in lines
+
+        ]
+
+        corrected = await proofread_subtitle_segments(
+
+            segments,
+
+            call_llm=lambda prompt, **kw: self._call_claude(prompt, **kw),
+
+        )
+
+        updated: list[SubtitleLine] = []
+
+        for line, seg in zip(lines, corrected, strict=True):
+
+            words = list(line.words)
+
+            parts = str(seg.get("text", "")).split()
+
+            if len(parts) == len(words):
+
+                for w, part in zip(words, parts, strict=True):
+
+                    w.word = part
+
+            elif parts:
+
+                words[0].word = " ".join(parts)
+
+                for w in words[1:]:
+
+                    w.word = ""
+
+            updated.append(SubtitleLine(words=words))
+
+        return updated
 
 
 
@@ -301,6 +401,10 @@ class SubtitleAgent(BaseAgent):
             logger.warning("Aucune ligne de sous-titre générée pour le projet %s", ctx.project_id)
 
             return None
+
+
+
+        lines = await self._proofread_subtitle_lines(lines)
 
 
 

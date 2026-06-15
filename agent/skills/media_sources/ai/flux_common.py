@@ -8,6 +8,7 @@ import aiohttp
 
 from agent.core.config import load_agent_config, settings
 from agent.skills.media_sources.ai.base import ImageGenerationRequest, ImageGenerationResult
+from agent.skills.media_sources.ai.flux_negative_prompt import flux_negative_prompt_for_visual_type
 from agent.skills.media_sources.ai.prompt_builder import build_documentary_prompt
 
 logger = logging.getLogger(__name__)
@@ -31,11 +32,24 @@ def _flux_model_for_plan(plan_id: str) -> str | None:
     return mapping.get(plan_id)
 
 
+def _fal_key_for(request: ImageGenerationRequest) -> str | None:
+    if request.user_resolved_keys:
+        return request.fal_api_key
+    return settings.fal_key or None
+
+
+def _apply_flux_negative_prompt(payload: dict, request: ImageGenerationRequest) -> None:
+    negative = flux_negative_prompt_for_visual_type(request.visual_type)
+    if negative:
+        payload["negative_prompt"] = negative
+
+
 async def generate_flux_image(
     plan_id: str,
     request: ImageGenerationRequest,
 ) -> ImageGenerationResult | None:
-    if not settings.fal_key:
+    fal_key = _fal_key_for(request)
+    if not fal_key:
         logger.warning("FAL_KEY absente — provider Flux %s ignoré", plan_id)
         return None
 
@@ -62,8 +76,9 @@ async def generate_flux_image(
     }
     if plan_id == "flux_ultra":
         payload["raw"] = True
+    _apply_flux_negative_prompt(payload, request)
 
-    headers = {"Authorization": f"Key {settings.fal_key}", "Content-Type": "application/json"}
+    headers = {"Authorization": f"Key {fal_key}", "Content-Type": "application/json"}
     url = f"https://fal.run/{model}"
 
     try:
@@ -118,7 +133,8 @@ async def generate_flux2_image(
     plan_id: str,
     request: ImageGenerationRequest,
 ) -> ImageGenerationResult | None:
-    if not settings.fal_key:
+    fal_key = _fal_key_for(request)
+    if not fal_key:
         logger.warning("FAL_KEY absente — provider Flux %s ignoré", plan_id)
         return None
 
@@ -144,8 +160,9 @@ async def generate_flux2_image(
         "enable_safety_checker": True,
         "guidance_scale": 2.5,
     }
+    _apply_flux_negative_prompt(payload, request)
 
-    headers = {"Authorization": f"Key {settings.fal_key}", "Content-Type": "application/json"}
+    headers = {"Authorization": f"Key {fal_key}", "Content-Type": "application/json"}
     url = f"https://fal.run/{model}"
 
     try:

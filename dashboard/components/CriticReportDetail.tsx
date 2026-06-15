@@ -56,8 +56,42 @@ function scoreColor(value: number, max: number): 'success' | 'warning' | 'error'
   return 'error'
 }
 
+function normalizeCriterionValue(raw: unknown): number | null {
+  if (typeof raw === 'number' && !Number.isNaN(raw)) return raw
+  if (raw && typeof raw === 'object' && 'score' in raw) {
+    const score = (raw as { score: unknown }).score
+    return typeof score === 'number' && !Number.isNaN(score) ? score : null
+  }
+  return null
+}
+
+function normalizeComments(raw: unknown): string | null {
+  if (typeof raw === 'string') return raw
+  if (Array.isArray(raw)) {
+    const parts = raw.filter((item): item is string => typeof item === 'string')
+    return parts.length > 0 ? parts.join('\n') : null
+  }
+  return null
+}
+
+function extractCriterionComment(raw: unknown): string | null {
+  if (raw && typeof raw === 'object' && 'comments' in raw) {
+    return normalizeComments((raw as { comments: unknown }).comments)
+  }
+  return null
+}
+
+function getCriterionValue(
+  fb: Record<string, unknown>,
+  key: string,
+  altKey?: string,
+): number | null {
+  const raw = fb[key] ?? (altKey ? fb[altKey] : undefined)
+  return normalizeCriterionValue(raw)
+}
+
 function buildSynthesis(report: CriticReport): { positives: string[]; negatives: string[] } {
-  const fb = report.feedback as Record<string, number | string> | null
+  const fb = report.feedback as Record<string, unknown> | null
   if (!fb) return { positives: [], negatives: [] }
 
   const positives: string[] = []
@@ -66,7 +100,7 @@ function buildSynthesis(report: CriticReport): { positives: string[]; negatives:
   for (const criterion of CRITERIA) {
     const { key, label, max } = criterion
     const altKey = 'altKey' in criterion ? criterion.altKey : undefined
-    const val = (fb[key] ?? (altKey ? fb[altKey] : undefined)) as number | undefined
+    const val = getCriterionValue(fb, key, altKey)
     if (val == null) continue
     const pct = val / max
     if (pct >= 0.75) positives.push(`${label} (${val}/${max})`)
@@ -188,11 +222,12 @@ export default function CriticReportDetail({
   showLastBadge = false,
   variant = 'outlined',
 }: Props) {
-  const fb = report.feedback as Record<string, number | string> | null
+  const fb = report.feedback as Record<string, unknown> | null
   const score = report.global_score ?? 0
   const isApproved = report.decision === 'approve'
   const { positives, negatives } = buildSynthesis(report)
   const iter = iterationLabel ?? report.iteration ?? 1
+  const globalComments = fb ? normalizeComments(fb.comments) : null
 
   return (
     <Box>
@@ -236,22 +271,33 @@ export default function CriticReportDetail({
             {CRITERIA.map((criterion) => {
               const { key, label, max } = criterion
               const altKey = 'altKey' in criterion ? criterion.altKey : undefined
-              const val = (fb[key] ?? (altKey ? fb[altKey] : undefined)) as number | undefined
+              const raw = fb[key] ?? (altKey ? fb[altKey] : undefined)
+              const val = normalizeCriterionValue(raw)
               if (val == null) return null
-              return <ScoreBar key={key} label={label} value={val} max={max} />
+              const criterionComment = extractCriterionComment(raw)
+              return (
+                <Box key={key}>
+                  <ScoreBar label={label} value={val} max={max} />
+                  {criterionComment && (
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                      {criterionComment}
+                    </Typography>
+                  )}
+                </Box>
+              )
             })}
           </Stack>
         </>
       )}
 
-      {fb?.comments && (
+      {globalComments && (
         <>
           <Divider sx={{ my: 2 }} />
           <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
             Analyse détaillée
           </Typography>
           <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.7 }}>
-            {fb.comments as string}
+            {globalComments}
           </Typography>
         </>
       )}

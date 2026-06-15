@@ -37,13 +37,105 @@ class Base(DeclarativeBase):
     pass
 
 
-class Channel(Base):
-    __tablename__ = "channels"
+class SubscriptionPlan(Base):
+    __tablename__ = "subscription_plans"
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     slug: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    is_unlimited: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    limits: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    stripe_price_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    is_public: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now()
+    )
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    google_sub: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    email: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    display_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    avatar_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    subscription_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("subscription_plans.id"), nullable=False
+    )
+    subscription_started_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now()
+    )
+    subscription_expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    agent_llm_preferences: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    stripe_customer_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    stripe_subscription_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class UserApiKey(Base):
+    __tablename__ = "user_api_keys"
+    __table_args__ = (
+        UniqueConstraint("user_id", "provider", name="uq_user_api_key_provider"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+    )
+    provider: Mapped[str] = mapped_column(String, nullable=False)
+    encrypted_key: Mapped[str] = mapped_column(String, nullable=False)
+    metadata_: Mapped[dict | None] = mapped_column("metadata", JSONB, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class SubscriptionEvent(Base):
+    __tablename__ = "subscription_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+    )
+    plan_slug: Mapped[str] = mapped_column(String, nullable=False)
+    event_type: Mapped[str] = mapped_column(String, nullable=False)
+    metadata_: Mapped[dict | None] = mapped_column("metadata", JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now()
+    )
+
+
+class Channel(Base):
+    __tablename__ = "channels"
+    __table_args__ = (UniqueConstraint("user_id", "slug", name="uq_channels_user_slug"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True
+    )
+    slug: Mapped[str] = mapped_column(String, nullable=False)
     name: Mapped[str] = mapped_column(String, nullable=False)
     theme_category: Mapped[str] = mapped_column(String, nullable=False)
     niche_prompt: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -131,6 +223,22 @@ class MediaAsset(Base):
     generation_prompt: Mapped[str | None] = mapped_column(String, nullable=True)
     visual_type: Mapped[str | None] = mapped_column(String, nullable=True)
     iteration: Mapped[int] = mapped_column(Integer, default=1)
+    duration_s: Mapped[float | None] = mapped_column(Float, nullable=True)
+    clip_metadata: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now()
+    )
+
+
+class MontagePlan(Base):
+    __tablename__ = "montage_plans"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    iteration: Mapped[int] = mapped_column(Integer, default=1)
+    plan_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMPTZ, server_default=func.now()
     )
@@ -290,6 +398,9 @@ class MarketAnalysis(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True
     )
     prompt: Mapped[str] = mapped_column(Text, nullable=False)
     saturation_verdict: Mapped[str | None] = mapped_column(String, nullable=True)

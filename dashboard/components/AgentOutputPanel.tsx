@@ -16,24 +16,31 @@ import Tooltip from '@mui/material/Tooltip'
 import LinearProgress from '@mui/material/LinearProgress'
 import CriticReportDetail from './CriticReportDetail'
 import ScenarioDetailView from './ScenarioDetailView'
+import MontagePlanDetailView from './MontagePlanDetailView'
 import MediaSearchAttemptsPanel from './MediaSearchAttemptsPanel'
 import {
+  authenticatedMediaUrl,
   fetcher,
-  mediaProgressUrl,
+  pipelineProgressUrl,
+  montagePlanUrl,
+  projectScenarioUrl,
+  type AgentProgressItem,
   type AgentRun,
   type MediaAsset,
-  type MediaProgress,
   type MediaRelevanceSegmentLog,
+  type PipelineProgressResponse,
   type Video,
   type Scenario,
   type AudioFile,
   type CriticReport,
   type ResearchBrief,
+  type MontagePlan,
 } from '@/lib/api'
 import {
   AGENT_LABELS,
   getAgentRunForStep,
   getCriticReportForIteration,
+  pickAgentProgress,
   type PipelineSelection,
 } from '@/lib/pipeline'
 
@@ -58,6 +65,10 @@ function Running() {
   )
 }
 
+function isExternalHttpUrl(url: string | null | undefined): boolean {
+  return Boolean(url?.startsWith('http://') || url?.startsWith('https://'))
+}
+
 function Empty({ message }: { message?: string }) {
   return (
     <Alert severity="info" icon={false}>
@@ -66,8 +77,26 @@ function Empty({ message }: { message?: string }) {
   )
 }
 
-function ScenarioView({ scenario, isRunning }: { scenario: Scenario | null | undefined; isRunning: boolean }) {
-  return <ScenarioDetailView scenario={scenario} isRunning={isRunning} />
+function ScenarioView({
+  scenario,
+  isRunning,
+  newerVersionExists,
+}: {
+  scenario: Scenario | null | undefined
+  isRunning: boolean
+  newerVersionExists?: boolean
+}) {
+  return (
+    <Box>
+      {newerVersionExists && (
+        <Alert severity="info" sx={{ mb: 2 }}>
+          Version initiale du scénariste — une version post-traitement (accroche, diagrammes…) existe
+          et est utilisée pour la suite du pipeline.
+        </Alert>
+      )}
+      <ScenarioDetailView scenario={scenario} isRunning={isRunning} />
+    </Box>
+  )
 }
 
 function scoreChipColor(score: number): 'success' | 'warning' | 'error' | 'default' {
@@ -103,17 +132,21 @@ const LIBRARY_STATUS_LABELS: Record<string, { label: string; color: 'default' | 
   rejected: { label: 'Rejeté', color: 'default' },
 }
 
-function MediaProgressBar({ progress, isRunning }: { progress: MediaProgress | undefined; isRunning: boolean }) {
+function MediaProgressBar({ progress, isRunning }: { progress: AgentProgressItem | undefined; isRunning: boolean }) {
   if (!progress || progress.total === 0) return null
+  const segmentsDone = progress.segments_done ?? 0
+  const segmentsTotal = progress.segments_total ?? 0
   return (
     <Box sx={{ mb: 2 }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 0.5 }}>
         <Typography variant="body2" color="text.secondary">
-          {progress.found} / {progress.total} médias ({progress.percent} %)
+          {progress.done} / {progress.total} médias ({progress.percent} %)
         </Typography>
-        <Typography variant="caption" color="text.secondary">
-          {progress.segments_done} / {progress.segments_total} segments
-        </Typography>
+        {segmentsTotal > 0 && (
+          <Typography variant="caption" color="text.secondary">
+            {segmentsDone} / {segmentsTotal} segments
+          </Typography>
+        )}
       </Box>
       <LinearProgress
         variant="determinate"
@@ -145,13 +178,13 @@ function MediaAssetsView({
   projectId: string
   agentRun?: AgentRun
   iteration?: number
-  progress?: MediaProgress
+  progress?: AgentProgressItem
 }) {
   const relevanceLog = (
     agentRun?.output_json as { relevance_scores?: MediaRelevanceSegmentLog[] } | undefined
   )?.relevance_scores
 
-  const iterationFilter = iteration ?? progress?.iteration
+  const iterationFilter = iteration
   const filteredAssets = (assets ?? []).filter((asset) => {
     if (iterationFilter == null) return asset.library_status === 'selected' || asset.selected
     return (
@@ -189,7 +222,9 @@ function MediaAssetsView({
       )}
       {sorted.map((a) => {
         const { score, reason } = resolveAssetRelevance(a, relevanceLog)
-        const previewUrl = `/api/v1/projects/${projectId}/media-assets/${a.id}/stream`
+        const previewUrl = authenticatedMediaUrl(
+          `/api/v1/projects/${projectId}/media-assets/${a.id}/stream`,
+        )
         const isVideo = a.asset_type === 'video'
 
         return (
@@ -221,8 +256,8 @@ function MediaAssetsView({
                       sx={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
                       onError={(e) => {
                         const img = e.currentTarget
-                        if (a.source_url && img.src !== a.source_url) {
-                          img.src = a.source_url
+                        if (isExternalHttpUrl(a.source_url) && img.src !== a.source_url) {
+                          img.src = a.source_url!
                         }
                       }}
                     />
@@ -276,16 +311,20 @@ function MediaAssetsView({
                       {a.attribution}
                     </Typography>
                   )}
-                  {a.source_url && (
+                  {(isExternalHttpUrl(a.source_url) || a.local_path) && (
                     <Typography
                       component="a"
-                      href={a.source_url}
+                      href={
+                        isExternalHttpUrl(a.source_url)
+                          ? a.source_url!
+                          : previewUrl
+                      }
                       target="_blank"
                       rel="noopener noreferrer"
                       variant="caption"
                       sx={{ display: 'block', mt: 0.25, wordBreak: 'break-all', color: 'primary.main' }}
                     >
-                      {a.source_url}
+                      {isExternalHttpUrl(a.source_url) ? a.source_url : 'Ouvrir l\u2019aperçu'}
                     </Typography>
                   )}
                 </Box>
@@ -405,7 +444,9 @@ function VideoView({
                 <video
                   controls
                   style={{ width: '100%', borderRadius: 4, display: 'block' }}
-                  src={`/api/v1/projects/${projectId}/videos/${v.id}/stream`}
+                  src={authenticatedMediaUrl(
+                    `/api/v1/projects/${projectId}/videos/${v.id}/stream`,
+                  )}
                 />
               </Box>
             )}
@@ -513,30 +554,80 @@ export default function AgentOutputPanel({
 
   const isRunning = agentRun?.status === 'running'
 
+  const showScenarioStep = step === 'scenario_agent' || step === 'hook_optimizer_agent'
+  const outputScenarioId = (
+    agentRun?.output_json as { new_scenario_id?: string; scenario_id?: string } | undefined
+  )?.new_scenario_id
+    ?? (
+      step === 'scenario_agent'
+        ? (agentRun?.output_json as { scenario_id?: string } | undefined)?.scenario_id
+        : undefined
+    )
+  const scenarioSnapshotAgent =
+    showScenarioStep && !outputScenarioId ? step : null
+  const scenarioUrl =
+    showScenarioStep && !(step === 'scenario_agent' && isRunning)
+      ? outputScenarioId
+        ? projectScenarioUrl(projectId, { scenarioId: outputScenarioId })
+        : scenarioSnapshotAgent && !isRunning
+          ? projectScenarioUrl(projectId, { atAgent: scenarioSnapshotAgent })
+          : projectScenarioUrl(projectId)
+      : null
+
   const { data: researchBrief } = useSWR<ResearchBrief | null>(
     step === 'research_agent' ? `/api/v1/projects/${projectId}/research` : null,
     fetcher,
     { refreshInterval: 3000 },
   )
   const { data: scenario } = useSWR<Scenario | null>(
-    step === 'scenario_agent' ? `/api/v1/projects/${projectId}/scenario` : null,
+    scenarioUrl,
+    fetcher,
+    {
+      refreshInterval:
+        scenarioUrl && (scenarioUrl.includes('at_agent=') || scenarioUrl.includes('scenario_id='))
+          ? 0
+          : 3000,
+    },
+  )
+  const { data: latestScenario } = useSWR<Scenario | null>(
+    step === 'scenario_agent' && agentRun?.status === 'success'
+      ? projectScenarioUrl(projectId)
+      : null,
     fetcher,
     { refreshInterval: 3000 },
   )
+  const newerVersionExists =
+    step === 'scenario_agent'
+    && scenario != null
+    && latestScenario != null
+    && scenario.id !== latestScenario.id
   const { data: mediaAssets } = useSWR<MediaAsset[]>(
     step === 'media_agent' ? `/api/v1/projects/${projectId}/media-assets` : null,
     fetcher,
     { refreshInterval: step === 'media_agent' && isRunning ? 5000 : 3000 },
   )
-  const { data: mediaProgress } = useSWR<MediaProgress>(
+  const { data: pipelineProgress } = useSWR<PipelineProgressResponse>(
     step === 'media_agent' && (isRunning || agentRun?.status === 'success')
-      ? mediaProgressUrl(projectId, iteration ?? undefined)
+      ? pipelineProgressUrl(projectId)
       : null,
     fetcher,
     { refreshInterval: isRunning ? 5000 : 0 },
   )
+  const mediaProgress = pickAgentProgress(pipelineProgress, 'media_agent', iteration)
   const { data: audioFiles } = useSWR<AudioFile[]>(
     step === 'narrator_agent' ? `/api/v1/projects/${projectId}/audio` : null,
+    fetcher,
+    { refreshInterval: 3000 },
+  )
+  const { data: montagePlan } = useSWR<MontagePlan | null>(
+    step === 'montage_planner_agent'
+      ? montagePlanUrl(projectId, iteration ?? undefined)
+      : null,
+    fetcher,
+    { refreshInterval: isRunning ? 5000 : 3000 },
+  )
+  const { data: montageMediaAssets } = useSWR<MediaAsset[]>(
+    step === 'montage_planner_agent' ? `/api/v1/projects/${projectId}/media-assets` : null,
     fetcher,
     { refreshInterval: 3000 },
   )
@@ -581,7 +672,17 @@ export default function AgentOutputPanel({
         <ResearchView brief={researchBrief} isRunning={isRunning} />
       )}
       {step === 'scenario_agent' && (
-        <ScenarioView scenario={scenario} isRunning={isRunning} />
+        <ScenarioView
+          scenario={scenario}
+          isRunning={isRunning}
+          newerVersionExists={newerVersionExists}
+        />
+      )}
+      {step === 'hook_optimizer_agent' && (
+        <ScenarioView
+          scenario={scenario}
+          isRunning={isRunning}
+        />
       )}
       {step === 'media_agent' && (
         <MediaAssetsView
@@ -612,6 +713,15 @@ export default function AgentOutputPanel({
       )}
       {step === 'revision_agent' && (
         <JsonOutputView agentRun={agentRun} isRunning={isRunning} />
+      )}
+      {step === 'montage_planner_agent' && (
+        <MontagePlanDetailView
+          plan={montagePlan}
+          isRunning={isRunning}
+          projectId={projectId}
+          mediaAssets={montageMediaAssets}
+          agentRun={agentRun}
+        />
       )}
       {step === 'clipper_agent' && (
         <JsonOutputView agentRun={agentRun} isRunning={isRunning} />

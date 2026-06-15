@@ -9,6 +9,7 @@ from sqlalchemy import update
 from agent.agents.scenario_agent import _format_research_block
 from agent.core.base_agent import BaseAgent
 from agent.core.database import AsyncSessionFactory, Project, Scenario
+from agent.core.scenario_integrity import validate_segment_count_preserved
 
 if TYPE_CHECKING:
     from agent.core.orchestrator import PipelineContext
@@ -174,6 +175,12 @@ class RevisionAgent(BaseAgent):
 
         new_segments = data.get("segments", segments)
         new_duration = data.get("total_duration_s", ctx.target_duration_seconds)
+
+        validate_segment_count_preserved(
+            segments,
+            new_segments,
+            context="revision_agent",
+        )
 
         async with AsyncSessionFactory() as session:
             new_scenario = Scenario(

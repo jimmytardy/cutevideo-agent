@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import uuid
 from pathlib import Path
@@ -28,19 +29,69 @@ def _model_for_plan(plan_id: str) -> str | None:
     return mapping.get(plan_id)
 
 
-async def _get_gcp_access_token() -> str | None:
+async def _get_gcp_access_token(
+    gcp_credentials: "GcpCredentials | None" = None,
+) -> tuple[str | None, str | None, str | None]:
+    """Retourne (token, project_id, location)."""
+    from agent.core.api_keys import GcpCredentials
+
     try:
         import google.auth
         import google.auth.transport.requests
+    except ImportError as e:
+        logger.warning("Auth GCP Imagen 3 échouée : %s", e)
+        return None, None, None
 
+    if gcp_credentials and gcp_credentials.credentials_json:
+        try:
+            from google.oauth2 import service_account
+
+            info = json.loads(gcp_credentials.credentials_json)
+            credentials = service_account.Credentials.from_service_account_info(
+                info,
+                scopes=["https://www.googleapis.com/auth/cloud-platform"],
+            )
+            credentials.refresh(google.auth.transport.requests.Request())
+            return (
+                str(credentials.token),
+                gcp_credentials.project_id,
+                gcp_credentials.location,
+            )
+        except (ValueError, OSError, KeyError) as e:
+            logger.warning("Auth GCP Imagen 3 (compte user) échouée : %s", e)
+            return None, None, None
+
+    if gcp_credentials and gcp_credentials.adc_path:
+        try:
+            credentials, _ = google.auth.default(
+                scopes=["https://www.googleapis.com/auth/cloud-platform"]
+            )
+            credentials.refresh(google.auth.transport.requests.Request())
+            return (
+                str(credentials.token),
+                gcp_credentials.project_id,
+                gcp_credentials.location,
+            )
+        except (OSError, ValueError) as e:
+            logger.warning("Auth GCP Imagen 3 (ADC plateforme) échouée : %s", e)
+            return None, None, None
+
+    if not settings.gcp_project_id:
+        return None, None, None
+
+    try:
         credentials, _ = google.auth.default(
             scopes=["https://www.googleapis.com/auth/cloud-platform"]
         )
         credentials.refresh(google.auth.transport.requests.Request())
-        return str(credentials.token)
-    except (ImportError, OSError, ValueError) as e:
+        return (
+            str(credentials.token),
+            settings.gcp_project_id,
+            settings.gcp_location,
+        )
+    except (OSError, ValueError) as e:
         logger.warning("Auth GCP Imagen 3 échouée : %s", e)
-        return None
+        return None, None, None
 
 
 class Imagen3Provider:
@@ -48,7 +99,11 @@ class Imagen3Provider:
         self.plan_id = plan_id
 
     async def generate(self, request: ImageGenerationRequest) -> ImageGenerationResult | None:
-        if not settings.gcp_project_id:
+        gcp = request.gcp_credentials
+        if request.user_resolved_keys and gcp is None:
+            logger.warning("Credentials GCP user absents — provider Imagen 3 ignoré")
+            return None
+        if not request.user_resolved_keys and not settings.gcp_project_id:
             logger.warning("GCP_PROJECT_ID absent — provider Imagen 3 ignoré")
             return None
 
@@ -56,12 +111,10 @@ class Imagen3Provider:
         if not model:
             return None
 
-        token = await _get_gcp_access_token()
-        if not token:
+        token, project, location = await _get_gcp_access_token(gcp)
+        if not token or not project or not location:
             return None
 
-        location = settings.gcp_location
-        project = settings.gcp_project_id
         endpoint = (
             f"https://{location}-aiplatform.googleapis.com/v1/projects/{project}"
             f"/locations/{location}/publishers/google/models/{model}:predict"

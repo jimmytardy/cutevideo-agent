@@ -173,8 +173,10 @@ class ChannelRuntimeConfig(BaseModel):
     min_critic_score: int = 90
     min_short_structure_score: int = 15
     max_critic_iterations: int = 5
+    max_fact_check_iterations: int = 3
     min_image_duration_s: int = 4
     min_image_duration_short_s: int = 2
+    max_static_shot_s: int = 8
     content_language: str = "fr"
     music_theme: str = "default"
     auto_reply_comments: bool = True
@@ -366,10 +368,18 @@ def _tags_from_channel(channel: Channel) -> list[str]:
     return []
 
 
-def resolve_channel_config(channel: Channel) -> ChannelRuntimeConfig:
+def resolve_channel_config(
+    channel: Channel,
+    *,
+    subscription_limits: "SubscriptionLimits | None" = None,
+) -> ChannelRuntimeConfig:
     """Fusionne agent_config.json global et channel.config (surcharges)."""
+    from agent.core.subscription import SubscriptionLimits, apply_subscription_caps
+
     global_cfg = load_agent_config()
     channel_overrides: dict[str, Any] = dict(channel.config or {})
+    if subscription_limits is not None:
+        channel_overrides = apply_subscription_caps(channel_overrides, subscription_limits)
     if channel.brand_kit:
         if channel.brand_kit.get("media_source_priority") and "media_source_priority" not in channel_overrides:
             channel_overrides["media_source_priority"] = channel.brand_kit["media_source_priority"]
@@ -469,6 +479,12 @@ def resolve_channel_config(channel: Channel) -> ChannelRuntimeConfig:
         max_critic_iterations=int(
             pipeline.get("max_critic_iterations", global_cfg.get("pipeline", {}).get("max_critic_iterations", 3))
         ),
+        max_fact_check_iterations=int(
+            pipeline.get(
+                "max_fact_check_iterations",
+                global_cfg.get("pipeline", {}).get("max_fact_check_iterations", 3),
+            )
+        ),
         min_image_duration_s=int(
             pipeline.get("min_image_duration_s", global_cfg.get("pipeline", {}).get("min_image_duration_s", 4))
         ),
@@ -476,6 +492,12 @@ def resolve_channel_config(channel: Channel) -> ChannelRuntimeConfig:
             pipeline.get(
                 "min_image_duration_short_s",
                 global_cfg.get("pipeline", {}).get("min_image_duration_short_s", 2),
+            )
+        ),
+        max_static_shot_s=int(
+            pipeline.get(
+                "max_static_shot_s",
+                global_cfg.get("pipeline", {}).get("max_static_shot_s", 8),
             )
         ),
         content_language=content_language,

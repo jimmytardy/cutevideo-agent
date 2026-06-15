@@ -4,7 +4,6 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any
 
-from agent.core.config import settings
 from agent.core.database import AsyncSessionFactory, MediaAsset
 from agent.core.visual_beats import VisualBeat, beats_to_dicts, parse_visual_beats
 from agent.skills.media.beat_source_routing import resolve_beat_sources
@@ -16,6 +15,7 @@ from agent.skills.media.media_library import (
     trim_pool,
 )
 from agent.skills.media_sources.ai.prompt_builder import build_visual_prompt
+from agent.skills.media_sources.ai.prompt_synthesizer import synthesize_flux_subject
 
 if TYPE_CHECKING:
     from agent.agents.media_agent import MediaAgent
@@ -68,7 +68,6 @@ async def process_segment_beats(
 
     order = int(segment.get("order", 0))
     keywords = segment.get("search_keywords", [])
-    min_relevance = validation_brief.min_score_for_segment(order)
     lib_cfg = ctx.channel_config.media_library
     is_derivation = getattr(ctx, "derivation_short_index", None) is not None
     aspect_ratio = (
@@ -89,26 +88,30 @@ async def process_segment_beats(
 
     for beat in beats:
         asset: MediaAsset | None = None
+        min_relevance = validation_brief.min_score_for_beat(order, beat)
 
         if lib_cfg.enabled and pool_assets:
             available = [a for a in pool_assets if str(a.id) not in used_pool_ids]
-            reused, score = await try_reuse_for_beat(
-                beat=beat,
-                segment=segment,
-                pool_assets=available,
-                validation_brief=validation_brief,
-                video_subject=ctx.theme,
-                channel_category=ctx.theme_category,
-                min_score=lib_cfg.reuse_min_score,
-                api_key=settings.google_gemini_api_key or "",
-                output_dir=output_dir,
-                segment_order=order,
-            )
-            if reused:
-                asset = reused
-                used_pool_ids.add(str(reused.id))
-                assets.append(asset)
-                continue
+            if not getattr(ctx, "skip_media_pool_reuse", False):
+                reused, score = await try_reuse_for_beat(
+                    beat=beat,
+                    segment=segment,
+                    pool_assets=available,
+                    validation_brief=validation_brief,
+                    video_subject=ctx.theme,
+                    channel_category=ctx.theme_category,
+                    min_score=lib_cfg.reuse_min_score,
+                    api_key=getattr(agent, "_gemini_api_key", "") or "",
+                    output_dir=output_dir,
+                    segment_order=order,
+                )
+                if reused:
+                    asset = reused
+                    used_pool_ids.add(str(reused.id))
+                    assets.append(asset)
+                    continue
+            else:
+                logger.info("Pool reuse désactivé (critique visuelle) — beat %d", beat.order)
 
         beat_keywords = _beat_keywords(beat, keywords)
         video_target = _beat_video_target(beat, ms_cfg)
@@ -143,13 +146,23 @@ async def process_segment_beats(
                 output_dir=output_dir / f"beat_{beat.order:02d}",
                 validation_brief=validation_brief,
                 order=order,
+                beat=beat,
             )
         selected = agent._select_assets(candidates, video_target, 1)
 
         if not selected and ms_cfg.enable_ai_fallback and ai_cfg.enabled and allows_ai:
+            beat_dir = output_dir / f"beat_{beat.order:02d}"
+            subject_en = await synthesize_flux_subject(
+                visual_type=beat.visual_type,
+                prompt_fr=beat.prompt,
+                style_hint=beat.style_hint,
+                phrase_anchor=beat.phrase_anchor,
+                api_key=getattr(agent, "_gemini_api_key", "") or None,
+                cache_dir=beat_dir / "prompt_cache",
+            )
             ai_prompt = build_visual_prompt(
                 beat.visual_type,
-                beat.prompt,
+                subject_en,
                 style_hint=beat.style_hint,
                 theme_category=ctx.theme_category,
                 editorial_tone=ctx.channel_config.editorial_tone,
@@ -158,7 +171,7 @@ async def process_segment_beats(
             if await agent._can_generate_ai_image(ctx, ai_cfg):
                 ai_result = await agent._generate_validated_ai_image(
                     ai_prompt,
-                    output_dir / f"beat_{beat.order:02d}",
+                    beat_dir,
                     ctx,
                     {**segment, "narration_text": f"{beat.phrase_anchor} — {beat.prompt}"},
                     min_relevance,
@@ -166,6 +179,8 @@ async def process_segment_beats(
                     aspect_ratio,
                     validation_brief,
                     use_prompt_as_is=True,
+                    beat=beat,
+                    visual_type=beat.visual_type,
                 )
                 pending: list[dict] = []
                 await agent._apply_ai_image_result(

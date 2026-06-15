@@ -86,6 +86,94 @@ def repair_gemini_array_corruption(
     return "\n".join(out)
 
 
+def repair_truncated_json(text: str) -> str:
+    """Ferme les crochets/accolades manquants et retire la virgule finale."""
+    stripped = text.strip()
+    stripped = re.sub(r",\s*$", "", stripped)
+
+    stack: list[str] = []
+    in_string = False
+    escape = False
+    for ch in stripped:
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            stack.append("}")
+        elif ch == "[":
+            stack.append("]")
+        elif ch in "}]" and stack and stack[-1] == ch:
+            stack.pop()
+
+    if in_string:
+        stripped += '"'
+
+    return stripped + "".join(reversed(stack))
+
+
+def extract_array_objects(raw: str, field_name: str) -> list[dict[str, Any]] | None:
+    """Extrait les objets complets d'un tableau JSON tronqué (ex. scores Gemini)."""
+    match = re.search(rf'"{re.escape(field_name)}"\s*:\s*\[', raw)
+    if not match:
+        return None
+
+    objects: list[dict[str, Any]] = []
+    index = match.end()
+    length = len(raw)
+
+    while index < length:
+        while index < length and raw[index] in " \t\n\r,":
+            index += 1
+        if index >= length or raw[index] != "{":
+            break
+
+        depth = 0
+        in_string = False
+        escape = False
+        obj_start = index
+        obj_end: int | None = None
+
+        for pos in range(index, length):
+            ch = raw[pos]
+            if in_string:
+                if escape:
+                    escape = False
+                elif ch == "\\":
+                    escape = True
+                elif ch == '"':
+                    in_string = False
+                continue
+            if ch == '"':
+                in_string = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    obj_end = pos + 1
+                    break
+
+        if obj_end is None:
+            break
+
+        try:
+            obj = json.loads(raw[obj_start:obj_end])
+        except json.JSONDecodeError:
+            break
+        if isinstance(obj, dict):
+            objects.append(obj)
+        index = obj_end
+
+    return objects or None
+
+
 def loads_json_object(
     text: str,
     *,
@@ -96,6 +184,9 @@ def loads_json_object(
     candidates = [text]
     if repair_fn is not None:
         candidates.append(repair_fn(text))
+    candidates.append(repair_truncated_json(text))
+    if repair_fn is not None:
+        candidates.append(repair_truncated_json(repair_fn(text)))
 
     for candidate in candidates:
         cleaned = re.sub(r",\s*([}\]])", r"\1", candidate)
@@ -167,8 +258,15 @@ def parse_gemini_response(
         raise ValueError(f"réponse vide de {model_name}")
     try:
         data = parse_json_text(raw, model_name, repair_fn=repair_fn)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"JSON invalide de {model_name} : {raw[:200]}") from exc
+    except (json.JSONDecodeError, ValueError) as exc:
+        if required_field:
+            objects = extract_array_objects(raw, required_field)
+            if objects is not None:
+                return {required_field: objects}
+        snippet = raw[:200].replace("\n", "\\n")
+        if isinstance(exc, ValueError) and "JSON invalide" in str(exc):
+            raise
+        raise ValueError(f"JSON invalide de {model_name} : {snippet}") from exc
     if required_field and not isinstance(data.get(required_field), list):
         raise ValueError(f"JSON invalide de {model_name} : champ {required_field} absent")
     return data

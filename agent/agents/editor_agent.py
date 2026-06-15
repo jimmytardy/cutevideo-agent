@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from pathlib import Path
 
 from sqlalchemy import select
@@ -8,14 +9,14 @@ from sqlalchemy import select
 from typing import Any
 
 from agent.core.base_agent import BaseAgent
-from agent.core.database import AsyncSessionFactory, AudioFile, MediaAsset, Scenario, Video
+from agent.core.database import AsyncSessionFactory, AudioFile, Scenario, Video
 from agent.agents.narrator_agent import segment_needs_music, segment_needs_voice
 
 logger = logging.getLogger(__name__)
 
 
 class EditorAgent(BaseAgent):
-    """Agent 4 — Monteur vidéo : assemble images + voix (+ texte à l'écran)."""
+    """Agent 4 — Monteur vidéo : exécute le MontagePlan (pas de chemin legacy)."""
 
     name = "editor_agent"
 
@@ -50,16 +51,17 @@ class EditorAgent(BaseAgent):
             raise
 
     async def _assemble_video(self, ctx: "PipelineContext", scenario: Scenario | None) -> Video:
-        from agent.skills.video.ffmpeg_utils import assemble_long_video, assemble_vertical_short
+        from agent.agents.montage_planner_agent import load_latest_montage_plan
+        from agent.skills.video.ffmpeg_utils import assemble_from_montage_plan, assert_audio_has_signal
+
+        montage_plan = await load_latest_montage_plan(ctx.project_id)
+        if not montage_plan or not montage_plan.segments:
+            raise RuntimeError(
+                "Montage impossible : aucun MontagePlan en base. "
+                "Relancez montage_planner_agent avant editor_agent."
+            )
 
         async with AsyncSessionFactory() as session:
-            media_result = await session.execute(
-                select(MediaAsset)
-                .where(MediaAsset.project_id == ctx.project_id, MediaAsset.selected == True)
-                .order_by(MediaAsset.segment_order, MediaAsset.beat_index)
-            )
-            media_assets = list(media_result.scalars().all())
-
             audio_result = await session.execute(
                 select(AudioFile)
                 .where(AudioFile.project_id == ctx.project_id)
@@ -67,71 +69,26 @@ class EditorAgent(BaseAgent):
             )
             audio_files = list(audio_result.scalars().all())
 
-        self._validate_media_assets(media_assets, scenario)
-
-        segment_meta: dict[int, dict] = {}
-        segment_durations: dict[int, float] = {}
-        segment_beat_timelines = await self._build_segment_beat_timelines(
-            scenario, media_assets, audio_files, ctx.channel_config
-        )
-        if scenario and scenario.segments:
-            for seg in scenario.segments:
-                order = seg.get("order", 0)
-                needs_voice = segment_needs_voice(seg)
-                needs_music = segment_needs_music(seg)
-                segment_meta[order] = {
-                    "on_screen_text": seg.get("on_screen_text", ""),
-                    "duration_s": seg.get("duration_s", 30),
-                    "needs_voice": needs_voice,
-                    "needs_music": needs_music,
-                    "mood": seg.get("mood", "calme"),
-                    "strip_source_audio": seg.get("strip_source_audio", needs_voice),
-                    "visual_optional": bool(seg.get("visual_optional", False)),
-                }
-                segment_durations[order] = float(seg.get("duration_s", 30))
-
-        self._validate_audio_coverage(scenario, audio_files)
-
-        is_vertical = ctx.channel_config.production_mode == "shorts_only"
-        min_img = (
-            ctx.channel_config.min_image_duration_short_s
-            if is_vertical
-            else ctx.channel_config.min_image_duration_s
-        )
+        segment_meta = self._build_segment_meta(scenario)
+        is_vertical = montage_plan.is_vertical or ctx.channel_config.production_mode == "shorts_only"
 
         if is_vertical:
             output_dir = Path("./output/shorts/master")
-            output_dir.mkdir(parents=True, exist_ok=True)
-            output_path = output_dir / f"{ctx.project_id}_v{ctx.iteration}.mp4"
-            duration_s = await assemble_vertical_short(
-                media_assets=media_assets,
-                audio_files=audio_files,
-                output_path=output_path,
-                project_id=ctx.project_id,
-                min_image_duration=min_img,
-                segment_meta=segment_meta,
-                segment_beat_timelines=segment_beat_timelines,
-            )
             video_type = "short_master"
         else:
             output_dir = Path("./output/long")
-            output_dir.mkdir(parents=True, exist_ok=True)
-            output_path = output_dir / f"{ctx.project_id}_v{ctx.iteration}.mp4"
-            duration_s = await assemble_long_video(
-                media_assets=media_assets,
-                audio_files=audio_files,
-                output_path=output_path,
-                project_id=ctx.project_id,
-                min_image_duration=min_img,
-                segment_durations=segment_durations,
-                segment_meta=segment_meta,
-                segment_beat_timelines=segment_beat_timelines,
-            )
             video_type = "long"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / f"{ctx.project_id}_v{ctx.iteration}.mp4"
+
+        duration_s = await assemble_from_montage_plan(
+            montage_plan,
+            audio_files=audio_files,
+            output_path=output_path,
+            project_id=ctx.project_id,
+        )
 
         output_path = await self._mix_music_by_mood(ctx, output_path, segment_meta, duration_s)
-
-        from agent.skills.video.ffmpeg_utils import assert_audio_has_signal
 
         has_narration = any(m.get("needs_voice") for m in segment_meta.values())
         await assert_audio_has_signal(
@@ -162,102 +119,25 @@ class EditorAgent(BaseAgent):
         return video
 
     @staticmethod
-    async def _build_segment_beat_timelines(
-        scenario: Scenario | None,
-        media_assets: list[MediaAsset],
-        audio_files: list[AudioFile],
-        channel_config: Any,
-    ) -> dict[int, list]:
-        from agent.core.visual_beats import (
-            effective_min_duration,
-            is_diagram_beat,
-            parse_visual_beats,
-        )
-        from agent.skills.video.beat_timeline import (
-            BeatTimelineEntry,
-            compute_beat_timeline,
-            word_segments_from_json,
-        )
-        from agent.skills.video.diagram_text_layout import analyze_diagram_text_layout
-
-        if not scenario or not channel_config.visual_beats.enabled:
-            return {}
-
-        is_short = channel_config.production_mode == "shorts_only"
-        audio_by_order = {(af.segment_order or 0): af for af in audio_files}
-        assets_by_order: dict[int, list[MediaAsset]] = {}
-        for asset in media_assets:
-            order = asset.segment_order or 0
-            assets_by_order.setdefault(order, []).append(asset)
-
-        timelines: dict[int, list[BeatTimelineEntry]] = {}
-
-        def min_for_beat(beat: Any) -> float:
-            return effective_min_duration(beat, is_short=is_short, config=channel_config)
-
-        for seg in scenario.segments or []:
-            order = int(seg.get("order", 0))
-            beats = parse_visual_beats(seg)
-            if not beats:
-                continue
-            seg_assets = sorted(
-                assets_by_order.get(order, []),
-                key=lambda a: (a.beat_index or 0, a.created_at),
-            )
-            asset_paths = [
-                a.local_path for a in seg_assets
-                if a.local_path and Path(a.local_path).exists()
-            ]
-            if not asset_paths:
-                continue
-            audio = audio_by_order.get(order)
-            words = word_segments_from_json(
-                audio.word_timestamps if audio else None
-            )
-            duration = float(
-                audio.duration_s if audio and audio.duration_s else seg.get("duration_s", 30)
-            )
-            narration = (seg.get("narration_text") or "")[:500]
-
-            text_layouts: list[list | None] = []
-            for i, beat in enumerate(beats):
-                if not is_diagram_beat(beat):
-                    text_layouts.append(None)
-                    continue
-                labels = beat.resolved_diagram_labels()
-                if not labels:
-                    text_layouts.append(None)
-                    continue
-                image_path = Path(
-                    asset_paths[i] if i < len(asset_paths) else asset_paths[-1]
-                )
-                layout = await analyze_diagram_text_layout(
-                    image_path,
-                    labels,
-                    narration_excerpt=narration,
-                    language=channel_config.content_language,
-                    visual_type=beat.visual_type,
-                    vertical=is_short,
-                    width=1080 if is_short else 1920,
-                    height=1920 if is_short else 1080,
-                )
-                text_layouts.append(layout)
-
-            timeline = compute_beat_timeline(
-                beats,
-                words,
-                duration,
-                min_duration_for_beat=min_for_beat,
-                image_paths=asset_paths,
-                text_layouts=text_layouts,
-            )
-            if timeline:
-                timelines[order] = timeline
-        return timelines
+    def _build_segment_meta(scenario: Scenario | None) -> dict[int, dict]:
+        segment_meta: dict[int, dict] = {}
+        if not scenario or not scenario.segments:
+            return segment_meta
+        for seg in scenario.segments:
+            order = seg.get("order", 0)
+            needs_voice = segment_needs_voice(seg)
+            segment_meta[order] = {
+                "duration_s": seg.get("duration_s", 30),
+                "needs_voice": needs_voice,
+                "needs_music": segment_needs_music(seg),
+                "mood": seg.get("mood", "calme"),
+                "strip_source_audio": seg.get("strip_source_audio", needs_voice),
+            }
+        return segment_meta
 
     @staticmethod
     def _validate_media_assets(
-        media_assets: list[MediaAsset],
+        media_assets: list,
         scenario: Scenario | None = None,
     ) -> None:
         usable = [
@@ -311,7 +191,6 @@ class EditorAgent(BaseAgent):
         segment_meta: dict[int, dict],
         total_duration_s: float,
     ) -> Path:
-        """Mixe la musique par blocs de mood si des segments le demandent."""
         from agent.skills.audio.audio_mixer import (
             load_audio_mix_config,
             mix_multi_segment_music,
@@ -366,7 +245,6 @@ class EditorAgent(BaseAgent):
         music_volume: float,
         duck_narration: bool,
     ) -> Path:
-        """Fallback : une seule piste musicale basée sur le thème de la chaîne."""
         from agent.skills.audio.music_fetcher import fetch_background_music
         from agent.skills.video.ffmpeg_utils import mix_background_music
 
@@ -409,7 +287,6 @@ def _build_mood_blocks(
     segment_meta: dict[int, dict],
     total_duration_s: float,
 ) -> list[dict]:
-    """Construit des blocs de mood pour les segments demandant de la musique."""
     if not segment_meta:
         return []
 

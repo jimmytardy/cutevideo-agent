@@ -10,9 +10,11 @@ from typing import Any, Literal
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent.core.base_agent import stop_running_agent_runs
 from agent.core.channel_config import ChannelRuntimeConfig, resolve_channel_config
 from agent.core.learning_context import ChannelContextSnapshot, load_channel_context
 from agent.core.concurrency import can_start_pipeline
+from agent.core.subscription import resolve_user_limits
 from agent.core.database import (
     AsyncSessionFactory,
     AudioFile,
@@ -20,13 +22,27 @@ from agent.core.database import (
     CriticReport,
     MediaAsset,
     Project,
+    MontagePlan,
     Scenario,
+    User,
     Video,
 )
 from agent.core.config import settings
 from agent.core.queue import queue
+from agent.core.pipeline_restart import (
+    needs_revision_agent,
+    resolve_restart_step,
+    should_skip_pool_reuse,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _agent(agent_cls: type, ctx: "PipelineContext") -> Any:
+    instance = agent_cls()
+    if hasattr(instance, "bind_user"):
+        instance.bind_user(ctx.user_id)
+    return instance
 
 
 async def _raise_if_cancelled(project_id: uuid.UUID) -> None:
@@ -37,9 +53,13 @@ async def _raise_if_cancelled(project_id: uuid.UUID) -> None:
 AGENT_ORDER = [
     "research_agent",
     "scenario_agent",
+    "fact_checker_agent",
+    "hook_optimizer_agent",
+    "diagram_specialist_agent",
     "revision_agent",
     "media_agent",
     "narrator_agent",
+    "montage_planner_agent",
     "editor_agent",
     "subtitle_agent",
     "critic_agent",
@@ -52,6 +72,7 @@ AGENT_ORDER = [
 class PipelineContext:
     project_id: uuid.UUID
     channel_id: uuid.UUID
+    user_id: uuid.UUID
     channel_slug: str
     theme_category: str
     niche_prompt: str
@@ -66,6 +87,10 @@ class PipelineContext:
     planned_shorts: list[dict[str, Any]] | None = None
     critic_feedback: list[dict] | None = None
     critic_start_from: str | None = None
+    resume_iteration: int | None = None
+    fact_check_warnings: list[dict] | None = None
+    fact_check_feedback: list[dict] | None = None
+    skip_media_pool_reuse: bool = False
     research_brief: dict[str, Any] | None = None
     derivation_short_index: int | None = None
     short_derivation_mode: Literal["reuse_pool_only", "free_sources_only", "full"] | None = None
@@ -97,6 +122,7 @@ class Orchestrator:
         start_from: str | None = None,
         critic_feedback: list[dict] | None = None,
         critic_start_from: str | None = None,
+        resume_iteration: int | None = None,
     ) -> None:
         async with AsyncSessionFactory() as session:
             project = await self._get_project(session, project_id)
@@ -120,10 +146,14 @@ class Orchestrator:
         try:
             learning = await load_channel_context(channel.id)
             project_config = project.config or {}
-            channel_config = resolve_channel_config(channel)
+            async with AsyncSessionFactory() as init_session:
+                user = await init_session.get(User, channel.user_id)
+                limits = await resolve_user_limits(init_session, user) if user else None
+            channel_config = resolve_channel_config(channel, subscription_limits=limits)
             ctx = PipelineContext(
                 project_id=project_id,
                 channel_id=channel.id,
+                user_id=channel.user_id,
                 channel_slug=channel.slug,
                 theme_category=channel.theme_category,
                 niche_prompt=channel.niche_prompt or "",
@@ -141,6 +171,7 @@ class Orchestrator:
                 planned_shorts=project_config.get("planned_shorts"),
                 critic_feedback=critic_feedback,
                 critic_start_from=critic_start_from,
+                resume_iteration=resume_iteration,
                 research_brief=project_config.get("research_brief"),
             )
 
@@ -182,6 +213,7 @@ class Orchestrator:
         except asyncio.CancelledError:
             async with AsyncSessionFactory() as session:
                 await self._update_project_status(session, project_id, "stopped", "Arrêté manuellement")
+            await stop_running_agent_runs(project_id)
             logger.info("Pipeline annulé pour le projet %s", project_id)
             raise
         except Exception as e:
@@ -212,25 +244,45 @@ class Orchestrator:
     ) -> None:
         from agent.agents.research_agent import ResearchAgent
         from agent.agents.scenario_agent import ScenarioAgent
+        from agent.agents.fact_checker_agent import FactCheckerAgent
+        from agent.agents.hook_optimizer_agent import HookOptimizerAgent
+        from agent.agents.diagram_specialist_agent import DiagramSpecialistAgent
         from agent.agents.revision_agent import RevisionAgent
         from agent.agents.media_agent import MediaAgent
         from agent.agents.narrator_agent import NarratorAgent
+        from agent.agents.montage_planner_agent import MontagePlannerAgent
         from agent.agents.editor_agent import EditorAgent
         from agent.agents.subtitle_agent import SubtitleAgent
         from agent.agents.critic_agent import CriticAgent
         from agent.agents.video_analyst_agent import run_video_analysis
-        from agent.core.config import settings
 
-        _STEPS = ["research_agent", "scenario_agent", "media_agent", "narrator_agent", "editor_agent", "subtitle_agent", "critic_agent"]
+        _STEPS = [
+            "research_agent", "scenario_agent", "media_agent", "narrator_agent",
+            "montage_planner_agent", "editor_agent", "subtitle_agent", "critic_agent",
+        ]
+        effective_start = "editor_agent" if start_from == "subtitle_agent" else start_from
+        hook_only_restart = effective_start == "hook_optimizer_agent"
+        _PRE_MEDIA = ("fact_checker_agent", "hook_optimizer_agent", "diagram_specialist_agent")
+        if effective_start in _PRE_MEDIA and not hook_only_restart:
+            effective_start = "scenario_agent"
         _STEP_TO_LOOP_IDX: dict[str, int] = {
             "research_agent": 0,
             "scenario_agent": 1,
-            "media_agent":    1,
-            "narrator_agent": 2,
-            "editor_agent":   3,
+            "fact_checker_agent": 1,
+            "hook_optimizer_agent": 1,
+            "diagram_specialist_agent": 1,
+            "media_agent": 2,
+            "narrator_agent": 3,
+            "montage_planner_agent": 4,
+            "editor_agent": 5,
+            "subtitle_agent": 6,
         }
-        effective_start = "editor_agent" if start_from == "subtitle_agent" else start_from
-        start_idx = _STEPS.index(effective_start) if effective_start in _STEPS else 0
+        if effective_start in _STEP_TO_LOOP_IDX:
+            start_idx = _STEP_TO_LOOP_IDX[effective_start]
+        elif effective_start in _STEPS:
+            start_idx = _STEPS.index(effective_start)
+        else:
+            start_idx = 0
 
         pid = str(ctx.project_id)
         current_agent = "research_agent"
@@ -240,19 +292,26 @@ class Orchestrator:
                 pass  # RevisionAgent will build the revised scenario inside the loop
             elif start_idx == 0:
                 await queue.set_agent_status(pid, "research_agent", "running")
-                brief = await ResearchAgent().run(ctx)
+                brief = await _agent(ResearchAgent, ctx).run(ctx)
                 ctx.research_brief = brief.to_dict()
                 await queue.set_agent_status(pid, "research_agent", "success")
 
                 await queue.set_agent_status(pid, "scenario_agent", "running")
-                scenario = await ScenarioAgent().run(ctx)
+                scenario = await _agent(ScenarioAgent, ctx).run(ctx)
                 await queue.set_agent_status(pid, "scenario_agent", "success")
+                scenario = await self._run_pre_media_quality_agents(ctx, scenario, pid)
+            elif hook_only_restart:
+                scenario = await self._load_latest_scenario(ctx.project_id)
+                await queue.set_agent_status(pid, "research_agent", "success")
+                await queue.set_agent_status(pid, "scenario_agent", "success")
+                scenario = await self._run_pre_media_quality_agents(ctx, scenario, pid)
             elif start_idx <= 1:
                 if start_idx == 0:
                     await queue.set_agent_status(pid, "research_agent", "success")
                 await queue.set_agent_status(pid, "scenario_agent", "running")
-                scenario = await ScenarioAgent().run(ctx)
+                scenario = await _agent(ScenarioAgent, ctx).run(ctx)
                 await queue.set_agent_status(pid, "scenario_agent", "success")
+                scenario = await self._run_pre_media_quality_agents(ctx, scenario, pid)
             else:
                 scenario = await self._load_latest_scenario(ctx.project_id)
                 await queue.set_agent_status(pid, "research_agent", "success")
@@ -262,86 +321,115 @@ class Orchestrator:
             best_video_id: uuid.UUID | None = None
             video: Video | None = None
 
-            for iteration in range(1, max_iterations + 1):
+            loop_start_iteration = 1
+            if ctx.critic_feedback is not None and ctx.resume_iteration is not None:
+                loop_start_iteration = ctx.resume_iteration
+
+            for iteration in range(loop_start_iteration, max_iterations + 1):
                 await _raise_if_cancelled(ctx.project_id)
                 ctx.iteration = iteration
 
-                if iteration == 1 and ctx.critic_feedback is not None:
-                    next_step = ctx.critic_start_from or "media_agent"
-                    loop_start = _STEP_TO_LOOP_IDX.get(next_step, 1)
-                    await self._clear_iteration_assets(ctx.project_id, start_from=next_step)
+                is_critic_restart = ctx.critic_feedback is not None and (
+                    (ctx.resume_iteration is not None and iteration == ctx.resume_iteration)
+                    or (ctx.resume_iteration is None and iteration > loop_start_iteration)
+                    or (
+                        ctx.resume_iteration is None
+                        and iteration == 1
+                        and loop_start_iteration == 1
+                    )
+                )
+                if is_critic_restart:
+                    is_external_restart = (
+                        (ctx.resume_iteration is not None and iteration == ctx.resume_iteration)
+                        or (ctx.resume_iteration is None and iteration == 1 and loop_start_iteration == 1)
+                    )
+                    if ctx.resume_iteration is not None:
+                        ctx.resume_iteration = None
+                    next_step = resolve_restart_step(ctx.critic_feedback, ctx.critic_start_from)
+                    ctx.critic_start_from = next_step
+                    ctx.skip_media_pool_reuse = should_skip_pool_reuse(ctx.critic_feedback)
+                    loop_start = _STEP_TO_LOOP_IDX.get(next_step, 2)
+                    will_revise = needs_revision_agent(ctx.critic_feedback, next_step)
+                    await self._clear_iteration_assets(
+                        ctx.project_id,
+                        start_from=next_step,
+                        keep_scenarios=will_revise,
+                    )
                     if next_step == "research_agent":
                         current_agent = "research_agent"
                         await queue.set_agent_status(pid, "research_agent", "running")
-                        brief = await ResearchAgent().run(ctx)
+                        brief = await _agent(ResearchAgent, ctx).run(ctx)
                         ctx.research_brief = brief.to_dict()
                         await queue.set_agent_status(pid, "research_agent", "success")
                         current_agent = "scenario_agent"
                         await queue.set_agent_status(pid, "scenario_agent", "running")
-                        scenario = await ScenarioAgent().run(ctx)
+                        scenario = await _agent(ScenarioAgent, ctx).run(ctx)
                         await queue.set_agent_status(pid, "scenario_agent", "success")
-                    else:
+                        scenario = await self._run_pre_media_quality_agents(ctx, scenario, pid)
+                    elif will_revise:
                         current_agent = "revision_agent"
                         await queue.set_agent_status(pid, "revision_agent", "running")
-                        base = await self._load_latest_scenario(ctx.project_id)
-                        if next_step != "editor_agent":
-                            scenario = await RevisionAgent().run(ctx, base)
+                        if is_external_restart:
+                            base = await self._load_latest_scenario(ctx.project_id)
+                            scenario = await _agent(RevisionAgent, ctx).run(ctx, base)
                         else:
-                            scenario = base
+                            scenario = await _agent(RevisionAgent, ctx).run(ctx, scenario)  # type: ignore[arg-type]
                         await queue.set_agent_status(pid, "revision_agent", "success")
-                elif iteration > 1:
-                    next_step = ctx.critic_start_from or "media_agent"
-                    loop_start = _STEP_TO_LOOP_IDX.get(next_step, 1)
-                    await self._clear_iteration_assets(ctx.project_id, start_from=next_step)
-                    if next_step == "research_agent":
-                        current_agent = "research_agent"
-                        await queue.set_agent_status(pid, "research_agent", "running")
-                        brief = await ResearchAgent().run(ctx)
-                        ctx.research_brief = brief.to_dict()
-                        await queue.set_agent_status(pid, "research_agent", "success")
-                        current_agent = "scenario_agent"
-                        await queue.set_agent_status(pid, "scenario_agent", "running")
-                        scenario = await ScenarioAgent().run(ctx)
-                        await queue.set_agent_status(pid, "scenario_agent", "success")
-                    elif next_step != "editor_agent":
-                        current_agent = "revision_agent"
-                        await queue.set_agent_status(pid, "revision_agent", "running")
-                        scenario = await RevisionAgent().run(ctx, scenario)  # type: ignore[arg-type]
-                        await queue.set_agent_status(pid, "revision_agent", "success")
+                        if loop_start <= 1:
+                            scenario = await self._run_pre_media_quality_agents(ctx, scenario, pid)
                 else:
-                    loop_start = start_idx
+                    loop_start = _STEP_TO_LOOP_IDX.get(effective_start or "", start_idx) if effective_start in _STEP_TO_LOOP_IDX else start_idx
 
                 current_agent = "media_agent"
-                if loop_start <= 1:
+                if loop_start <= 2:
+                    from agent.core.scenario_integrity import validate_scenario_integrity
+
+                    validate_scenario_integrity(scenario, ctx.channel_config)
                     await queue.set_agent_status(pid, current_agent, "running")
-                    await MediaAgent().run(ctx, scenario)
+                    await _agent(MediaAgent, ctx).run(ctx, scenario)
                     await queue.set_agent_status(pid, current_agent, "success")
 
                 current_agent = "narrator_agent"
-                if loop_start <= 2:
+                if loop_start <= 3:
                     await queue.set_agent_status(pid, current_agent, "running")
-                    await NarratorAgent().run(ctx, scenario)
+                    await _agent(NarratorAgent, ctx).run(ctx, scenario)
+                    await queue.set_agent_status(pid, current_agent, "success")
+
+                current_agent = "montage_planner_agent"
+                if loop_start <= 4:
+                    await queue.set_agent_status(pid, current_agent, "running")
+                    await _agent(MontagePlannerAgent, ctx).run(ctx, scenario)
                     await queue.set_agent_status(pid, current_agent, "success")
 
                 current_agent = "editor_agent"
-                if loop_start <= 3:
+                if loop_start <= 5:
                     await queue.set_agent_status(pid, current_agent, "running")
-                    video = await EditorAgent().run(ctx, scenario)
+                    video = await _agent(EditorAgent, ctx).run(ctx, scenario)
                     await queue.set_agent_status(pid, current_agent, "success")
-                elif iteration == 1:
+                elif iteration == loop_start_iteration:
                     video = await self._load_latest_video(ctx.project_id)
                     await queue.set_agent_status(pid, "editor_agent", "success")
 
                 current_agent = "subtitle_agent"
-                if loop_start <= 4:
+                if loop_start <= 6:
                     await queue.set_agent_status(pid, current_agent, "running")
-                    await SubtitleAgent().run(ctx, video)
+                    await _agent(SubtitleAgent, ctx).run(ctx, video)
                     video = await self._load_latest_video(ctx.project_id)
                     await queue.set_agent_status(pid, current_agent, "success")
 
                 video_analysis = None
                 gemini_status = "missing_key"
-                if settings.google_gemini_api_key and video.local_path:
+                from agent.core.api_keys import resolve_api_key
+
+                async with AsyncSessionFactory() as key_session:
+                    key_ctx = await resolve_api_key(
+                        key_session,
+                        ctx.user_id,
+                        "gemini",
+                        purpose="video_analysis_critic",
+                        tier="free",
+                    )
+                if key_ctx.key and video.local_path:
                     if Path(video.local_path).exists():
                         video_analysis = await run_video_analysis(
                             video_path=video.local_path,
@@ -349,7 +437,7 @@ class Orchestrator:
                             theme=ctx.theme,
                             duration_s=video.duration_s or 0,
                             iteration=iteration,
-                            api_key=settings.google_gemini_api_key,
+                            api_key=key_ctx.key,
                         )
                         gemini_status = "ok" if video_analysis else "error"
                     else:
@@ -357,7 +445,7 @@ class Orchestrator:
 
                 current_agent = "critic_agent"
                 await queue.set_agent_status(pid, current_agent, "running")
-                report = await CriticAgent().run(
+                report = await _agent(CriticAgent, ctx).run(
                     ctx, video, scenario, iteration, video_analysis, gemini_status=gemini_status
                 )
                 await queue.set_agent_status(pid, current_agent, "success")
@@ -389,7 +477,7 @@ class Orchestrator:
         current_agent = "short_editor_agent"
         try:
             await queue.set_agent_status(pid, current_agent, "running")
-            await ShortEditorAgent().run_platform_exports(ctx)
+            await _agent(ShortEditorAgent, ctx).run_platform_exports(ctx)
             await queue.set_agent_status(pid, current_agent, "success")
         except asyncio.CancelledError:
             await queue.set_agent_status(pid, current_agent, "stopped")
@@ -419,12 +507,12 @@ class Orchestrator:
         try:
             # clipper output is in-memory only → always re-run even when start_from=short_editor_agent
             await queue.set_agent_status(pid, current_agent, "running")
-            clips = await ClipperAgent().run(ctx, max_clips=max_clips)
+            clips = await _agent(ClipperAgent, ctx).run(ctx, max_clips=max_clips)
             await queue.set_agent_status(pid, current_agent, "success")
 
             current_agent = "short_editor_agent"
             await queue.set_agent_status(pid, current_agent, "running")
-            await ShortEditorAgent().run(ctx, clips)
+            await _agent(ShortEditorAgent, ctx).run(ctx, clips)
             await queue.set_agent_status(pid, current_agent, "success")
 
         except asyncio.CancelledError:
@@ -451,7 +539,7 @@ class Orchestrator:
         current_agent = "short_producer_agent"
         try:
             await queue.set_agent_status(pid, current_agent, "running")
-            plans = await ShortProducerAgent().run(ctx, planned_only=planned_only)
+            plans = await _agent(ShortProducerAgent, ctx).run(ctx, planned_only=planned_only)
             await queue.set_agent_status(pid, current_agent, "success")
 
             if not plans:
@@ -463,24 +551,24 @@ class Orchestrator:
 
                 current_agent = "media_agent"
                 await queue.set_agent_status(pid, current_agent, "running")
-                await MediaAgent().run_derivation(ctx, plan)
+                await _agent(MediaAgent, ctx).run_derivation(ctx, plan)
                 await queue.set_agent_status(pid, current_agent, "success")
 
                 current_agent = "narrator_agent"
                 await queue.set_agent_status(pid, current_agent, "running")
-                await NarratorAgent().run_derivation(ctx, plan)
+                await _agent(NarratorAgent, ctx).run_derivation(ctx, plan)
                 await queue.set_agent_status(pid, current_agent, "success")
 
                 current_agent = "editor_agent"
                 await queue.set_agent_status(pid, current_agent, "running")
-                await EditorAgent().run_derivation(ctx, plan)
+                await _agent(EditorAgent, ctx).run_derivation(ctx, plan)
                 await queue.set_agent_status(pid, current_agent, "success")
 
             ctx.derivation_short_index = None
 
             current_agent = "short_editor_agent"
             await queue.set_agent_status(pid, current_agent, "running")
-            await ShortEditorAgent().run_native_exports(ctx)
+            await _agent(ShortEditorAgent, ctx).run_native_exports(ctx)
             await queue.set_agent_status(pid, current_agent, "success")
 
         except asyncio.CancelledError:
@@ -499,23 +587,100 @@ class Orchestrator:
         if not report.requested_changes:
             return
         ctx.critic_feedback = report.requested_changes
-        ctx.critic_start_from = (report.feedback or {}).get("start_from") or "media_agent"
+        raw_start = (report.feedback or {}).get("start_from") or "media_agent"
+        ctx.critic_start_from = resolve_restart_step(report.requested_changes, raw_start)
+        ctx.skip_media_pool_reuse = should_skip_pool_reuse(report.requested_changes)
         for change in report.requested_changes:
             logger.info("Changement demandé pour %s : %s", change.get("agent"), change.get("change_description"))
         logger.info("Point de reprise : %s", ctx.critic_start_from)
 
+    async def _run_pre_media_quality_agents(
+        self,
+        ctx: PipelineContext,
+        scenario: Scenario,
+        pid: str,
+    ) -> Scenario:
+        from agent.agents.fact_checker_agent import FactCheckerAgent
+        from agent.agents.hook_optimizer_agent import HookOptimizerAgent
+        from agent.agents.diagram_specialist_agent import DiagramSpecialistAgent
+        from agent.agents.research_agent import ResearchAgent
+        from agent.agents.scenario_agent import ScenarioAgent
+
+        max_attempts = max(1, ctx.channel_config.max_fact_check_iterations)
+
+        for attempt in range(1, max_attempts + 1):
+            await queue.set_agent_status(pid, "fact_checker_agent", "running")
+            fact = await _agent(FactCheckerAgent, ctx).run(ctx, scenario)
+            await queue.set_agent_status(
+                pid, "fact_checker_agent", "success" if fact.passed else "failed"
+            )
+
+            if fact.passed:
+                ctx.fact_check_warnings = fact.warnings
+                ctx.fact_check_feedback = None
+                break
+
+            if attempt >= max_attempts:
+                logger.warning(
+                    "Vérification factuelle échouée après %d tentative(s) — "
+                    "poursuite avec le dernier scénario (%d erreur(s) majeure(s))",
+                    max_attempts,
+                    len(fact.errors),
+                )
+                ctx.fact_check_warnings = list(fact.warnings) + list(fact.errors)
+                ctx.fact_check_feedback = None
+                break
+
+            logger.info(
+                "Fact check tentative %d/%d échouée (%d erreur(s)) — correction via %s",
+                attempt,
+                max_attempts,
+                len(fact.errors),
+                fact.start_from,
+            )
+            ctx.fact_check_feedback = list(fact.errors) + list(fact.warnings)
+
+            if fact.start_from == "research_agent":
+                await queue.set_agent_status(pid, "research_agent", "running")
+                brief = await _agent(ResearchAgent, ctx).run(ctx)
+                ctx.research_brief = brief.to_dict()
+                await queue.set_agent_status(pid, "research_agent", "success")
+
+            await queue.set_agent_status(pid, "scenario_agent", "running")
+            scenario = await _agent(ScenarioAgent, ctx).run(ctx)
+            await queue.set_agent_status(pid, "scenario_agent", "success")
+
+        await queue.set_agent_status(pid, "hook_optimizer_agent", "running")
+        scenario = await _agent(HookOptimizerAgent, ctx).run(ctx, scenario)
+        await queue.set_agent_status(pid, "hook_optimizer_agent", "success")
+
+        await queue.set_agent_status(pid, "diagram_specialist_agent", "running")
+        scenario = await _agent(DiagramSpecialistAgent, ctx).run(ctx, scenario)
+        await queue.set_agent_status(pid, "diagram_specialist_agent", "success")
+        return scenario
+
     @staticmethod
-    async def _clear_iteration_assets(project_id: uuid.UUID, start_from: str = "scenario_agent") -> None:
+    async def _clear_iteration_assets(
+        project_id: uuid.UUID,
+        start_from: str = "scenario_agent",
+        *,
+        keep_scenarios: bool = False,
+    ) -> None:
         """Nettoyage sélectif des assets selon le point de reprise du pipeline."""
         from sqlalchemy import delete as sa_delete
+        from agent.core.pipeline_restart import _AGENT_LOOP_IDX
 
-        clear_scenarios = start_from in ("research_agent", "scenario_agent")
-        clear_media = start_from in ("research_agent", "scenario_agent", "media_agent")
-        clear_audio = start_from in ("research_agent", "scenario_agent", "media_agent", "narrator_agent")
+        clear_scenarios = start_from in ("research_agent", "scenario_agent") and not keep_scenarios
+        pre_media = start_from in (
+            "research_agent", "scenario_agent", "fact_checker_agent",
+            "hook_optimizer_agent", "diagram_specialist_agent",
+        )
+        clear_media = pre_media or start_from == "media_agent"
+        clear_audio = clear_media or start_from == "narrator_agent"
+        clear_montage = _AGENT_LOOP_IDX.get(start_from, 99) <= _AGENT_LOOP_IDX.get("montage_planner_agent", 4)
 
         async with AsyncSessionFactory() as session:
             if clear_scenarios:
-                from sqlalchemy import delete as sa_delete
                 await session.execute(
                     sa_delete(Scenario).where(Scenario.project_id == project_id)
                 )
@@ -527,11 +692,15 @@ class Orchestrator:
                 await session.execute(
                     sa_delete(AudioFile).where(AudioFile.project_id == project_id)
                 )
+            if clear_montage:
+                await session.execute(
+                    sa_delete(MontagePlan).where(MontagePlan.project_id == project_id)
+                )
             await session.commit()
 
         logger.info(
-            "Assets nettoyés (start_from=%s, scenarios=%s, media=%s, audio=%s) pour %s",
-            start_from, clear_scenarios, clear_media, clear_audio, project_id,
+            "Assets nettoyés (start_from=%s, scenarios=%s, media=%s, audio=%s, montage=%s) pour %s",
+            start_from, clear_scenarios, clear_media, clear_audio, clear_montage, project_id,
         )
 
     @staticmethod

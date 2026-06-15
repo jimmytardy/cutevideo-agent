@@ -64,10 +64,12 @@ async def run_assembly_for_short_derivation(
     ctx: "PipelineContext",
     plan: DerivedShortPlan,
 ) -> Video:
-    """Monte un short vertical 9:16 à partir des assets du dérivé."""
+    """Monte un short vertical 9:16 via MontagePlan (pas de chemin legacy)."""
+    from agent.agents.montage_planner_agent import MontagePlannerAgent
+    from agent.agents.editor_agent import _scenario_requires_audio
     from agent.agents.narrator_agent import segment_needs_music
     from agent.core.short_derivation import derivation_iteration
-    from agent.skills.video.ffmpeg_utils import assemble_vertical_short, assert_audio_has_signal
+    from agent.skills.video.ffmpeg_utils import assemble_from_montage_plan, assert_audio_has_signal
 
     ctx.derivation_short_index = plan.index
     path_prefix = _derivation_path_prefix(ctx.project_id, plan.index)
@@ -116,9 +118,6 @@ async def run_assembly_for_short_derivation(
     agent._validate_media_assets(media_assets, scenario)
 
     segment_meta: dict[int, dict] = {}
-    segment_beat_timelines = await agent._build_segment_beat_timelines(
-        scenario, media_assets, audio_files, ctx.channel_config
-    )
     for seg in plan.segments:
         order = seg.get("order", 0)
         needs_voice = segment_needs_voice(seg)
@@ -134,24 +133,26 @@ async def run_assembly_for_short_derivation(
 
     agent._validate_audio_coverage(scenario, audio_files)
 
-    min_img = ctx.channel_config.min_image_duration_short_s
+    montage_plan = await MontagePlannerAgent.build_montage_plan_data(
+        ctx, scenario, media_assets, audio_files,
+    )
+    if not montage_plan.segments:
+        raise RuntimeError(
+            f"Short dérivé {plan.index} : MontagePlan vide après planification"
+        )
+
     output_dir = Path("./output/shorts/derived")
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / f"{ctx.project_id}_native{plan.index:02d}.mp4"
 
-    duration_s = await assemble_vertical_short(
-        media_assets=media_assets,
+    duration_s = await assemble_from_montage_plan(
+        montage_plan,
         audio_files=audio_files,
         output_path=output_path,
         project_id=ctx.project_id,
-        min_image_duration=min_img,
-        segment_meta=segment_meta,
-        segment_beat_timelines=segment_beat_timelines,
     )
 
     output_path = await agent._mix_music_by_mood(ctx, output_path, segment_meta, duration_s)
-
-    from agent.agents.editor_agent import _scenario_requires_audio
 
     has_narration = any(m.get("needs_voice") for m in segment_meta.values())
     await assert_audio_has_signal(

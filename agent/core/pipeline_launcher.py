@@ -15,6 +15,7 @@ async def enqueue_pipeline(
     start_from: str | None = None,
     critic_feedback: list[dict[str, Any]] | None = None,
     critic_start_from: str | None = None,
+    resume_iteration: int | None = None,
 ) -> None:
     """Enqueue un pipeline pour exécution par le worker Redis."""
     await queue.clear_pipeline_cancel(str(project_id))
@@ -23,6 +24,7 @@ async def enqueue_pipeline(
         "start_from": start_from,
         "critic_feedback": critic_feedback,
         "critic_start_from": critic_start_from,
+        "resume_iteration": resume_iteration,
     }
     await queue.push_task(PIPELINE_QUEUE, payload)
     logger.info("Pipeline enqueued pour le projet %s", project_id)

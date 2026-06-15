@@ -10,7 +10,7 @@ import Alert from '@mui/material/Alert'
 import Stack from '@mui/material/Stack'
 import CircularProgress from '@mui/material/CircularProgress'
 import DownloadIcon from '@mui/icons-material/Download'
-import { fetcher, type FinalPreview } from '@/lib/api'
+import { authenticatedMediaUrl, fetcher, type FinalPreview } from '@/lib/api'
 
 const VIDEO_TYPE_LABELS: Record<string, string> = {
   long: 'Vidéo longue',
@@ -79,7 +79,7 @@ export default function FinalPreviewSection({ projectId, refreshInterval = 5000 
         component="video"
         controls
         sx={{ width: '100%', borderRadius: 1, maxHeight: 480, bgcolor: 'black', display: 'block' }}
-        src={data.stream_url ?? undefined}
+        src={data.stream_url ? authenticatedMediaUrl(data.stream_url) : undefined}
       />
 
       <Stack direction="row" spacing={1} sx={{ mt: 1.5, flexWrap: 'wrap', gap: 1 }} alignItems="center">
@@ -102,7 +102,11 @@ export default function FinalPreviewSection({ projectId, refreshInterval = 5000 
             variant="outlined"
             startIcon={<DownloadIcon />}
             component="a"
-            href={data.subtitles_download_url}
+            href={
+              data.subtitles_download_url
+                ? authenticatedMediaUrl(data.subtitles_download_url)
+                : undefined
+            }
             download
           >
             Télécharger les sous-titres (.srt)

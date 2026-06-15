@@ -11,7 +11,7 @@ from agent.core.media_validation import (
 from agent.skills.media_sources.relevance_scorer import build_relevance_prompt
 
 
-def test_resolve_validation_brief_merges_project_override() -> None:
+def test_resolve_validation_brief_ignores_stale_project_override() -> None:
     auto = MediaValidationBrief(
         subject_entity="Lophorina superba",
         subject_type="species",
@@ -33,10 +33,10 @@ def test_resolve_validation_brief_merges_project_override() -> None:
         scenario_segments=[],
         theme_category="nature",
     )
-    assert "paon" in brief.must_exclude
-    assert "perroquet" in brief.must_exclude
-    assert brief.min_relevance_score == 80
-    assert "mâle noir" in brief.validation_prompt
+    assert brief.must_exclude == ["paon"]
+    assert "perroquet" not in brief.must_exclude
+    assert brief.min_relevance_score == 75
+    assert "mâle noir" not in brief.validation_prompt
 
 
 def test_resolve_validation_brief_channel_template() -> None:
@@ -119,3 +119,35 @@ def test_build_relevance_prompt_species_segment_override() -> None:
         segment_order=2,
     )
     assert "segment2_specific" in prompt
+
+
+def test_build_relevance_prompt_with_beat_includes_visual_type() -> None:
+    from agent.core.visual_beats import VisualBeat
+
+    brief = MediaValidationBrief(
+        subject_entity="Monarque",
+        subject_type="species",
+        must_include=["migration"],
+        must_exclude=["papillon générique"],
+        min_relevance_score=75,
+    )
+    beat = VisualBeat(
+        order=1,
+        phrase_anchor="traversent l'Amérique",
+        visual_type="map",
+        prompt="Carte des routes de migration",
+        duration_hint_s=6.0,
+    )
+    prompt = build_relevance_prompt(
+        video_subject="Migration des monarques",
+        channel_category="nature",
+        segment_title="Migration",
+        segment_narration="Les monarques traversent l'Amérique",
+        validation_brief=brief,
+        segment_order=1,
+        beat=beat,
+    )
+    assert "INTENTION VISUELLE DU BEAT" in prompt
+    assert "map" in prompt
+    assert "Carte des routes de migration" in prompt
+    assert "clarté visuelle" in prompt

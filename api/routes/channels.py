@@ -7,10 +7,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent.core.auth import create_oauth_state, decode_oauth_state
 from agent.core.concurrency import can_start_pipeline, count_running_pipelines
-from agent.core.database import Channel, Project, get_db
+from agent.core.database import Channel, Project, User, get_db
 from agent.core.queue import queue
+from agent.core.subscription import QuotaExceededError, check_can_create_channel
 from agent.skills.publisher import composio_client
+from api.authorization import get_user_channel
+from api.deps import get_current_user
 from api.models import (
     ChannelCreate,
     ChannelIntegrationsResponse,
@@ -24,8 +28,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/channels", tags=["channels"])
 
-_pending_tiktok_connections: dict[str, str] = {}
-
 
 def _channel_to_response(channel: Channel) -> ChannelResponse:
     return ChannelResponse.model_validate(channel)
@@ -35,8 +37,9 @@ def _channel_to_response(channel: Channel) -> ChannelResponse:
 async def list_channels(
     active_only: bool = Query(default=False),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> list[Channel]:
-    query = select(Channel).order_by(Channel.name)
+    query = select(Channel).where(Channel.user_id == current_user.id).order_by(Channel.name)
     if active_only:
         query = query.where(Channel.is_active.is_(True))
     result = await db.execute(query)
@@ -45,13 +48,23 @@ async def list_channels(
 
 @router.post("", response_model=ChannelResponse, status_code=status.HTTP_201_CREATED)
 async def create_channel(
-    body: ChannelCreate, db: AsyncSession = Depends(get_db)
+    body: ChannelCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> Channel:
-    existing = await db.execute(select(Channel).where(Channel.slug == body.slug))
+    try:
+        await check_can_create_channel(db, current_user)
+    except QuotaExceededError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+
+    existing = await db.execute(
+        select(Channel).where(Channel.user_id == current_user.id, Channel.slug == body.slug)
+    )
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Slug déjà utilisé")
 
     channel = Channel(
+        user_id=current_user.id,
         slug=body.slug,
         name=body.name,
         theme_category=body.theme_category,
@@ -71,16 +84,22 @@ async def create_channel(
 
 
 @router.get("/{channel_id}", response_model=ChannelResponse)
-async def get_channel(channel_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> Channel:
-    channel = await _get_channel_or_404(db, channel_id)
-    return channel
+async def get_channel(
+    channel_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Channel:
+    return await get_user_channel(db, channel_id, current_user)
 
 
 @router.patch("/{channel_id}", response_model=ChannelResponse)
 async def update_channel(
-    channel_id: uuid.UUID, body: ChannelUpdate, db: AsyncSession = Depends(get_db)
+    channel_id: uuid.UUID,
+    body: ChannelUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> Channel:
-    channel = await _get_channel_or_404(db, channel_id)
+    channel = await get_user_channel(db, channel_id, current_user)
     for field, value in body.model_dump(exclude_unset=True).items():
         setattr(channel, field, value)
     await db.commit()
@@ -89,8 +108,12 @@ async def update_channel(
 
 
 @router.delete("/{channel_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_channel(channel_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> None:
-    channel = await _get_channel_or_404(db, channel_id)
+async def delete_channel(
+    channel_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    channel = await get_user_channel(db, channel_id, current_user)
     projects = await db.execute(
         select(func.count()).select_from(Project).where(Project.channel_id == channel.id)
     )
@@ -105,13 +128,15 @@ async def delete_channel(channel_id: uuid.UUID, db: AsyncSession = Depends(get_d
 
 @router.get("/{channel_id}/projects", response_model=list[ProjectResponse])
 async def list_channel_projects(
-    channel_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+    channel_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> list[ProjectResponse]:
-    await _get_channel_or_404(db, channel_id)
+    await get_user_channel(db, channel_id, current_user)
     result = await db.execute(
         select(Project, Channel.name)
         .join(Channel, Channel.id == Project.channel_id)
-        .where(Project.channel_id == channel_id)
+        .where(Project.channel_id == channel_id, Channel.user_id == current_user.id)
         .order_by(Project.created_at.desc())
     )
     return [
@@ -132,8 +157,12 @@ async def list_channel_projects(
 
 
 @router.get("/{channel_id}/status")
-async def get_channel_status(channel_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> dict:
-    channel = await _get_channel_or_404(db, channel_id)
+async def get_channel_status(
+    channel_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    channel = await get_user_channel(db, channel_id, current_user)
     running = await count_running_pipelines(channel_id)
     slot_free = await can_start_pipeline(channel_id)
 
@@ -158,9 +187,11 @@ async def get_channel_status(channel_id: uuid.UUID, db: AsyncSession = Depends(g
 
 @router.get("/{channel_id}/integrations", response_model=ChannelIntegrationsResponse)
 async def get_channel_integrations(
-    channel_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+    channel_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> ChannelIntegrationsResponse:
-    channel = await _get_channel_or_404(db, channel_id)
+    channel = await get_user_channel(db, channel_id, current_user)
     return ChannelIntegrationsResponse(
         tiktok_connected=composio_client.tiktok_is_connected(channel),
         tiktok_enabled=channel.tiktok_enabled,
@@ -170,8 +201,12 @@ async def get_channel_integrations(
 
 
 @router.post("/{channel_id}/connect/tiktok", response_model=TikTokConnectResponse)
-async def connect_tiktok(channel_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> TikTokConnectResponse:
-    channel = await _get_channel_or_404(db, channel_id)
+async def connect_tiktok(
+    channel_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> TikTokConnectResponse:
+    channel = await get_user_channel(db, channel_id, current_user)
     if not channel.tiktok_enabled:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="TikTok désactivé pour cette chaîne")
 
@@ -180,10 +215,16 @@ async def connect_tiktok(channel_id: uuid.UUID, db: AsyncSession = Depends(get_d
     except RuntimeError as e:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e)) from e
 
-    _pending_tiktok_connections[oauth["connection_id"]] = str(channel_id)
+    state = create_oauth_state(
+        user_id=current_user.id,
+        channel_id=channel_id,
+        purpose="tiktok_connect",
+        extra={"connection_id": oauth["connection_id"]},
+    )
     return TikTokConnectResponse(
         redirect_url=oauth["redirect_url"],
         connection_id=oauth["connection_id"],
+        state=state,
     )
 
 
@@ -191,16 +232,18 @@ async def connect_tiktok(channel_id: uuid.UUID, db: AsyncSession = Depends(get_d
 async def tiktok_oauth_callback(
     channel_id: uuid.UUID,
     connection_id: str = Query(...),
+    state: str = Query(...),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> dict[str, str]:
-    resolved_channel_id = channel_id
-    if not resolved_channel_id and connection_id in _pending_tiktok_connections:
-        resolved_channel_id = uuid.UUID(_pending_tiktok_connections[connection_id])
+    try:
+        payload = decode_oauth_state(state, expected_purpose="tiktok_connect")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if payload.get("channel_id") != str(channel_id):
+        raise HTTPException(status_code=400, detail="State channel_id invalide")
 
-    if not resolved_channel_id:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="channel_id manquant")
-
-    channel = await _get_channel_or_404(db, resolved_channel_id)
+    channel = await get_user_channel(db, channel_id, current_user)
 
     try:
         account_id = await composio_client.wait_for_tiktok_connection(connection_id, channel)
@@ -214,7 +257,6 @@ async def tiktok_oauth_callback(
         .values(composio_tiktok_account_id=account_id)
     )
     await db.commit()
-    _pending_tiktok_connections.pop(connection_id, None)
 
     return {
         "status": "connected",
@@ -225,14 +267,18 @@ async def tiktok_oauth_callback(
 
 @router.get("/{channel_id}/runway-status")
 async def get_runway_status(
-    channel_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+    channel_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> dict:
-    channel = await _get_channel_or_404(db, channel_id)
+    channel = await get_user_channel(db, channel_id, current_user)
 
     from agent.core.channel_config import resolve_channel_config
     from agent.core.runway_budget import get_monthly_runway_cost_usd, get_runway_credit_error
+    from agent.core.subscription import resolve_user_limits
 
-    cfg = resolve_channel_config(channel)
+    limits = await resolve_user_limits(db, current_user)
+    cfg = resolve_channel_config(channel, subscription_limits=limits)
     runway_cfg = cfg.runway
     spent = await get_monthly_runway_cost_usd(str(channel_id))
     credit_error = await get_runway_credit_error(str(channel_id))
@@ -249,6 +295,7 @@ async def get_runway_status(
 
 
 async def _get_channel_or_404(db: AsyncSession, channel_id: uuid.UUID) -> Channel:
+    """Compatibilité modules externes (cost, onboarding) — préférer get_user_channel."""
     result = await db.execute(select(Channel).where(Channel.id == channel_id))
     channel = result.scalar_one_or_none()
     if not channel:

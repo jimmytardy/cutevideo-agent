@@ -5,12 +5,10 @@ import json
 import logging
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import anthropic
-
+from agent.core.api_keys import fetch_api_key, parse_gcp_credentials
 from agent.core.base_agent import BaseAgent
-from agent.core.config import settings
 from agent.core.config import get_storage_settings
 from agent.core.database import AsyncSessionFactory, MediaAsset, Project, Scenario
 from agent.core.media_validation import MediaValidationBrief, resolve_validation_brief
@@ -25,6 +23,9 @@ from agent.skills.media.scenario_media_gap import (
     adapt_scenario_for_media_gaps,
     ai_fallback_attempt_config,
 )
+
+if TYPE_CHECKING:
+    from agent.core.visual_beats import VisualBeat
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,7 @@ class MediaAgent(BaseAgent):
                     scenario,
                     self._media_gaps,
                     theme=ctx.theme,
+                    user_id=ctx.user_id,
                 )
                 scenario.segments = adapted.segments
                 if adapted.total_duration_s is not None:
@@ -127,11 +129,45 @@ class MediaAgent(BaseAgent):
             return self._derivation_iteration_value(ctx)
         return ctx.iteration
 
+    async def _init_provider_keys(self, ctx: "PipelineContext") -> None:
+        """Charge les clés API résolues pour l'utilisateur propriétaire de la chaîne."""
+        from agent.core.agent_llm_constraints import normalize_agent_preference
+        from agent.core.llm_resolver import parse_agent_preferences
+        from agent.skills.media_sources.relevance_scorer import resolve_scoring_model_chain
+
+        gemini_ctx = await fetch_api_key(
+            ctx.user_id, "gemini", purpose="media_relevance_scoring", tier="free"
+        )
+        self._gemini_api_key = gemini_ctx.key or ""
+
+        scoring_model: str | None = None
+        if ctx.user_id is not None:
+            async with AsyncSessionFactory() as session:
+                from agent.core.database import User
+
+                user = await session.get(User, ctx.user_id)
+                if user:
+                    prefs = parse_agent_preferences(user.agent_llm_preferences)
+                    pref = prefs.get("media_agent_llm")
+                    if pref:
+                        normalized = normalize_agent_preference("media_agent_llm", pref)
+                        scoring_model = normalized.model
+        self._scoring_models = resolve_scoring_model_chain(scoring_model)
+        fal_ctx = await fetch_api_key(ctx.user_id, "fal", purpose="ai_image", tier="paid")
+        self._fal_api_key = fal_ctx.key
+        runway_ctx = await fetch_api_key(
+            ctx.user_id, "runway", purpose="ai_video", tier="paid"
+        )
+        self._runway_api_key = runway_ctx.key
+        gcp_ctx = await fetch_api_key(ctx.user_id, "gcp", purpose="ai_image", tier="paid")
+        self._gcp_credentials = parse_gcp_credentials(gcp_ctx)
+
     async def _search_all_segments_derivation(
         self, ctx: "PipelineContext", scenario: Scenario
     ) -> list[MediaAsset]:
         from agent.skills.media_sources.relevance_scorer import MediaRelevanceScoringError
 
+        await self._init_provider_keys(ctx)
         segments = scenario.segments or []
         sources = self._derivation_sources(ctx.channel_config.media_source_priority)
         ms_cfg = ctx.channel_config.media_sources
@@ -202,6 +238,7 @@ class MediaAgent(BaseAgent):
     ) -> list[MediaAsset]:
         from agent.skills.media_sources.relevance_scorer import MediaRelevanceScoringError
 
+        await self._init_provider_keys(ctx)
         segments = scenario.segments or []
         sources = ctx.channel_config.media_source_priority
         ms_cfg = ctx.channel_config.media_sources
@@ -291,21 +328,28 @@ class MediaAgent(BaseAgent):
         segment_order: int,
         validation_brief: MediaValidationBrief,
         attempt: int = 1,
+        beat: VisualBeat | None = None,
     ) -> tuple[list[dict], list[dict]]:
         from agent.skills.media_sources.relevance_scorer import score_media_candidates
+
+        narration = (segment.get("narration_text") or "")[:500]
+        if beat is not None:
+            narration = f"{beat.phrase_anchor} — {beat.prompt}"
 
         scored = await score_media_candidates(
             candidates,
             video_subject=ctx.theme,
             channel_category=ctx.theme_category,
             segment_title=segment.get("title", ""),
-            segment_narration=(segment.get("narration_text") or "")[:500],
-            api_key=settings.google_gemini_api_key,
+            segment_narration=narration,
+            api_key=self._gemini_api_key,
             cache_dir=output_dir / "scoring",
             validation_brief=validation_brief,
             segment_order=segment_order,
+            beat=beat,
+            scoring_models=getattr(self, "_scoring_models", None),
         )
-        self._relevance_log.append({
+        log_entry: dict[str, Any] = {
             "segment_order": segment_order,
             "attempt": attempt,
             "scores": [
@@ -318,7 +362,11 @@ class MediaAgent(BaseAgent):
                 }
                 for s in scored[:10]
             ],
-        })
+        }
+        if beat is not None:
+            log_entry["beat_order"] = beat.order
+            log_entry["visual_type"] = beat.visual_type
+        self._relevance_log.append(log_entry)
         above_threshold: list[dict] = []
         rejected: list[dict] = []
         for s in scored:
@@ -352,16 +400,19 @@ class MediaAgent(BaseAgent):
         validation_brief: MediaValidationBrief,
         *,
         use_prompt_as_is: bool = False,
+        beat: VisualBeat | None = None,
+        visual_type: str = "",
     ) -> AiImageResult:
         """Génère une image IA (dev puis payant), valide via Gemini, best-score en dernier recours."""
-        from agent.skills.media_sources.relevance_scorer import score_media_candidates
+        from agent.skills.media_sources.ai.prompt_builder import is_diagram_visual_type
+        from agent.skills.media_sources.relevance_scorer import is_text_artifact_rejection, score_media_candidates
 
         dev_plan, dev_attempts, paid_attempts = ai_fallback_attempt_config()
         paid_plan = ai_cfg.plan.value
         order = segment.get("order", 0)
         total_attempts = dev_attempts + paid_attempts
 
-        candidates: list[tuple[dict, int, str, str, str | None]] = []
+        candidates: list[tuple[dict, int, str, str, str | None, str]] = []
 
         phases: list[tuple[str, str, int]] = [
             ("dev", dev_plan, dev_attempts),
@@ -379,6 +430,7 @@ class MediaAgent(BaseAgent):
                     aspect_ratio=aspect_ratio,
                     plan_override=plan_id,
                     use_prompt_as_is=use_prompt_as_is,
+                    visual_type=visual_type or (beat.visual_type if beat else ""),
                 )
                 if not ai_item:
                     self._relevance_log.append({
@@ -400,14 +452,21 @@ class MediaAgent(BaseAgent):
                     video_subject=ctx.theme,
                     channel_category=ctx.theme_category,
                     segment_title=segment.get("title", ""),
-                    segment_narration=(segment.get("narration_text") or "")[:500],
-                    api_key=settings.google_gemini_api_key,
+                    segment_narration=(
+                        f"{beat.phrase_anchor} — {beat.prompt}"
+                        if beat is not None
+                        else (segment.get("narration_text") or "")[:500]
+                    ),
+                    api_key=self._gemini_api_key,
                     cache_dir=output_dir / "scoring",
                     validation_brief=validation_brief,
                     segment_order=order,
+                    beat=beat,
+                    scoring_models=getattr(self, "_scoring_models", None),
                 )
                 score = scored[0].score if scored else 0
                 reason = scored[0].reason if scored else ""
+                rejection_category = scored[0].rejection_category if scored else "ok"
                 self._relevance_log.append({
                     "segment_order": order,
                     "scores": [{
@@ -421,9 +480,17 @@ class MediaAgent(BaseAgent):
                     "attempt": attempt,
                 })
 
-                candidates.append((ai_item, score, reason, phase, temp_key))
+                candidates.append((ai_item, score, reason, phase, temp_key, rejection_category))
 
                 if score >= min_relevance:
+                    if beat and is_diagram_visual_type(beat.visual_type):
+                        if is_text_artifact_rejection(rejection_category, reason):
+                            logger.warning(
+                                "Segment %d beat diagramme : image rejetée (artefact texte : %s)",
+                                order,
+                                reason,
+                            )
+                            continue
                     ai_item["_relevance_validated"] = True
                     ai_item["_relevance_score"] = score
                     ai_item["_relevance_reason"] = reason
@@ -442,9 +509,18 @@ class MediaAgent(BaseAgent):
                 )
 
         if candidates:
-            best_item, best_score, best_reason, best_phase, best_key = max(
+            best_item, best_score, best_reason, best_phase, best_key, best_category = max(
                 candidates, key=lambda c: c[1]
             )
+            if beat and is_diagram_visual_type(beat.visual_type):
+                if is_text_artifact_rejection(best_category, best_reason):
+                    logger.warning(
+                        "Segment %d beat diagramme : forced_best refusé (artefact texte : %s)",
+                        order,
+                        best_reason,
+                    )
+                    await self._cleanup_ai_candidates(candidates, winner_item=best_item)
+                    return AiImageResult(outcome="api_failed")
             best_item["_relevance_validated"] = False
             best_item["_relevance_forced_fallback"] = True
             best_item["_relevance_score"] = best_score
@@ -495,7 +571,7 @@ class MediaAgent(BaseAgent):
 
     async def _cleanup_ai_candidates(
         self,
-        candidates: list[tuple[dict, int, str, str, str | None]],
+        candidates: list[tuple[dict, int, str, str, str | None, str]],
         *,
         winner_item: dict,
     ) -> None:
@@ -507,7 +583,7 @@ class MediaAgent(BaseAgent):
         from agent.core.storage import delete_s3_objects
 
         keys_to_delete: list[str] = []
-        for item, _, _, _, temp_key in candidates:
+        for item, _, _, _, temp_key, _ in candidates:
             item_local = str(item.get("local_generated") or "")
             if item_local and item_local != winner_local:
                 Path(item_local).unlink(missing_ok=True)
@@ -630,6 +706,7 @@ class MediaAgent(BaseAgent):
         output_dir: Path,
         validation_brief: MediaValidationBrief,
         order: int,
+        beat: VisualBeat | None = None,
     ) -> list[dict]:
         max_iterations = ms_cfg.max_search_iterations
         passing_target = max(
@@ -701,6 +778,7 @@ class MediaAgent(BaseAgent):
                 segment_order=order,
                 validation_brief=validation_brief,
                 attempt=attempt,
+                beat=beat,
             )
             for item in rejected:
                 url = item.get("url") or item.get("local_generated") or ""
@@ -1066,6 +1144,7 @@ class MediaAgent(BaseAgent):
             runway_cfg=runway_cfg,
             channel_id=str(ctx.channel_id),
             timezone=ctx.channel_config.timezone,
+            api_key=self._runway_api_key,
         )
 
     async def _search_with_fallback(
@@ -1149,13 +1228,7 @@ class MediaAgent(BaseAgent):
             'Retourne UNIQUEMENT JSON : {"queries": [["kw1","kw2"], ...]}'
         )
         try:
-            client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
-            msg = await client.messages.create(
-                model="claude-sonnet-4-5",
-                max_tokens=256,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            raw = msg.content[0].text.strip()
+            raw = await self._call_claude(prompt, model="claude-sonnet-4-5", max_tokens=256)
             if raw.startswith("```"):
                 raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
             data = json.loads(raw)
@@ -1181,13 +1254,7 @@ class MediaAgent(BaseAgent):
         )
 
         try:
-            client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
-            msg = await client.messages.create(
-                model="claude-sonnet-4-5",
-                max_tokens=256,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            raw = msg.content[0].text.strip()
+            raw = await self._call_claude(prompt, model="claude-sonnet-4-5", max_tokens=256)
             if raw.startswith("```"):
                 raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
             data = json.loads(raw)
@@ -1301,6 +1368,13 @@ class MediaAgent(BaseAgent):
 
         assert isinstance(beat, VisualBeat)
         local_path = await self._download_asset(item, output_dir)
+        duration_s = item.get("duration_s")
+        clip_metadata = None
+        path_obj = Path(local_path) if local_path else None
+        if path_obj and path_obj.exists() and item.get("asset_type") == "video":
+            duration_s, clip_metadata = await self._analyze_video_asset(
+                ctx, path_obj, item, beat, segment_order,
+            )
         async with AsyncSessionFactory() as session:
             asset = MediaAsset(
                 project_id=ctx.project_id,
@@ -1319,6 +1393,8 @@ class MediaAgent(BaseAgent):
                 generation_prompt=generation_prompt,
                 visual_type=beat.visual_type,
                 iteration=self._media_iteration(ctx),
+                duration_s=float(duration_s) if duration_s else None,
+                clip_metadata=clip_metadata,
             )
             session.add(asset)
             await session.commit()
@@ -1360,6 +1436,40 @@ class MediaAgent(BaseAgent):
             session.add(asset)
             await session.commit()
 
+    async def _analyze_video_asset(
+        self,
+        ctx: "PipelineContext",
+        path: Path,
+        item: dict,
+        beat: Any,
+        segment_order: int,
+    ) -> tuple[float | None, dict | None]:
+        from agent.skills.media.clip_source_analyzer import (
+            analyze_clip_source,
+            clip_metadata_to_dict,
+        )
+        from agent.skills.video.ffmpeg_utils import _probe_clip_duration
+
+        try:
+            duration = float(item.get("duration_s") or await _probe_clip_duration(path))
+        except Exception:
+            duration = None
+        if not duration:
+            return None, None
+        if not self._gemini_api_key:
+            return duration, None
+        context = f"{beat.phrase_anchor} — {beat.prompt}"
+        meta = await analyze_clip_source(
+            path,
+            context=context,
+            duration_s=duration,
+            api_key=self._gemini_api_key,
+        )
+        if meta and (meta.useful_duration_s or 0) < 3.0:
+            logger.warning("Clip vidéo rejeté (durée utile < 3s) : %s", path)
+            return duration, clip_metadata_to_dict(meta)
+        return duration, clip_metadata_to_dict(meta) if meta else None
+
     async def _generate_ai_fallback(
         self,
         prompt: str,
@@ -1371,6 +1481,7 @@ class MediaAgent(BaseAgent):
         aspect_ratio: str = "16:9",
         plan_override: str | None = None,
         use_prompt_as_is: bool = False,
+        visual_type: str = "",
     ) -> dict | None:
         from agent.skills.media_sources.ai_image import generate_image
 
@@ -1383,6 +1494,9 @@ class MediaAgent(BaseAgent):
             aspect_ratio=aspect_ratio,
             plan_override=plan_override,
             use_prompt_as_is=use_prompt_as_is,
+            visual_type=visual_type,
+            fal_api_key=self._fal_api_key,
+            gcp_credentials=self._gcp_credentials,
         )
 
     @staticmethod

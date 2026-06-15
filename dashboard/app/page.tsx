@@ -13,6 +13,7 @@ import CircularProgress from '@mui/material/CircularProgress'
 import LinearProgress from '@mui/material/LinearProgress'
 import Tooltip from '@mui/material/Tooltip'
 import AppShell from '@/components/AppShell'
+import AuthGuard from '@/components/AuthGuard'
 import { fetcher, type HealthStatus, type SchedulerJob, type Project, type StorageStats } from '@/lib/api'
 
 const BASE = '/api/v1'
@@ -295,7 +296,8 @@ function RecentActivity() {
 
 export default function HomePage() {
   return (
-    <AppShell>
+    <AuthGuard>
+      <AppShell>
       <Box sx={{ py: 4, px: 2, maxWidth: 1200, mx: 'auto' }}>
         <Typography variant="h5" fontWeight={700} gutterBottom>
           Vue d'ensemble
@@ -326,5 +328,6 @@ export default function HomePage() {
         </Grid>
       </Box>
     </AppShell>
+    </AuthGuard>
   )
 }

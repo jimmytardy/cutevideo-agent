@@ -129,6 +129,7 @@ async def try_reuse_for_beat(
         cache_dir=output_dir / "scoring",
         validation_brief=validation_brief,
         segment_order=segment_order,
+        beat=beat,
     )
     if not scored:
         return None, 0

@@ -62,6 +62,10 @@ services:
       # L'API uvicorn tourne dans le même conteneur (voir docker-entrypoint.dev.sh),
       # donc le proxy Next.js doit viser localhost, pas l'hôte.
       INTERNAL_API_URL: http://127.0.0.1:8000
+      # OAuth : le navigateur ne voit pas le port 8000 (non publié) — passer par le dashboard.
+      GOOGLE_OAUTH_REDIRECT_URI: http://localhost:${PORT:-3000}/api/v1/auth/google/callback
+      YOUTUBE_OAUTH_REDIRECT_URI: http://localhost:${PORT:-3000}/api/v1/channels/youtube/oauth/callback
+      API_BASE_URL: http://localhost:${PORT:-3000}
       SCHEDULER_ENABLED: "false"
       WATCHPACK_POLLING: "true"
       CHOKIDAR_USEPOLLING: "true"

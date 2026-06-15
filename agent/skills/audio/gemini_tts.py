@@ -5,8 +5,6 @@ import logging
 import wave
 from pathlib import Path
 
-from agent.core.config import settings
-
 logger = logging.getLogger(__name__)
 
 DEFAULT_GEMINI_TTS_MODEL = "gemini-2.5-flash-preview-tts"
@@ -76,10 +74,11 @@ async def synthesize_gemini_tts(
     mood: str = "",
     editorial_tone: str = "",
     tts_style: str = "",
+    api_key: str,
 ) -> float:
     """Synthèse Gemini Flash TTS → WAV normalisé 48 kHz."""
-    if not settings.google_gemini_api_key:
-        raise RuntimeError("GOOGLE_GEMINI_API_KEY non configurée")
+    if not api_key.strip():
+        raise RuntimeError("Clé Gemini non configurée pour la synthèse TTS")
 
     try:
         from google import genai
@@ -93,7 +92,7 @@ async def synthesize_gemini_tts(
         editorial_tone=editorial_tone,
         tts_style=tts_style,
     )
-    client = genai.Client(api_key=settings.google_gemini_api_key)
+    client = genai.Client(api_key=api_key.strip())
 
     def _call() -> object:
         return client.models.generate_content(

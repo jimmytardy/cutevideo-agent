@@ -5,8 +5,8 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import select, update
 
+from agent.core.api_keys import fetch_api_key
 from agent.core.base_agent import BaseAgent
-from agent.core.config import settings
 from agent.core.database import AsyncSessionFactory, Project
 from agent.core.research_models import ResearchBrief
 from agent.skills.research.gemini_grounding import load_research_config, run_gemini_research
@@ -35,8 +35,14 @@ class ResearchAgent(BaseAgent):
                 await self.end_run(run, {"skipped": True})
                 return brief
 
-            if not settings.google_gemini_api_key:
-                raise RuntimeError("GOOGLE_GEMINI_API_KEY non configurée — recherche impossible")
+            gemini_ctx = await fetch_api_key(
+                ctx.user_id, "gemini", purpose="gemini_research", tier="free"
+            )
+            if not gemini_ctx.key:
+                raise RuntimeError(
+                    "Clé Gemini non configurée — ajoutez-la dans Compte → Clés API "
+                    "ou configurez GOOGLE_GEMINI_API_KEY côté plateforme."
+                )
 
             use_pro = bool(
                 ctx.content_plan
@@ -48,7 +54,7 @@ class ResearchAgent(BaseAgent):
                 theme_category=ctx.theme_category,
                 niche_prompt=ctx.niche_prompt,
                 content_plan=ctx.content_plan,
-                api_key=settings.google_gemini_api_key,
+                api_key=gemini_ctx.key,
                 use_pro=use_pro,
             )
             await self._persist_brief(ctx.project_id, brief)

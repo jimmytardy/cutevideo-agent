@@ -218,6 +218,7 @@ class ChannelIntegrationsResponse(BaseModel):
 class TikTokConnectResponse(BaseModel):
     redirect_url: str
     connection_id: str
+    state: str | None = None
 
 
 class ProjectCreate(BaseModel):
@@ -329,6 +330,46 @@ class AudioFileResponse(BaseModel):
     created_at: datetime
 
 
+class EffectiveBeatResponse(BaseModel):
+    order: int
+    phrase_anchor: str = ""
+    visual_type: str = "documentary_photo"
+    on_screen_text: str = ""
+    adaptation: str = "unchanged"
+    source_beat_orders: list[int] = Field(default_factory=list)
+
+
+class BeatClipPlanResponse(BaseModel):
+    beat_order: int
+    source_beat_orders: list[int] = Field(default_factory=list)
+    asset_path: str
+    asset_type: str
+    timeline_start_s: float
+    timeline_end_s: float
+    source_trim_start_s: float = 0.0
+    source_trim_end_s: float | None = None
+    trim_reason: str = ""
+    on_screen_text: str = ""
+
+
+class SegmentMontagePlanResponse(BaseModel):
+    segment_order: int
+    effective_beats: list[EffectiveBeatResponse] = Field(default_factory=list)
+    clips: list[BeatClipPlanResponse] = Field(default_factory=list)
+    adaptation_notes: str = ""
+
+
+class MontagePlanResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    project_id: UUID
+    iteration: int
+    segments: list[SegmentMontagePlanResponse] = Field(default_factory=list)
+    planner_notes: str = ""
+    created_at: datetime
+
+
 class CriticReportResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -345,14 +386,20 @@ class CriticReportResponse(BaseModel):
 
 class ProjectConfigUpdate(BaseModel):
     max_critic_iterations: int | None = None
-    media_validation_override: dict[str, Any] | None = None
 
 
-class MediaValidationOverrideBody(BaseModel):
+class BeatValidationResolved(BaseModel):
+    segment_order: int
+    beat_order: int | None = None
+    segment_title: str = ""
+    visual_type: str | None = None
+    phrase_anchor: str | None = None
+    prompt: str | None = None
     must_include: list[str] = Field(default_factory=list)
     must_exclude: list[str] = Field(default_factory=list)
-    validation_prompt: str | None = None
-    min_relevance_score: int | None = None
+    validation_prompt: str = ""
+    min_relevance_score: int = 60
+    layers: list[str] = Field(default_factory=list)
 
 
 class MediaValidationBriefResponse(BaseModel):
@@ -365,13 +412,8 @@ class MediaValidationBriefResponse(BaseModel):
     min_relevance_score: int = 60
     niche_risk: str = "low"
     segments: dict[str, dict[str, Any]] = Field(default_factory=dict)
-    override: MediaValidationOverrideBody | None = None
+    resolved_beats: list[BeatValidationResolved] = Field(default_factory=list)
     source: str = "resolved"
-
-
-class RegenerateMediaValidationResponse(BaseModel):
-    brief: MediaValidationBriefResponse
-    message: str
 
 
 class MediaProgressResponse(BaseModel):
@@ -382,6 +424,21 @@ class MediaProgressResponse(BaseModel):
     segments_done: int
     segments_total: int
     agent_status: str
+
+
+class AgentProgressItem(BaseModel):
+    done: int
+    total: int
+    percent: int
+    detail: str | None = None
+    segments_done: int | None = None
+    segments_total: int | None = None
+
+
+class PipelineProgressResponse(BaseModel):
+    preparation: dict[str, AgentProgressItem]
+    iterations: dict[str, dict[str, AgentProgressItem]]
+    post_production: dict[str, AgentProgressItem]
 
 
 class AgentRunResponse(BaseModel):

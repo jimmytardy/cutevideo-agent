@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from typing import Any
 
-import anthropic
-
-from agent.core.config import load_agent_config, settings
+from agent.core.config import load_agent_config
 from agent.core.database import AsyncSessionFactory, Scenario
+from agent.core.json_parse import parse_json_text
+from agent.core.llm_config import resolve_max_tokens
+from agent.core.scenario_integrity import validate_segment_count_preserved
 from agent.skills.media.ai_image_result import MediaGap
 
 logger = logging.getLogger(__name__)
@@ -20,23 +22,68 @@ Pour chaque segment concerné :
 - Ajoute "visual_optional": true
 - Conserve order, duration_s, delivery_style et les autres champs inchangés sauf si nécessaire
 
-Retourne UNIQUEMENT du JSON valide avec le scénario complet."""
+Retourne UNIQUEMENT du JSON valide avec les segments adaptés (pas besoin de renvoyer les autres)."""
 
 ADAPT_PROMPT = """Sujet : {theme}
 
 Segments sans visuel disponible (génération IA impossible) :
 {gaps_text}
 
-SCÉNARIO ACTUEL :
-{scenario_json}
+SEGMENTS À ADAPTER (JSON complet de chaque segment concerné) :
+{gap_segments_json}
 
-Adapte uniquement les segments listés. Copie les autres segments à l'identique.
+Adapte uniquement ces segments. Ne renvoie pas les autres segments.
 
 Retourne :
 {{
-  "segments": [ ... tous les segments ... ],
+  "segments": [ ... uniquement les segments adaptés, avec leur champ "order" ... ],
   "total_duration_s": {total_duration_s}
 }}"""
+
+
+def _fallback_adapt_segments(
+    segments: list[dict[str, Any]],
+    gap_orders: set[int],
+) -> list[dict[str, Any]]:
+    """Adaptation locale minimale si le LLM renvoie un JSON invalide ou tronqué."""
+    adapted: list[dict[str, Any]] = []
+    for seg in segments:
+        if not isinstance(seg, dict):
+            adapted.append(seg)
+            continue
+        order = int(seg.get("order", 0))
+        if order not in gap_orders:
+            adapted.append(dict(seg))
+            continue
+        updated = dict(seg)
+        updated["visual_optional"] = True
+        if not (updated.get("on_screen_text") or "").strip():
+            updated["on_screen_text"] = str(updated.get("title", ""))[:80]
+        adapted.append(updated)
+    return adapted
+
+
+def _merge_adapted_segments(
+    segments: list[dict[str, Any]],
+    adapted_segments: list[dict[str, Any]],
+    gap_orders: set[int],
+) -> list[dict[str, Any]]:
+    by_order = {
+        int(seg["order"]): dict(seg)
+        for seg in adapted_segments
+        if isinstance(seg, dict) and seg.get("order") is not None
+    }
+    merged: list[dict[str, Any]] = []
+    for seg in segments:
+        if not isinstance(seg, dict):
+            merged.append(seg)
+            continue
+        order = int(seg.get("order", 0))
+        if order in gap_orders and order in by_order:
+            merged.append(by_order[order])
+        else:
+            merged.append(dict(seg))
+    return merged
 
 
 async def adapt_scenario_for_media_gaps(
@@ -44,6 +91,7 @@ async def adapt_scenario_for_media_gaps(
     gaps: list[MediaGap],
     *,
     theme: str,
+    user_id: uuid.UUID | None = None,
 ) -> tuple[Scenario, list[int]]:
     """Réécrit le scénario pour les segments sans image IA possible."""
     if not gaps:
@@ -56,26 +104,54 @@ async def adapt_scenario_for_media_gaps(
         for g in gaps
     )
 
+    gap_segments = [
+        seg for seg in segments if isinstance(seg, dict) and int(seg.get("order", 0)) in gap_orders
+    ]
     prompt = ADAPT_PROMPT.format(
         theme=theme,
         gaps_text=gaps_text,
-        scenario_json=json.dumps({"segments": segments}, ensure_ascii=False, indent=2),
+        gap_segments_json=json.dumps(gap_segments, ensure_ascii=False, indent=2),
         total_duration_s=scenario.total_duration_s or 0,
     )
 
-    client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
-    msg = await client.messages.create(
-        model="claude-sonnet-4-5",
-        max_tokens=4096,
-        system=ADAPT_SYSTEM,
-        messages=[{"role": "user", "content": prompt}],
+    from agent.core.database import User
+    from agent.core.llm_resolver import call_llm
+
+    async with AsyncSessionFactory() as session:
+        user = await session.get(User, user_id) if user_id else None
+        raw = await call_llm(
+            session,
+            user,
+            "scenario_media_gap",
+            prompt,
+            system=ADAPT_SYSTEM,
+            max_tokens=resolve_max_tokens("scenario_agent"),
+            model_override="claude-sonnet-4-5",
+        )
+    try:
+        data = parse_json_text(raw, "scenario_media_gap", repair_fn=None)
+    except (json.JSONDecodeError, ValueError) as exc:
+        logger.warning(
+            "Adaptation scénario LLM JSON invalide (%s) — fallback local segments %s",
+            exc,
+            sorted(gap_orders),
+        )
+        data = {"segments": _fallback_adapt_segments(segments, gap_orders)}
+    adapted_segments = data.get("segments")
+    if not isinstance(adapted_segments, list) or not adapted_segments:
+        logger.warning(
+            "Adaptation scénario LLM sans segments — fallback local segments %s",
+            sorted(gap_orders),
+        )
+        new_segments = _fallback_adapt_segments(segments, gap_orders)
+    else:
+        new_segments = _merge_adapted_segments(segments, adapted_segments, gap_orders)
+
+    validate_segment_count_preserved(
+        segments,
+        new_segments,
+        context="scenario_media_gap",
     )
-    raw = msg.content[0].text.strip()
-    if raw.startswith("```"):
-        lines = raw.split("\n")
-        raw = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
-    data: dict[str, Any] = json.loads(raw)
-    new_segments = data.get("segments", segments)
 
     for seg in new_segments:
         order = seg.get("order", 0)

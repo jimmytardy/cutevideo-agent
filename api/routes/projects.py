@@ -14,10 +14,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import timezone
 
 from agent.core.concurrency import can_start_pipeline
-from agent.core.database import AgentRun, AudioFile, Channel, CriticReport, MediaAsset, Project, Publication, Scenario, Video, get_db
+from agent.core.database import AgentRun, AudioFile, Channel, CriticReport, MediaAsset, MontagePlan, Project, Publication, Scenario, User, Video, get_db
+from agent.core.subscription import QuotaExceededError, check_can_create_project
 from agent.skills.media.progress import compute_media_progress
+from agent.skills.pipeline_progress import AgentProgressData, compute_pipeline_progress
 from agent.core.pipeline_launcher import enqueue_pipeline, request_pipeline_cancel
-from agent.core.pipeline_reset import PIPELINE_STEPS, cleanup_from_step, delete_project_completely
+from agent.core.pipeline_restart import critic_rework_iteration
+from agent.core.pipeline_reset import PIPELINE_STEPS, RUN_FROM_STEPS, cleanup_from_step, delete_project_completely
+from api.authorization import get_user_channel, get_user_project
+from api.deps import get_current_user
 from api.models import (
     AudioFileResponse,
     CriticReportResponse,
@@ -25,18 +30,24 @@ from api.models import (
     MediaAssetResponse,
     MediaProgressResponse,
     MediaValidationBriefResponse,
-    MediaValidationOverrideBody,
+    MontagePlanResponse,
+    AgentProgressItem,
+    PipelineProgressResponse,
+    SegmentMontagePlanResponse,
     ProjectConfigUpdate,
     ProjectCreate,
     ProjectResponse,
     PublishRequest,
-    RegenerateMediaValidationResponse,
     ResearchBriefResponse,
     ScenarioResponse,
     VideoResponse,
 )
 
 router = APIRouter(prefix="/api/v1/projects", tags=["projects"])
+
+
+async def _owned_project(db: AsyncSession, project_id: uuid.UUID, user: User) -> Project:
+    return await get_user_project(db, project_id, user)
 
 
 def _project_response(project: Project, channel_name: str | None = None) -> ProjectResponse:
@@ -61,10 +72,12 @@ async def list_projects(
     status: str | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> list[ProjectResponse]:
     query = (
         select(Project, Channel.name)
         .join(Channel, Channel.id == Project.channel_id)
+        .where(Channel.user_id == current_user.id)
         .order_by(Project.created_at.desc())
         .limit(limit)
     )
@@ -79,12 +92,16 @@ async def list_projects(
 
 @router.post("", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
 async def create_project(
-    body: ProjectCreate, db: AsyncSession = Depends(get_db)
+    body: ProjectCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> ProjectResponse:
-    channel_result = await db.execute(select(Channel).where(Channel.id == body.channel_id))
-    channel = channel_result.scalar_one_or_none()
-    if not channel:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chaîne introuvable")
+    try:
+        await check_can_create_project(db, current_user)
+    except QuotaExceededError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+
+    channel = await get_user_channel(db, body.channel_id, current_user)
     if not channel.is_active:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Chaîne inactive")
 
@@ -114,27 +131,24 @@ async def check_topic_similarity(
 
 
 @router.get("/{project_id}", response_model=ProjectResponse)
-async def get_project(project_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> ProjectResponse:
-    result = await db.execute(
-        select(Project, Channel.name)
-        .join(Channel, Channel.id == Project.channel_id)
-        .where(Project.id == project_id)
-    )
-    row = result.one_or_none()
-    if not row:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Projet introuvable")
-    project, channel_name = row
+async def get_project(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ProjectResponse:
+    project = await get_user_project(db, project_id, current_user)
+    channel_result = await db.execute(select(Channel.name).where(Channel.id == project.channel_id))
+    channel_name = channel_result.scalar_one_or_none()
     return _project_response(project, channel_name)
 
 
 @router.post("/{project_id}/run", status_code=status.HTTP_202_ACCEPTED)
-async def run_pipeline(project_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> dict:
-    result = await db.execute(
-        select(Project).where(Project.id == project_id)
-    )
-    project = result.scalar_one_or_none()
-    if not project:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Projet introuvable")
+async def run_pipeline(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    project = await get_user_project(db, project_id, current_user)
     if project.status == "running":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Pipeline déjà en cours")
 
@@ -163,7 +177,9 @@ async def stream_video(
     project_id: uuid.UUID,
     video_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> FileResponse | RedirectResponse:
+    await get_user_project(db, project_id, current_user)
     result = await db.execute(
         select(Video).where(Video.id == video_id, Video.project_id == project_id)
     )
@@ -227,13 +243,11 @@ async def download_project_subtitles(
     project_id: uuid.UUID,
     video_id: uuid.UUID | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> FileResponse:
     from agent.core.subtitle_paths import resolve_project_srt_path
 
-    project_result = await db.execute(select(Project).where(Project.id == project_id))
-    project = project_result.scalar_one_or_none()
-    if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Projet introuvable")
+    project = await get_user_project(db, project_id, current_user)
 
     if video_id is not None:
         video_result = await db.execute(
@@ -305,11 +319,12 @@ async def list_critic_reports(
 
 
 @router.post("/{project_id}/stop", status_code=status.HTTP_202_ACCEPTED)
-async def stop_pipeline(project_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> dict:
-    result = await db.execute(select(Project).where(Project.id == project_id))
-    project = result.scalar_one_or_none()
-    if not project:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Projet introuvable")
+async def stop_pipeline(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    project = await _owned_project(db, project_id, current_user)
     if project.status != "running":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Pipeline non actif")
 
@@ -375,6 +390,7 @@ async def restart_from_critic_iteration(
 
     critic_feedback = report.requested_changes or []
     critic_start_from: str = (report.feedback or {}).get("start_from") or "media_agent"
+    resume_iteration = critic_rework_iteration(report.iteration)
 
     project.status = "pending"
     project.error_message = None
@@ -384,9 +400,10 @@ async def restart_from_critic_iteration(
         project_id,
         critic_feedback=critic_feedback,
         critic_start_from=critic_start_from,
+        resume_iteration=resume_iteration,
     )
     return {
-        "message": f"Pipeline relancé (itération {report.iteration}, depuis {critic_start_from})",
+        "message": f"Pipeline relancé (itération {resume_iteration}, depuis {critic_start_from})",
         "project_id": str(project_id),
         "report_id": str(report_id),
         "critic_start_from": critic_start_from,
@@ -397,16 +414,19 @@ async def restart_from_critic_iteration(
 async def run_from_step(
     project_id: uuid.UUID, step: str, db: AsyncSession = Depends(get_db)
 ) -> dict:
-    if step not in PIPELINE_STEPS:
+    if step not in RUN_FROM_STEPS:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Étape inconnue : {step!r}. Valeurs : {PIPELINE_STEPS}",
+            detail=f"Étape inconnue : {step!r}. Valeurs : {sorted(RUN_FROM_STEPS)}",
         )
 
     result = await db.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Projet introuvable")
+
+    if project.status == "running":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Pipeline déjà en cours")
 
     # Cancel any running pipeline in the worker before re-launching
     await request_pipeline_cancel(project_id)
@@ -417,14 +437,46 @@ async def run_from_step(
             detail="Slot pipeline occupé pour cette chaîne (1 max en parallèle)",
         )
 
+    critic_feedback: list | None = None
+    critic_start_from: str | None = None
+    resume_iteration: int | None = None
+    cleanup_step = step
+    enqueue_start_from: str | None = step
+
+    if step == "revision_agent":
+        report_result = await db.execute(
+            select(CriticReport)
+            .join(Video, Video.id == CriticReport.video_id)
+            .where(Video.project_id == project_id)
+            .order_by(CriticReport.created_at.desc())
+            .limit(1)
+        )
+        report = report_result.scalar_one_or_none()
+        if not report:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Aucun rapport critique — impossible de reprendre l'agent révision",
+            )
+        critic_feedback = report.requested_changes or []
+        critic_start_from = (report.feedback or {}).get("start_from") or "media_agent"
+        resume_iteration = critic_rework_iteration(report.iteration)
+        cleanup_step = "media_agent"
+        enqueue_start_from = None
+
     # Clean artifacts from this step onwards
-    await cleanup_from_step(project_id, step, db)
+    await cleanup_from_step(project_id, cleanup_step, db)
 
     project.status = "pending"
     project.error_message = None
     await db.commit()
 
-    await enqueue_pipeline(project_id, start_from=step)
+    await enqueue_pipeline(
+        project_id,
+        start_from=enqueue_start_from,
+        critic_feedback=critic_feedback,
+        critic_start_from=critic_start_from,
+        resume_iteration=resume_iteration,
+    )
     return {"message": f"Pipeline relancé depuis {step}", "project_id": str(project_id)}
 
 
@@ -446,8 +498,6 @@ async def update_project_config(
         if body.max_critic_iterations < 1:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="max_critic_iterations doit être ≥ 1")
         config["max_critic_iterations"] = body.max_critic_iterations
-    if body.media_validation_override is not None:
-        config["media_validation_override"] = body.media_validation_override
     project.config = config
     await db.commit()
     await db.refresh(project)
@@ -456,8 +506,34 @@ async def update_project_config(
 
 @router.get("/{project_id}/scenario", response_model=ScenarioResponse | None)
 async def get_project_scenario(
-    project_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID | None = Query(default=None),
+    at_agent: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
 ) -> ScenarioResponse | None:
+    from agent.core.scenario_snapshot import resolve_scenario_id_for_agent_run
+
+    resolved_id = scenario_id
+    if resolved_id is None and at_agent:
+        run_result = await db.execute(
+            select(AgentRun)
+            .where(
+                AgentRun.project_id == project_id,
+                AgentRun.agent_name == at_agent,
+                AgentRun.status == "success",
+            )
+            .order_by(AgentRun.ended_at.desc())
+            .limit(1)
+        )
+        run = run_result.scalar_one_or_none()
+        resolved_id = await resolve_scenario_id_for_agent_run(run, project_id, db)
+
+    if resolved_id is not None:
+        row = await db.get(Scenario, resolved_id)
+        if row is None or row.project_id != project_id:
+            return None
+        return ScenarioResponse.model_validate(row)
+
     result = await db.execute(
         select(Scenario)
         .where(Scenario.project_id == project_id)
@@ -484,17 +560,18 @@ async def get_project_research(
 def _brief_to_response(
     brief: "MediaValidationBrief",
     *,
-    override: dict | None = None,
     source: str = "resolved",
+    scenario_segments: list | None = None,
 ) -> MediaValidationBriefResponse:
+    from agent.core.beat_validation import resolve_beats_for_response
     from agent.core.media_validation import MediaValidationBrief
+    from api.models import BeatValidationResolved
 
     segments_out = {
         str(k): v.model_dump() for k, v in brief.segments.items()
     }
-    override_body = None
-    if override:
-        override_body = MediaValidationOverrideBody.model_validate(override)
+    resolved_raw = resolve_beats_for_response(brief, scenario_segments)
+    resolved_beats = [BeatValidationResolved.model_validate(item) for item in resolved_raw]
     return MediaValidationBriefResponse(
         subject_entity=brief.subject_entity,
         subject_type=brief.subject_type,
@@ -505,7 +582,7 @@ def _brief_to_response(
         min_relevance_score=brief.min_relevance_score,
         niche_risk=brief.niche_risk,
         segments=segments_out,
-        override=override_body,
+        resolved_beats=resolved_beats,
         source=source,
     )
 
@@ -541,118 +618,9 @@ async def get_project_media_validation(
         scenario_segments=segments or [],
         theme_category=channel.theme_category,
     )
-    override = (project.config or {}).get("media_validation_override")
-    return _brief_to_response(brief, override=override if isinstance(override, dict) else None)
-
-
-@router.patch("/{project_id}/media-validation", response_model=MediaValidationBriefResponse)
-async def update_project_media_validation(
-    project_id: uuid.UUID,
-    body: MediaValidationOverrideBody,
-    db: AsyncSession = Depends(get_db),
-) -> MediaValidationBriefResponse:
-    from agent.core.media_validation import resolve_validation_brief
-
-    result = await db.execute(
-        select(Project, Channel)
-        .join(Channel, Channel.id == Project.channel_id)
-        .where(Project.id == project_id)
-    )
-    row = result.one_or_none()
-    if not row:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Projet introuvable")
-    project, channel = row
-
-    if project.status not in ("pending", "stopped", "failed"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Override validation média possible uniquement avant exécution active du pipeline",
-        )
-
-    config = dict(project.config or {})
-    config["media_validation_override"] = body.model_dump(exclude_none=True)
-    project.config = config
-    await db.commit()
-    await db.refresh(project)
-
-    scenario_result = await db.execute(
-        select(Scenario)
-        .where(Scenario.project_id == project_id)
-        .order_by(Scenario.created_at.desc())
-        .limit(1)
-    )
-    scenario = scenario_result.scalar_one_or_none()
-    brief = resolve_validation_brief(
-        channel_config=channel.config or {},
-        project_config=project.config or {},
-        scenario_segments=scenario.segments if scenario else [],
-        theme_category=channel.theme_category,
-    )
-    return _brief_to_response(brief, override=body.model_dump(exclude_none=True), source="override")
-
-
-@router.post(
-    "/{project_id}/media-validation/regenerate",
-    response_model=RegenerateMediaValidationResponse,
-)
-async def regenerate_project_media_validation(
-    project_id: uuid.UUID, db: AsyncSession = Depends(get_db)
-) -> RegenerateMediaValidationResponse:
-    from agent.core.media_validation import attach_brief_to_segments
-    from agent.skills.media.validation_brief import build_validation_brief
-
-    result = await db.execute(
-        select(Project, Channel)
-        .join(Channel, Channel.id == Project.channel_id)
-        .where(Project.id == project_id)
-    )
-    row = result.one_or_none()
-    if not row:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Projet introuvable")
-    project, channel = row
-
-    scenario_result = await db.execute(
-        select(Scenario)
-        .where(Scenario.project_id == project_id)
-        .order_by(Scenario.created_at.desc())
-        .limit(1)
-    )
-    scenario = scenario_result.scalar_one_or_none()
-    if not scenario or not scenario.segments:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Aucun scénario — lancez d'abord le scenario_agent",
-        )
-
-    brief = await build_validation_brief(
-        theme=project.theme,
-        theme_category=channel.theme_category,
-        segments=scenario.segments,
-        creative_brief=channel.creative_brief or "",
-    )
-    config = dict(project.config or {})
-    config["media_validation_brief"] = brief.to_dict()
-    project.config = config
-    scenario.segments = attach_brief_to_segments(scenario.segments, brief)
-    await db.commit()
-    await db.refresh(project)
-
-    from agent.core.media_validation import resolve_validation_brief
-
-    resolved = resolve_validation_brief(
-        channel_config=channel.config or {},
-        project_config=project.config or {},
-        scenario_segments=scenario.segments,
-        theme_category=channel.theme_category,
-    )
-    override = config.get("media_validation_override")
-    return RegenerateMediaValidationResponse(
-        brief=_brief_to_response(
-            resolved,
-            override=override if isinstance(override, dict) else None,
-            source="regenerated",
-        ),
-        message="Brief de validation régénéré",
+    return _brief_to_response(
+        brief,
+        scenario_segments=segments or [],
     )
 
 
@@ -677,6 +645,45 @@ async def get_project_media_progress(
         segments_done=progress.segments_done,
         segments_total=progress.segments_total,
         agent_status=progress.agent_status,
+    )
+
+
+def _progress_item(data: AgentProgressData) -> AgentProgressItem:
+    return AgentProgressItem(
+        done=data.done,
+        total=data.total,
+        percent=data.percent,
+        detail=data.detail,
+        segments_done=data.segments_done,
+        segments_total=data.segments_total,
+    )
+
+
+@router.get("/{project_id}/pipeline-progress", response_model=PipelineProgressResponse)
+async def get_project_pipeline_progress(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> PipelineProgressResponse:
+    project = await db.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Projet introuvable")
+    try:
+        snapshot = await compute_pipeline_progress(db, project_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return PipelineProgressResponse(
+        preparation={
+            name: _progress_item(item) for name, item in snapshot.preparation.items()
+        },
+        iterations={
+            str(iteration): {
+                name: _progress_item(item) for name, item in agents.items()
+            }
+            for iteration, agents in snapshot.iterations.items()
+        },
+        post_production={
+            name: _progress_item(item) for name, item in snapshot.post_production.items()
+        },
     )
 
 
@@ -712,7 +719,9 @@ async def stream_media_asset(
     project_id: uuid.UUID,
     asset_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> FileResponse | RedirectResponse:
+    await get_user_project(db, project_id, current_user)
     result = await db.execute(
         select(MediaAsset).where(
             MediaAsset.id == asset_id,
@@ -734,6 +743,88 @@ async def stream_media_asset(
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Fichier média introuvable")
 
 
+@router.get("/{project_id}/media-assets/{asset_id}/preview", response_model=None)
+async def preview_media_asset_with_labels(
+    project_id: uuid.UUID,
+    asset_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> FileResponse:
+    """Preview image avec diagram_labels superposés (ffmpeg drawtext)."""
+    from agent.core.api_keys import fetch_api_key
+    from agent.core.channel_config import resolve_channel_config
+    from agent.core.subscription import get_user_subscription_limits
+    from agent.skills.video.media_asset_preview import (
+        find_beat_labels,
+        preview_cache_path,
+        render_media_asset_label_preview,
+    )
+
+    project = await get_user_project(db, project_id, current_user)
+    result = await db.execute(
+        select(MediaAsset).where(
+            MediaAsset.id == asset_id,
+            MediaAsset.project_id == project_id,
+        )
+    )
+    asset = result.scalar_one_or_none()
+    if not asset or not asset.local_path:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Média introuvable")
+
+    local = Path(asset.local_path)
+    if not local.exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Fichier média introuvable")
+
+    scenario_result = await db.execute(
+        select(Scenario)
+        .where(Scenario.project_id == project_id)
+        .order_by(Scenario.created_at.desc())
+        .limit(1)
+    )
+    scenario = scenario_result.scalar_one_or_none()
+    labels, narration, visual_type = find_beat_labels(
+        scenario.segments if scenario else None,
+        segment_order=int(asset.segment_order or 0),
+        beat_index=int(asset.beat_index or 0),
+    )
+    if not labels:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Aucun diagram_label pour cet asset",
+        )
+
+    channel_result = await db.execute(select(Channel).where(Channel.id == project.channel_id))
+    channel = channel_result.scalar_one_or_none()
+    if channel is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chaîne introuvable")
+
+    limits = await get_user_subscription_limits(db, current_user.id)
+    channel_cfg = resolve_channel_config(channel, subscription_limits=limits)
+    gemini_ctx = await fetch_api_key(
+        current_user.id, "gemini", purpose="diagram_layout", tier="free"
+    )
+
+    out_path = preview_cache_path(project_id, asset_id)
+    try:
+        await render_media_asset_label_preview(
+            local,
+            out_path,
+            labels=labels,
+            narration_excerpt=narration,
+            language=channel_cfg.content_language,
+            visual_type=visual_type or (asset.visual_type or ""),
+            gemini_api_key=gemini_ctx.key,
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        logger.warning("Preview labels asset %s : %s", asset_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Échec génération preview avec labels",
+        ) from exc
+
+    return FileResponse(str(out_path), media_type=_media_type_for_path(out_path))
+
+
 @router.get("/{project_id}/audio", response_model=list[AudioFileResponse])
 async def list_project_audio_files(
     project_id: uuid.UUID, db: AsyncSession = Depends(get_db)
@@ -746,12 +837,43 @@ async def list_project_audio_files(
     return [AudioFileResponse.model_validate(a) for a in result.scalars().all()]
 
 
+def _montage_plan_response(row: MontagePlan) -> MontagePlanResponse:
+    plan_data = row.plan_data if isinstance(row.plan_data, dict) else {}
+    segments_raw = plan_data.get("segments") or []
+    segments = [SegmentMontagePlanResponse.model_validate(seg) for seg in segments_raw]
+    return MontagePlanResponse(
+        id=row.id,
+        project_id=row.project_id,
+        iteration=row.iteration,
+        segments=segments,
+        planner_notes=str(plan_data.get("planner_notes") or ""),
+        created_at=row.created_at,
+    )
+
+
+@router.get("/{project_id}/montage-plan", response_model=MontagePlanResponse | None)
+async def get_project_montage_plan(
+    project_id: uuid.UUID,
+    iteration: int | None = Query(default=None, ge=1),
+    db: AsyncSession = Depends(get_db),
+) -> MontagePlanResponse | None:
+    query = select(MontagePlan).where(MontagePlan.project_id == project_id)
+    if iteration is not None:
+        query = query.where(MontagePlan.iteration == iteration)
+    result = await db.execute(
+        query.order_by(MontagePlan.iteration.desc(), MontagePlan.created_at.desc()).limit(1)
+    )
+    row = result.scalar_one_or_none()
+    return _montage_plan_response(row) if row else None
+
+
 @router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_project(project_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> None:
-    result = await db.execute(select(Project).where(Project.id == project_id))
-    project = result.scalar_one_or_none()
-    if not project:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Projet introuvable")
+async def delete_project(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    project = await _owned_project(db, project_id, current_user)
     if project.status == "running":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Impossible de supprimer un projet en cours d'exécution")
     await delete_project_completely(project_id, db)

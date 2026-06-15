@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -46,31 +47,35 @@ async def suggest_media_source_priority(
     channel_name: str,
     theme_category: str,
     niche_prompt: str,
+    *,
+    user_id: uuid.UUID | None = None,
 ) -> list[str]:
     """Demande à Claude de classer les sources médias pour une chaîne."""
     try:
-        import anthropic
+        from agent.core.database import AsyncSessionFactory, User
+        from agent.core.llm_resolver import call_llm
 
-        from agent.core.config import settings
-
-        client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
         prompt = _PROMPT.format(
             channel_name=channel_name,
             theme_category=theme_category or "général",
             niche_prompt=niche_prompt or "contenu généraliste",
         )
-        message = await client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=256,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        raw = message.content[0].text.strip()
+        async with AsyncSessionFactory() as session:
+            user = await session.get(User, user_id) if user_id else None
+            raw = await call_llm(
+                session,
+                user,
+                "source_advisor",
+                prompt,
+                max_tokens=256,
+                model_override="claude-haiku-4-5-20251001",
+            )
+        raw = raw.strip()
         if raw.startswith("```"):
             lines = raw.split("\n")
             raw = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
         data = json.loads(raw)
         priority = data.get("media_source_priority", [])
-        # Valide que les noms sont connus
         valid = [s for s in priority if s in AVAILABLE_SOURCES]
         if valid:
             logger.info(
@@ -82,5 +87,4 @@ async def suggest_media_source_priority(
             return valid
     except Exception as e:
         logger.warning("suggest_media_source_priority échoué : %s", e)
-
     return []

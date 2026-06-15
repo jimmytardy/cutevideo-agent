@@ -80,6 +80,11 @@ Retourne UNIQUEMENT un JSON valide avec cette structure :
 }}
 
 Principes OBLIGATOIRES :
+- Structure narrative : arc tension → révélation → payoff dans les titres de segments
+- Segment 1 : accroche / paradoxe avec question rhétorique dans les ~15 premières secondes
+- Segments milieu : mécanisme, preuves, approfondissement
+- Dernier segment : conclusion mémorable + phrase de clôture marquante
+- Exploiter les 3 faits surprenants du brief recherche dans le hook ou segment 2
 - Hook fort dans les 30 premières secondes
 - Chaque segment : MINIMUM 4 mots-clés (2 FR + 2 EN)
 - Chaque search_keywords doit être ancré au SUJET DE LA VIDÉO (« {theme} ») et au contenu du segment (titre + narration)
@@ -101,6 +106,7 @@ VOIX ET DELIVERY_STYLE (OBLIGATOIRE si needs_voice true) :
 
 {research_rules_block}
 {critic_feedback_block}
+{fact_check_feedback_block}
 {sources_block}
 {visual_beats_rules}
 Pour source_hint : choisis 2-3 sources dans l'ordre de pertinence pour le sujet du segment."""
@@ -168,6 +174,7 @@ VOIX ET DELIVERY_STYLE (si needs_voice true) :
 
 {research_rules_block}
 {critic_feedback_block}
+{fact_check_feedback_block}
 {sources_block}
 {visual_beats_rules}
 Pour source_hint : 2-3 sources dans l'ordre de pertinence pour le sujet du segment."""
@@ -212,6 +219,26 @@ def _format_critic_feedback_block(feedback: list[dict] | None) -> str:
         agent = change.get("agent", "?")
         desc = change.get("change_description", "")
         lines.append(f"- [{agent}] {desc}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _format_fact_check_feedback_block(feedback: list[dict] | None) -> str:
+    if not feedback:
+        return ""
+    lines = [
+        "CORRECTIONS FACTUELLES OBLIGATOIRES (échec vérification factuelle — à corriger impérativement) :",
+    ]
+    for item in feedback:
+        seg = item.get("segment_order", "?")
+        claim = item.get("claim", "")
+        issue = item.get("issue", "")
+        severity = item.get("severity", "major")
+        lines.append(f'- [segment {seg}] ({severity}) « {claim} » → {issue}')
+    lines.append(
+        "Corrige UNIQUEMENT les affirmations factuelles erronées. "
+        "Conserve le style, la structure et les segments non concernés."
+    )
     lines.append("")
     return "\n".join(lines)
 
@@ -301,6 +328,7 @@ class ScenarioInput:
     research_block: str = ""
     research_rules_block: str = ""
     critic_feedback_block: str = ""
+    fact_check_feedback_block: str = ""
     creative_brief_block: str = ""
 
 
@@ -312,6 +340,7 @@ class ScenarioAgent(BaseAgent):
     async def run(self, ctx: "PipelineContext") -> Scenario:  # type: ignore[override]
         theme_prompt = ctx.channel.theme_prompt or ctx.niche_prompt or ""
         critic_feedback_block = _format_critic_feedback_block(ctx.critic_feedback)
+        fact_check_feedback_block = _format_fact_check_feedback_block(ctx.fact_check_feedback)
         input_data = ScenarioInput(
             project_id=ctx.project_id,
             theme=ctx.theme,
@@ -330,6 +359,7 @@ class ScenarioAgent(BaseAgent):
             research_block=_format_research_block(ctx.research_brief),
             research_rules_block=_format_research_rules_block(ctx.research_brief),
             critic_feedback_block=critic_feedback_block,
+            fact_check_feedback_block=fact_check_feedback_block,
             creative_brief_block=_format_creative_brief_block(ctx.channel_config.creative_brief),
         )
         run = await self.start_run(ctx.project_id, input_data)
@@ -372,6 +402,7 @@ class ScenarioAgent(BaseAgent):
                 research_rules_block=input_data.research_rules_block,
                 learning_block=learning_block,
                 critic_feedback_block=input_data.critic_feedback_block,
+                fact_check_feedback_block=input_data.fact_check_feedback_block,
                 sources_block=AVAILABLE_SOURCES,
                 **vb_ctx,
             )
@@ -403,6 +434,7 @@ class ScenarioAgent(BaseAgent):
                 research_rules_block=input_data.research_rules_block,
                 learning_block=learning_block,
                 critic_feedback_block=input_data.critic_feedback_block,
+                fact_check_feedback_block=input_data.fact_check_feedback_block,
                 sources_block=AVAILABLE_SOURCES,
                 **vb_ctx,
             )
@@ -410,21 +442,6 @@ class ScenarioAgent(BaseAgent):
 
         raw = await self._call_claude(prompt, system=system, max_tokens=8192)
         data = self._parse_json(raw)
-
-        from agent.skills.media.validation_brief import (
-            apply_brief_to_scenario_data,
-            build_validation_brief,
-        )
-
-        brief = await build_validation_brief(
-            theme=input_data.theme,
-            theme_category=input_data.theme_category,
-            segments=data.get("segments", []),
-            creative_brief=input_data.creative_brief_block.replace(
-                "BRIEF CRÉATIF DE LA CHAÎNE :\n", ""
-            ).strip(),
-        )
-        data = apply_brief_to_scenario_data(data, brief)
 
         from agent.core.channel_config import VisualBeatsConfig
         from agent.skills.media.segment_beats_media import ensure_visual_beats_on_segments
@@ -442,6 +459,22 @@ class ScenarioAgent(BaseAgent):
             theme_category=input_data.theme_category,
             vb_config=vb_config,
         )
+
+        from agent.skills.media.validation_brief import (
+            apply_brief_to_scenario_data,
+            build_validation_brief,
+        )
+
+        brief = await build_validation_brief(
+            theme=input_data.theme,
+            theme_category=input_data.theme_category,
+            segments=data.get("segments", []),
+            creative_brief=input_data.creative_brief_block.replace(
+                "BRIEF CRÉATIF DE LA CHAÎNE :\n", ""
+            ).strip(),
+            user_id=self._user_id,
+        )
+        data = apply_brief_to_scenario_data(data, brief)
 
         async with AsyncSessionFactory() as session:
             scenario = Scenario(

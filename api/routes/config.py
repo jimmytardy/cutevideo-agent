@@ -4,9 +4,11 @@ import json
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from agent.core.config import settings
+from api.deps import require_admin_user
+from agent.core.database import User
 
 router = APIRouter(prefix="/api/v1/config", tags=["config"])
 
@@ -21,7 +23,10 @@ async def get_agent_config() -> dict[str, Any]:
 
 
 @router.put("/agent")
-async def update_agent_config(body: dict[str, Any]) -> dict[str, Any]:
+async def update_agent_config(
+    body: dict[str, Any],
+    _: User = Depends(require_admin_user),
+) -> dict[str, Any]:
     """Met à jour la configuration des agents."""
     path = Path(settings.config_path)
     path.parent.mkdir(parents=True, exist_ok=True)

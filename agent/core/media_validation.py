@@ -1,10 +1,14 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, Field
 
 from agent.core.config import load_agent_config
+
+if TYPE_CHECKING:
+    from agent.core.beat_validation import BeatValidationContext
+    from agent.core.visual_beats import VisualBeat
 
 SubjectType = Literal[
     "species", "person", "event", "concept", "place", "artwork", "general"
@@ -46,6 +50,14 @@ class MediaValidationBrief(BaseModel):
             return seg.min_relevance_score
         return self.min_relevance_score
 
+    def beat_context(self, segment_order: int, beat: VisualBeat) -> BeatValidationContext:
+        from agent.core.beat_validation import resolve_beat_validation
+
+        return resolve_beat_validation(beat, brief=self, segment_order=segment_order)
+
+    def min_score_for_beat(self, segment_order: int, beat: VisualBeat) -> int:
+        return self.beat_context(segment_order, beat).min_relevance_score
+
     def to_dict(self) -> dict[str, Any]:
         return self.model_dump()
 
@@ -63,13 +75,6 @@ class MediaValidationBrief(BaseModel):
         brief = cls.model_validate(payload)
         brief.segments = segments
         return brief
-
-
-class MediaValidationOverride(BaseModel):
-    must_include: list[str] = Field(default_factory=list)
-    must_exclude: list[str] = Field(default_factory=list)
-    validation_prompt: str | None = None
-    min_relevance_score: int | None = None
 
 
 class ChannelMediaValidationConfig(BaseModel):
@@ -103,15 +108,6 @@ def _merge_unique_lists(*lists: list[str]) -> list[str]:
                 seen.add(key)
                 out.append(item.strip())
     return out
-
-
-def _parse_override(data: dict[str, Any] | None) -> MediaValidationOverride | None:
-    if not data or not isinstance(data, dict):
-        return None
-    raw = data.get("media_validation_override")
-    if not raw or not isinstance(raw, dict):
-        return None
-    return MediaValidationOverride.model_validate(raw)
 
 
 def _channel_validation_config(channel_config: dict[str, Any] | None) -> ChannelMediaValidationConfig:
@@ -170,7 +166,7 @@ def resolve_validation_brief(
     scenario_segments: list[dict[str, Any]] | None = None,
     theme_category: str = "default",
 ) -> MediaValidationBrief:
-    """Fusionne défauts config, template chaîne, brief auto et override projet."""
+    """Fusionne défauts config, template chaîne et brief auto (scénario / projet)."""
     defaults = load_media_validation_defaults()
     default_score = int(defaults["relevance_min_score_default"])
     high_precision = int(defaults["relevance_min_score_high_precision"])
@@ -188,25 +184,6 @@ def resolve_validation_brief(
     if auto_brief.subject_type == "species" or theme_category in ("nature", "animaux"):
         if auto_brief.min_relevance_score == default_score:
             auto_brief.min_relevance_score = high_precision
-
-    project_override = _parse_override(project_config)
-    if project_override:
-        auto_brief.must_include = _merge_unique_lists(
-            auto_brief.must_include, project_override.must_include
-        )
-        auto_brief.must_exclude = _merge_unique_lists(
-            auto_brief.must_exclude, project_override.must_exclude
-        )
-        if project_override.validation_prompt:
-            extra = project_override.validation_prompt.strip()
-            if extra:
-                auto_brief.validation_prompt = (
-                    f"{auto_brief.validation_prompt}\n{extra}".strip()
-                    if auto_brief.validation_prompt
-                    else extra
-                )
-        if project_override.min_relevance_score is not None:
-            auto_brief.min_relevance_score = project_override.min_relevance_score
 
     if channel_mv.media_validation_template.strip():
         template = channel_mv.media_validation_template.strip()

@@ -25,8 +25,8 @@ class StorageSettings:
 
 
 class Settings(BaseSettings):
-    # IA
-    anthropic_api_key: str
+    # IA — plateforme (fallback gratuit Gemini ; Anthropic optionnel)
+    anthropic_api_key: str = ""
 
     # Base de données
     database_url: str = "postgresql+asyncpg://cutevideo:cutevideo@localhost:5432/cutevideo"
@@ -73,6 +73,14 @@ class Settings(BaseSettings):
     # API
     cors_origins: str = "http://localhost:3000"
     scheduler_enabled: bool = True
+
+    # Auth multi-utilisateurs
+    jwt_secret_key: str = "dev-change-me-in-production"
+    jwt_expire_minutes: int = 60 * 24 * 7
+    google_oauth_client_id: str = ""
+    google_oauth_client_secret: str = ""
+    google_oauth_redirect_uri: str = "http://localhost:8000/api/v1/auth/google/callback"
+    api_keys_encryption_key: str = ""
 
     # TTS
     edge_tts_voice: str = "fr-FR-DeniseNeural"

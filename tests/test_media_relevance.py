@@ -59,6 +59,8 @@ def _make_agent_ctx(tmp_path: Path) -> tuple[MediaAgent, object, dict, object]:
     agent = MediaAgent()
     agent._relevance_log = []
     agent._kept_temp_s3_keys = []
+    agent._gemini_api_key = "test-key"
+    agent._scoring_models = None
     ctx = type("Ctx", (), {
         "theme": "Sujet",
         "theme_category": "nature",
@@ -192,6 +194,70 @@ async def test_generate_validated_ai_image_validated_on_second_phase(tmp_path: P
     assert result.outcome == "validated"
     assert result.item is not None
     assert result.item.get("_relevance_validated") is True
+
+
+@pytest.mark.asyncio
+async def test_generate_validated_ai_image_diagram_blocks_forced_best_on_text_artifact(
+    tmp_path: Path,
+) -> None:
+    from agent.core.media_validation import MediaValidationBrief
+    from agent.core.visual_beats import VisualBeat
+
+    agent, ctx, segment, ai_cfg = _make_agent_ctx(tmp_path)
+    ai_path = tmp_path / "ai.jpg"
+    ai_path.write_bytes(b"jpg")
+    ai_item = {
+        "source": "ai_image",
+        "url": str(ai_path),
+        "local_generated": str(ai_path),
+        "title": "IA diagram",
+    }
+    beat = VisualBeat(
+        order=1,
+        phrase_anchor="phrase anchor longue",
+        visual_type="scientific_diagram",
+        prompt="diagram",
+    )
+    brief = MediaValidationBrief(min_relevance_score=60)
+
+    async def fake_score(candidates, **kwargs):
+        return [
+            ScoredCandidate(
+                candidate=c,
+                score=40,
+                reason="Concept ok mais texte illisible",
+                rejection_category="text_artifact",
+            )
+            for c in candidates
+        ]
+
+    with (
+        patch(
+            "agent.agents.media_agent.ai_fallback_attempt_config",
+            return_value=("flux_2_dev", 1, 0),
+        ),
+        patch(
+            "agent.skills.media_sources.relevance_scorer.score_media_candidates",
+            new=AsyncMock(side_effect=fake_score),
+        ),
+        patch.object(MediaAgent, "_generate_ai_fallback", new=AsyncMock(return_value=ai_item)),
+        patch.object(MediaAgent, "_upload_ai_candidate_temp", new=AsyncMock(return_value=None)),
+    ):
+        result = await agent._generate_validated_ai_image(
+            "prompt",
+            tmp_path,
+            ctx,
+            segment,
+            60,
+            ai_cfg,
+            "16:9",
+            brief,
+            beat=beat,
+            visual_type="scientific_diagram",
+        )
+
+    assert result.outcome == "api_failed"
+    assert result.item is None
 
 
 @pytest.mark.asyncio

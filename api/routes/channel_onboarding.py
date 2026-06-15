@@ -10,10 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.agents.channel_planner_agent import ChannelPlannerAgent
 from agent.skills.market_research.youtube_discovery import YouTubeAuthError
+from agent.core.auth import create_oauth_state, decode_oauth_state
 from agent.core.channel_brand import ChannelBrandKit, ThemeVariant, YouTubeBrand
 from agent.core.config import settings
-from agent.core.database import Channel, MarketAnalysis, get_db
+from agent.core.database import Channel, MarketAnalysis, User, get_db
+from agent.core.subscription import QuotaExceededError, check_can_create_channel, check_can_run_market_analysis
 from agent.skills.publisher import youtube_branding
+from api.authorization import get_user_channel
+from api.deps import get_current_user
 from api.models import (
     ChannelResponse,
     GenerateBrandRequest,
@@ -34,8 +38,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/channels", tags=["channel-onboarding"])
 
-_pending_youtube_oauth: dict[str, str] = {}
-
 
 def _config_from_brand_kit(brand_kit: dict[str, Any]) -> dict[str, Any]:
     return {
@@ -46,10 +48,18 @@ def _config_from_brand_kit(brand_kit: dict[str, Any]) -> dict[str, Any]:
 
 @router.post("/onboarding/market-analysis", response_model=MarketAnalysisResponse)
 async def market_analysis(
-    body: MarketAnalysisRequest, db: AsyncSession = Depends(get_db)
+    body: MarketAnalysisRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> MarketAnalysisResponse:
     """Analyse marché, concurrence et niches (YouTube API + synthèse multi-plateformes)."""
+    try:
+        await check_can_run_market_analysis(db, current_user)
+    except QuotaExceededError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+
     planner = ChannelPlannerAgent()
+    planner.bind_user(current_user.id)
     try:
         report = await planner.analyze_market(
             body.prompt,
@@ -65,6 +75,7 @@ async def market_analysis(
 
     report_dict = report.model_dump()
     saved = MarketAnalysis(
+        user_id=current_user.id,
         prompt=body.prompt,
         saturation_verdict=report.saturation_verdict,
         market_summary=report.market_summary,
@@ -102,15 +113,25 @@ async def generate_brand(body: GenerateBrandRequest) -> dict[str, Any]:
 
 @router.post("/onboarding/draft", response_model=ChannelResponse, status_code=status.HTTP_201_CREATED)
 async def create_onboarding_draft(
-    body: OnboardingDraftRequest, db: AsyncSession = Depends(get_db)
+    body: OnboardingDraftRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> Channel:
+    try:
+        await check_can_create_channel(db, current_user)
+    except QuotaExceededError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+
     brand_kit = body.brand_kit
     slug = str(brand_kit.get("slug", "channel"))
-    existing = await db.execute(select(Channel).where(Channel.slug == slug))
+    existing = await db.execute(
+        select(Channel).where(Channel.user_id == current_user.id, Channel.slug == slug)
+    )
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Slug déjà utilisé")
 
     channel = Channel(
+        user_id=current_user.id,
         slug=slug,
         name=str(brand_kit.get("name", slug)),
         theme_category=str(brand_kit.get("theme_category", "default")),
@@ -131,10 +152,16 @@ async def create_onboarding_draft(
 @router.get("/youtube/oauth-url", response_model=YouTubeOAuthUrlResponse)
 async def youtube_oauth_url(
     channel_id: uuid.UUID | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> YouTubeOAuthUrlResponse:
-    state = str(uuid.uuid4())
     if channel_id:
-        _pending_youtube_oauth[state] = str(channel_id)
+        await get_user_channel(db, channel_id, current_user)
+    state = create_oauth_state(
+        user_id=current_user.id,
+        channel_id=channel_id,
+        purpose="youtube_connect",
+    )
     try:
         url = youtube_branding.get_oauth_authorization_url(
             state=state,
@@ -152,6 +179,11 @@ async def youtube_oauth_callback(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
     try:
+        payload = decode_oauth_state(state, expected_purpose="youtube_connect")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    try:
         refresh_token = youtube_branding.exchange_oauth_code(
             code=code,
             redirect_uri=settings.youtube_oauth_redirect_uri,
@@ -160,7 +192,7 @@ async def youtube_oauth_callback(
         logger.error("OAuth YouTube échoué : %s", e)
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from e
 
-    channel_id_str = _pending_youtube_oauth.pop(state, None)
+    channel_id_str = payload.get("channel_id")
     if channel_id_str:
         await db.execute(
             update(Channel)
@@ -176,12 +208,12 @@ async def youtube_oauth_callback(
 async def list_youtube_channels(
     channel_id: uuid.UUID | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> list[YouTubeChannelItem]:
     refresh_token: str | None = settings.youtube_refresh_token or None
     if channel_id:
-        result = await db.execute(select(Channel).where(Channel.id == channel_id))
-        ch = result.scalar_one_or_none()
-        if ch and ch.youtube_refresh_token:
+        ch = await get_user_channel(db, channel_id, current_user)
+        if ch.youtube_refresh_token:
             refresh_token = ch.youtube_refresh_token
 
     try:
@@ -197,8 +229,9 @@ async def patch_onboarding_youtube(
     channel_id: uuid.UUID,
     body: OnboardingYoutubeRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> Channel:
-    channel = await _get_channel_or_404(db, channel_id)
+    channel = await _get_channel_for_user(db, channel_id, current_user)
     channel.youtube_channel_id = body.youtube_channel_id
     if body.youtube_channel_url:
         channel.youtube_channel_url = body.youtube_channel_url
@@ -212,9 +245,11 @@ async def patch_onboarding_youtube(
 
 @router.post("/{channel_id}/apply-youtube-branding")
 async def apply_youtube_branding(
-    channel_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+    channel_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> dict[str, str]:
-    channel = await _get_channel_or_404(db, channel_id)
+    channel = await _get_channel_for_user(db, channel_id, current_user)
     if not channel.youtube_channel_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="youtube_channel_id manquant")
     if not channel.brand_kit or "youtube" not in channel.brand_kit:
@@ -244,8 +279,9 @@ async def patch_onboarding_tiktok(
     channel_id: uuid.UUID,
     body: OnboardingTikTokRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> Channel:
-    channel = await _get_channel_or_404(db, channel_id)
+    channel = await _get_channel_for_user(db, channel_id, current_user)
     if body.tiktok_publish_defaults is not None:
         channel.tiktok_publish_defaults = body.tiktok_publish_defaults
     channel.onboarding_step = "instagram"
@@ -259,8 +295,9 @@ async def patch_onboarding_instagram(
     channel_id: uuid.UUID,
     body: OnboardingInstagramRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> Channel:
-    channel = await _get_channel_or_404(db, channel_id)
+    channel = await _get_channel_for_user(db, channel_id, current_user)
     channel.instagram_page_id = body.instagram_page_id
     if body.instagram_profile is not None:
         channel.instagram_profile = body.instagram_profile
@@ -272,9 +309,11 @@ async def patch_onboarding_instagram(
 
 @router.post("/{channel_id}/onboarding/complete", response_model=ChannelResponse)
 async def complete_onboarding(
-    channel_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+    channel_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> Channel:
-    channel = await _get_channel_or_404(db, channel_id)
+    channel = await _get_channel_for_user(db, channel_id, current_user)
     if channel.brand_kit:
         kit = ChannelBrandKit.model_validate(channel.brand_kit)
         channel.niche_prompt = kit.niche_prompt
@@ -295,6 +334,7 @@ async def complete_onboarding(
         channel_name=channel.name,
         theme_category=channel.theme_category or "",
         niche_prompt=channel.niche_prompt or "",
+        user_id=current_user.id,
     )
     if priority:
         cfg = channel.config or {}
@@ -308,9 +348,7 @@ async def complete_onboarding(
     return channel
 
 
-async def _get_channel_or_404(db: AsyncSession, channel_id: uuid.UUID) -> Channel:
-    result = await db.execute(select(Channel).where(Channel.id == channel_id))
-    channel = result.scalar_one_or_none()
-    if not channel:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chaîne introuvable")
-    return channel
+async def _get_channel_for_user(
+    db: AsyncSession, channel_id: uuid.UUID, user: User
+) -> Channel:
+    return await get_user_channel(db, channel_id, user)

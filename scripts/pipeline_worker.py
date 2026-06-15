@@ -20,6 +20,7 @@ async def _process_task(payload: dict) -> None:
     start_from = payload.get("start_from")
     critic_feedback = payload.get("critic_feedback")
     critic_start_from = payload.get("critic_start_from")
+    resume_iteration = payload.get("resume_iteration")
 
     try:
         await Orchestrator().run_pipeline(
@@ -27,6 +28,7 @@ async def _process_task(payload: dict) -> None:
             start_from=start_from,
             critic_feedback=critic_feedback,
             critic_start_from=critic_start_from,
+            resume_iteration=resume_iteration,
         )
     except asyncio.CancelledError:
         logger.info("Pipeline annulé pour le projet %s", project_id)
