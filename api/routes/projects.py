@@ -11,14 +11,14 @@ logger = logging.getLogger(__name__)
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from datetime import timezone
+from datetime import datetime, timezone
 
-from agent.core.concurrency import can_start_pipeline
 from agent.core.database import AgentRun, AudioFile, Channel, CriticReport, MediaAsset, MontagePlan, Project, Publication, Scenario, User, Video, get_db
 from agent.core.subscription import QuotaExceededError, check_can_create_project
 from agent.skills.media.progress import compute_media_progress
 from agent.skills.pipeline_progress import AgentProgressData, compute_pipeline_progress
-from agent.core.pipeline_launcher import enqueue_pipeline, request_pipeline_cancel
+from agent.core.pipeline_launcher import dequeue_pipeline, enqueue_pipeline, request_pipeline_cancel
+from agent.core.pipeline_queue import PipelineAlreadyQueuedError, get_queue_status, is_queued
 from agent.core.pipeline_restart import critic_rework_iteration
 from agent.core.pipeline_reset import PIPELINE_STEPS, RUN_FROM_STEPS, cleanup_from_step, delete_project_completely
 from api.authorization import get_user_channel, get_user_project
@@ -33,6 +33,7 @@ from api.models import (
     MontagePlanResponse,
     AgentProgressItem,
     PipelineProgressResponse,
+    PipelineQueueStatusResponse,
     SegmentMontagePlanResponse,
     ProjectConfigUpdate,
     ProjectCreate,
@@ -51,6 +52,8 @@ async def _owned_project(db: AsyncSession, project_id: uuid.UUID, user: User) ->
 
 
 def _project_response(project: Project, channel_name: str | None = None) -> ProjectResponse:
+    config = project.config or {}
+    queued_at_raw = config.get("queued_at")
     return ProjectResponse(
         id=project.id,
         channel_id=project.channel_id,
@@ -63,7 +66,44 @@ def _project_response(project: Project, channel_name: str | None = None) -> Proj
         config=project.config,
         created_at=project.created_at,
         updated_at=project.updated_at,
+        queued_at=datetime.fromisoformat(queued_at_raw) if queued_at_raw else None,
     )
+
+
+async def _project_response_with_queue(
+    project: Project,
+    channel_name: str | None = None,
+) -> ProjectResponse:
+    response = _project_response(project, channel_name)
+    if project.status == "queued":
+        try:
+            status = await get_queue_status(project.id)
+            response.queue_position = status.position
+            response.queue_length = status.queue_length
+            response.queued_at = status.queued_at
+        except ValueError:
+            pass
+    return response
+
+
+def _queue_enqueue_response(project_id: uuid.UUID, status: object) -> dict:
+    return {
+        "message": "Pipeline ajouté à la file d'attente",
+        "project_id": str(project_id),
+        "queue_position": status.position,
+        "queue_length": status.queue_length,
+        "priority": status.priority,
+    }
+
+
+async def _ensure_enqueue_allowed(project: Project) -> None:
+    if project.status == "running":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Pipeline déjà en cours")
+    if project.status == "queued" or await is_queued(project.id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Projet déjà en file d'attente",
+        )
 
 
 @router.get("", response_model=list[ProjectResponse])
@@ -139,8 +179,45 @@ async def get_project(
     project = await get_user_project(db, project_id, current_user)
     channel_result = await db.execute(select(Channel.name).where(Channel.id == project.channel_id))
     channel_name = channel_result.scalar_one_or_none()
-    return _project_response(project, channel_name)
+    return await _project_response_with_queue(project, channel_name)
 
+
+@router.get("/{project_id}/queue-status", response_model=PipelineQueueStatusResponse)
+async def get_project_queue_status(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> PipelineQueueStatusResponse:
+    await get_user_project(db, project_id, current_user)
+    try:
+        status = await get_queue_status(project_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return PipelineQueueStatusResponse(
+        position=status.position,
+        queue_length=status.queue_length,
+        priority=status.priority,
+        queued_at=status.queued_at,
+        blocked_reason=status.blocked_reason,
+    )
+
+
+@router.delete("/{project_id}/queue", status_code=status.HTTP_200_OK)
+async def remove_project_from_queue(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    project = await get_user_project(db, project_id, current_user)
+    if project.status != "queued" and not await is_queued(project_id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Le projet n'est pas en file d'attente",
+        )
+    removed = await dequeue_pipeline(project_id)
+    if not removed:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Projet absent de la file")
+    return {"message": "Projet retiré de la file d'attente", "project_id": str(project_id)}
 
 @router.post("/{project_id}/run", status_code=status.HTTP_202_ACCEPTED)
 async def run_pipeline(
@@ -149,17 +226,13 @@ async def run_pipeline(
     current_user: User = Depends(get_current_user),
 ) -> dict:
     project = await get_user_project(db, project_id, current_user)
-    if project.status == "running":
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Pipeline déjà en cours")
+    await _ensure_enqueue_allowed(project)
 
-    if not await can_start_pipeline(project.channel_id):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Slot pipeline occupé pour cette chaîne (1 max en parallèle)",
-        )
-
-    await enqueue_pipeline(project_id)
-    return {"message": "Pipeline lancé", "project_id": str(project_id)}
+    try:
+        queue_status = await enqueue_pipeline(project_id, user_id=current_user.id)
+    except PipelineAlreadyQueuedError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    return _queue_enqueue_response(project_id, queue_status)
 
 
 @router.get("/{project_id}/videos", response_model=list[VideoResponse])
@@ -325,6 +398,12 @@ async def stop_pipeline(
     current_user: User = Depends(get_current_user),
 ) -> dict:
     project = await _owned_project(db, project_id, current_user)
+    if project.status == "queued" or await is_queued(project_id):
+        removed = await dequeue_pipeline(project_id)
+        if not removed:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Projet absent de la file")
+        return {"message": "Projet retiré de la file d'attente", "project_id": str(project_id)}
+
     if project.status != "running":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Pipeline non actif")
 
@@ -342,21 +421,13 @@ async def restart_pipeline(project_id: uuid.UUID, db: AsyncSession = Depends(get
     project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Projet introuvable")
-    if project.status == "running":
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Pipeline déjà en cours")
+    await _ensure_enqueue_allowed(project)
 
-    if not await can_start_pipeline(project.channel_id):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Slot pipeline occupé pour cette chaîne (1 max en parallèle)",
-        )
-
-    project.status = "pending"
-    project.error_message = None
-    await db.commit()
-
-    await enqueue_pipeline(project_id)
-    return {"message": "Pipeline relancé", "project_id": str(project_id)}
+    try:
+        queue_status = await enqueue_pipeline(project_id)
+    except PipelineAlreadyQueuedError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    return _queue_enqueue_response(project_id, queue_status)
 
 
 @router.post("/{project_id}/restart-from-critic/{report_id}", status_code=status.HTTP_202_ACCEPTED)
@@ -370,8 +441,8 @@ async def restart_from_critic_iteration(
     project = proj_result.scalar_one_or_none()
     if not project:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Projet introuvable")
-    if project.status == "running":
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Pipeline déjà en cours")
+
+    await _ensure_enqueue_allowed(project)
 
     report_result = await db.execute(
         select(CriticReport)
@@ -382,29 +453,21 @@ async def restart_from_critic_iteration(
     if not report:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Rapport critique introuvable pour ce projet")
 
-    if not await can_start_pipeline(project.channel_id):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Slot pipeline occupé pour cette chaîne (1 max en parallèle)",
-        )
-
     critic_feedback = report.requested_changes or []
     critic_start_from: str = (report.feedback or {}).get("start_from") or "media_agent"
     resume_iteration = critic_rework_iteration(report.iteration)
 
-    project.status = "pending"
-    project.error_message = None
-    await db.commit()
-
-    await enqueue_pipeline(
-        project_id,
-        critic_feedback=critic_feedback,
-        critic_start_from=critic_start_from,
-        resume_iteration=resume_iteration,
-    )
+    try:
+        queue_status = await enqueue_pipeline(
+            project_id,
+            critic_feedback=critic_feedback,
+            critic_start_from=critic_start_from,
+            resume_iteration=resume_iteration,
+        )
+    except PipelineAlreadyQueuedError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     return {
-        "message": f"Pipeline relancé (itération {resume_iteration}, depuis {critic_start_from})",
-        "project_id": str(project_id),
+        **_queue_enqueue_response(project_id, queue_status),
         "report_id": str(report_id),
         "critic_start_from": critic_start_from,
     }
@@ -428,14 +491,10 @@ async def run_from_step(
     if project.status == "running":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Pipeline déjà en cours")
 
+    await _ensure_enqueue_allowed(project)
+
     # Cancel any running pipeline in the worker before re-launching
     await request_pipeline_cancel(project_id)
-
-    if not await can_start_pipeline(project.channel_id, exclude_project_id=project_id):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Slot pipeline occupé pour cette chaîne (1 max en parallèle)",
-        )
 
     critic_feedback: list | None = None
     critic_start_from: str | None = None
@@ -466,18 +525,20 @@ async def run_from_step(
     # Clean artifacts from this step onwards
     await cleanup_from_step(project_id, cleanup_step, db)
 
-    project.status = "pending"
-    project.error_message = None
-    await db.commit()
-
-    await enqueue_pipeline(
-        project_id,
-        start_from=enqueue_start_from,
-        critic_feedback=critic_feedback,
-        critic_start_from=critic_start_from,
-        resume_iteration=resume_iteration,
-    )
-    return {"message": f"Pipeline relancé depuis {step}", "project_id": str(project_id)}
+    try:
+        queue_status = await enqueue_pipeline(
+            project_id,
+            start_from=enqueue_start_from,
+            critic_feedback=critic_feedback,
+            critic_start_from=critic_start_from,
+            resume_iteration=resume_iteration,
+        )
+    except PipelineAlreadyQueuedError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    return {
+        **_queue_enqueue_response(project_id, queue_status),
+        "step": step,
+    }
 
 
 @router.patch("/{project_id}/config", response_model=ProjectResponse)

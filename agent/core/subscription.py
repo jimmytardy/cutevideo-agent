@@ -24,6 +24,7 @@ class SubscriptionLimits(BaseModel):
     tts_allowed_engines: list[str] = Field(default_factory=lambda: ["edge"])
     whisper_model: str = "base"
     enable_ai_fallback: bool = False
+    pipeline_queue_priority: int = 10
 
 
 class QuotaExceededError(RuntimeError):
@@ -65,9 +66,20 @@ async def resolve_user_limits(session: AsyncSession, user: User) -> Subscription
             tts_allowed_engines=["edge", "azure", "gemini"],
             whisper_model="large-v3",
             enable_ai_fallback=True,
+            pipeline_queue_priority=100,
         )
     raw = plan.limits or {}
     return SubscriptionLimits.model_validate(raw)
+
+
+async def get_user_subscription_limits(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+) -> SubscriptionLimits:
+    user = await load_user_with_plan(session, user_id)
+    if user is None:
+        return SubscriptionLimits()
+    return await resolve_user_limits(session, user)
 
 
 def apply_subscription_caps(

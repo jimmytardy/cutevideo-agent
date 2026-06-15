@@ -240,6 +240,21 @@ def parse_json_text(
         raise ValueError(f"JSON invalide de {source_name} : {snippet}") from exc
 
 
+_ARRAY_REQUIRED_FIELDS: frozenset[str] = frozenset({"scores", "labels"})
+
+
+def _required_field_valid(data: dict[str, Any], field: str) -> bool:
+    """Vérifie qu'un champ requis est présent (liste ou chaîne non vide)."""
+    value = data.get(field)
+    if isinstance(value, list):
+        return True
+    if field in _ARRAY_REQUIRED_FIELDS:
+        return False
+    if isinstance(value, str) and value.strip():
+        return True
+    return False
+
+
 def parse_gemini_response(
     response: Any,
     model_name: str,
@@ -250,7 +265,7 @@ def parse_gemini_response(
     """Parse une réponse google-genai (response.parsed ou response.text)."""
     normalized = normalize_parsed_value(getattr(response, "parsed", None))
     if normalized is not None:
-        if required_field is None or isinstance(normalized.get(required_field), list):
+        if required_field is None or _required_field_valid(normalized, required_field):
             return normalized
 
     raw = (getattr(response, "text", None) or "").strip()
@@ -267,6 +282,6 @@ def parse_gemini_response(
         if isinstance(exc, ValueError) and "JSON invalide" in str(exc):
             raise
         raise ValueError(f"JSON invalide de {model_name} : {snippet}") from exc
-    if required_field and not isinstance(data.get(required_field), list):
+    if required_field and not _required_field_valid(data, required_field):
         raise ValueError(f"JSON invalide de {model_name} : champ {required_field} absent")
     return data

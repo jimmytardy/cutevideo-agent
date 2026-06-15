@@ -62,6 +62,11 @@ def test_format_api_key_hint() -> None:
     assert format_api_key_hint("  abcdefgh  ") == "abcdefgh"
 
 
+def test_subscription_limits_default_queue_priority() -> None:
+    limits = SubscriptionLimits()
+    assert limits.pipeline_queue_priority == 10
+
+
 def test_subscription_apply_caps() -> None:
     limits = SubscriptionLimits(
         max_channels=1,

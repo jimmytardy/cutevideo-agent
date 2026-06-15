@@ -12,8 +12,12 @@ from agent.core.config import settings
 logger = logging.getLogger(__name__)
 
 PIPELINE_QUEUE = "cutevideo:pipeline"
+LEGACY_PIPELINE_QUEUE = PIPELINE_QUEUE
+PIPELINE_ZQUEUE = "cutevideo:pipeline:zqueue"
+PIPELINE_PAYLOAD_PREFIX = "cutevideo:pipeline:payload:"
 AGENT_STATUS_PREFIX = "cutevideo:agent_status:"
 PIPELINE_CANCEL_PREFIX = "cutevideo:pipeline_cancel:"
+PIPELINE_LEASE_PREFIX = "cutevideo:pipeline:lease:"
 
 # BLPOP timeout du worker (s) — le socket_timeout Redis doit rester au-dessus.
 WORKER_BLPOP_TIMEOUT_S = 5

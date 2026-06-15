@@ -5,10 +5,10 @@ from typing import Any
 
 from sqlalchemy import select
 
-from agent.core.concurrency import can_start_pipeline
 from agent.core.config import settings
-from agent.core.database import AsyncSessionFactory, Project
+from agent.core.database import AsyncSessionFactory, Channel, Project
 from agent.core.pipeline_launcher import enqueue_pipeline
+from agent.core.pipeline_queue import PipelineAlreadyQueuedError, is_queued
 from agent.scheduler.cleanup import purge_old_media_files
 from agent.scheduler.editorial_calendar import publication_target_iso
 from agent.scheduler.tracking import track_job_run
@@ -42,36 +42,46 @@ async def run_pending_projects_hourly() -> dict[str, int]:
 
 async def _run_pending_projects() -> dict[str, int]:
     target_iso = publication_target_iso()
-    launched = 0
+    enqueued = 0
+    skipped = 0
     errors = 0
 
     async with AsyncSessionFactory() as session:
         result = await session.execute(
-            select(Project)
+            select(Project, Channel)
+            .join(Channel, Channel.id == Project.channel_id)
             .where(Project.status == "pending")
             .order_by(Project.created_at.asc())
         )
-        all_pending = list(result.scalars().all())
+        rows = list(result.all())
 
-    pending = [p for p in all_pending if _project_targets_publication_date(p, target_iso)]
-    launched_channels: set[Any] = set()
+    pending = [(p, c) for p, c in rows if _project_targets_publication_date(p, target_iso)]
 
-    for project in pending:
-        if project.channel_id in launched_channels:
+    for project, channel in pending:
+        if await is_queued(project.id):
+            skipped += 1
             continue
-        if not await can_start_pipeline(project.channel_id):
-            continue
-        logger.info(
-            "Lancement pipeline projet %s (publication cible %s, chaîne %s)",
-            project.id,
-            target_iso,
-            project.channel_id,
-        )
-        await enqueue_pipeline(project.id)
-        launched_channels.add(project.channel_id)
-        launched += 1
+        try:
+            logger.info(
+                "Enqueue pipeline projet %s (publication cible %s, chaîne %s)",
+                project.id,
+                target_iso,
+                project.channel_id,
+            )
+            await enqueue_pipeline(project.id, user_id=channel.user_id)
+            enqueued += 1
+        except PipelineAlreadyQueuedError:
+            skipped += 1
+        except Exception as exc:
+            errors += 1
+            logger.error("Enqueue échoué pour projet %s : %s", project.id, exc)
 
-    return {"launched": launched, "errors": errors, "target_publish_date": target_iso}
+    return {
+        "enqueued": enqueued,
+        "skipped": skipped,
+        "errors": errors,
+        "target_publish_date": target_iso,
+    }
 
 
 def _project_targets_publication_date(project: Project, target_iso: str) -> bool:

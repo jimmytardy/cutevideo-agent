@@ -123,6 +123,8 @@ class Orchestrator:
         critic_feedback: list[dict] | None = None,
         critic_start_from: str | None = None,
         resume_iteration: int | None = None,
+        *,
+        already_claimed: bool = False,
     ) -> None:
         async with AsyncSessionFactory() as session:
             project = await self._get_project(session, project_id)
@@ -133,13 +135,18 @@ class Orchestrator:
             if not channel:
                 raise ValueError(f"Chaîne {project.channel_id} introuvable")
 
-            if not await can_start_pipeline(project.channel_id):
-                raise RuntimeError(
-                    f"Slot pipeline occupé pour la chaîne {channel.slug} "
-                    f"(max {channel.max_concurrent_pipelines})"
-                )
-
-            await self._update_project_status(session, project_id, "running")
+            if already_claimed:
+                if project.status != "running":
+                    raise RuntimeError(
+                        f"Projet {project_id} non claimé (status={project.status})"
+                    )
+            else:
+                if not await can_start_pipeline(project.channel_id):
+                    raise RuntimeError(
+                        f"Slot pipeline occupé pour la chaîne {channel.slug} "
+                        f"(max {channel.max_concurrent_pipelines})"
+                    )
+                await self._update_project_status(session, project_id, "running")
 
         await _raise_if_cancelled(project_id)
 

@@ -40,7 +40,9 @@ import {
   AGENT_LABELS,
   getAgentRunForStep,
   getCriticReportForIteration,
+  getEffectiveProjectStatus,
   pickAgentProgress,
+  type PipelineKickoff,
   type PipelineSelection,
 } from '@/lib/pipeline'
 
@@ -54,6 +56,8 @@ interface Props {
   selection: PipelineSelection
   agentRuns: AgentRun[]
   criticReports: CriticReport[]
+  projectStatus: string
+  pipelineKickoff?: PipelineKickoff | null
 }
 
 function Running() {
@@ -543,6 +547,8 @@ export default function AgentOutputPanel({
   selection,
   agentRuns,
   criticReports,
+  projectStatus,
+  pipelineKickoff = null,
 }: Props) {
   const { step, iteration } = selection
   const isMediaOrAudio = MEDIA_AUDIO_STEPS.includes(step)
@@ -552,7 +558,10 @@ export default function AgentOutputPanel({
     ? getAgentRunForStep(agentRuns, step, iteration)
     : getAgentRunForStep(agentRuns, step)
 
-  const isRunning = agentRun?.status === 'running'
+  const effectiveProjectStatus = getEffectiveProjectStatus(projectStatus, pipelineKickoff)
+  const isRunning =
+    agentRun?.status === 'running'
+    || (pipelineKickoff?.fromStep === step && effectiveProjectStatus === 'running')
 
   const showScenarioStep = step === 'scenario_agent' || step === 'hook_optimizer_agent'
   const outputScenarioId = (

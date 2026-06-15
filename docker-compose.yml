@@ -28,7 +28,8 @@ services:
         condition: service_healthy
 
   worker:
-    container_name: cutevideo-worker
+    # Pour plusieurs workers : retirer container_name puis `docker compose up -d --scale worker=3`
+    # Volumes app_tmp / app_output partagés — dimensionner le disque en conséquence.
     image: cutevideo:local
     build: .
     env_file: .env
@@ -96,7 +97,7 @@ services:
         condition: service_started
 
   worker-dev:
-    container_name: cutevideo-worker-dev
+    # Scale dev : `docker compose up -d --scale worker-dev=2` (sans container_name fixe)
     build:
       context: .
       dockerfile: Dockerfile.dev

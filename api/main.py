@@ -29,6 +29,7 @@ from api.routes import (
     me,
     media,
     projects,
+    pipeline_queue,
     scheduler,
     cost,
     media_serve,
@@ -99,6 +100,7 @@ app.include_router(billing.router)
 app.include_router(channel_onboarding.router)
 app.include_router(channels.router)
 app.include_router(projects.router)
+app.include_router(pipeline_queue.router)
 app.include_router(agents.router)
 app.include_router(media.router)
 app.include_router(media_serve.router)

@@ -12,6 +12,14 @@ from pydantic_settings import BaseSettings
 
 
 @dataclass
+class PipelineSettings:
+    min_free_disk_bytes: int
+    queue_dequeue_max_attempts: int
+    queue_blocked_backoff_seconds: int
+    reconcile_interval_seconds: int
+
+
+@dataclass
 class StorageSettings:
     bucket: str
     region: str
@@ -99,6 +107,9 @@ class Settings(BaseSettings):
     min_short_structure_score: int = 15
     min_image_duration_s: int = 4
     config_path: str = "./data/agent_config.json"
+    pipeline_min_free_disk_bytes: int = 10 * 1024 * 1024 * 1024
+    pipeline_queue_dequeue_max_attempts: int = 50
+    pipeline_queue_blocked_backoff_seconds: int = 30
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
@@ -118,6 +129,30 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def get_pipeline_settings() -> PipelineSettings:
+    global_cfg = load_agent_config().get("pipeline", {})
+    return PipelineSettings(
+        min_free_disk_bytes=int(
+            global_cfg.get("min_free_disk_bytes", settings.pipeline_min_free_disk_bytes)
+        ),
+        queue_dequeue_max_attempts=int(
+            global_cfg.get(
+                "queue_dequeue_max_attempts",
+                settings.pipeline_queue_dequeue_max_attempts,
+            )
+        ),
+        queue_blocked_backoff_seconds=int(
+            global_cfg.get(
+                "queue_blocked_backoff_seconds",
+                settings.pipeline_queue_blocked_backoff_seconds,
+            )
+        ),
+        reconcile_interval_seconds=int(
+            global_cfg.get("reconcile_interval_seconds", 600)
+        ),
+    )
 
 
 def get_storage_settings() -> StorageSettings:

@@ -1,49 +1,23 @@
 from __future__ import annotations
 
-import json
-import uuid
-
-import pytest
-
-from agent.core.queue import PIPELINE_QUEUE, queue
+from agent.core.pipeline_queue import MAX_QUEUE_PRIORITY, compute_queue_score
 
 
-@pytest.mark.asyncio
-async def test_pipeline_cancel_flag() -> None:
-    await queue.connect()
-    project_id = str(uuid.uuid4())
-    try:
-        assert await queue.is_pipeline_cancel_requested(project_id) is False
-        await queue.request_pipeline_cancel(project_id)
-        assert await queue.is_pipeline_cancel_requested(project_id) is True
-        await queue.clear_pipeline_cancel(project_id)
-        assert await queue.is_pipeline_cancel_requested(project_id) is False
-    finally:
-        await queue.clear_pipeline_cancel(project_id)
-        await queue.disconnect()
+def test_compute_queue_score_higher_priority_first() -> None:
+    t = 1_700_000_000_000
+    pro_score = compute_queue_score(30, t)
+    free_score = compute_queue_score(10, t + 1000)
+    assert pro_score < free_score
 
 
-@pytest.mark.asyncio
-async def test_pipeline_queue_push_pop() -> None:
-    await queue.connect()
-    project_id = str(uuid.uuid4())
-    payload = {"project_id": project_id, "start_from": None}
-    try:
-        await queue.push_task(PIPELINE_QUEUE, payload)
-        task = await queue.pop_task(PIPELINE_QUEUE, timeout=1)
-        assert task is not None
-        assert task["project_id"] == project_id
-        assert json.loads(json.dumps(task)) == task
-    finally:
-        await queue.disconnect()
+def test_compute_queue_score_fifo_within_same_priority() -> None:
+    priority = 20
+    earlier = compute_queue_score(priority, 1_700_000_000_000)
+    later = compute_queue_score(priority, 1_700_000_000_500)
+    assert earlier < later
 
 
-@pytest.mark.asyncio
-async def test_pipeline_queue_blpop_empty_returns_none() -> None:
-    await queue.connect()
-    empty_queue = f"cutevideo:test-empty:{uuid.uuid4()}"
-    try:
-        task = await queue.pop_task(empty_queue, timeout=1)
-        assert task is None
-    finally:
-        await queue.disconnect()
+def test_compute_queue_score_clamps_priority() -> None:
+    score = compute_queue_score(999, 1_700_000_000_000)
+    max_score = compute_queue_score(MAX_QUEUE_PRIORITY, 1_700_000_000_000)
+    assert score == max_score

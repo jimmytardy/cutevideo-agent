@@ -1,5 +1,11 @@
 {
   "pipeline": {
+    "min_free_disk_bytes": 10737418240,
+    "queue_dequeue_max_attempts": 50,
+    "queue_blocked_backoff_seconds": 30,
+    "lease_ttl_seconds": 60,
+    "lease_renew_interval_seconds": 30,
+    "reconcile_interval_seconds": 600,
     "max_fact_check_iterations": 3,
     "max_critic_iterations": 5,
     "min_critic_score": 90,

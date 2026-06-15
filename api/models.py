@@ -246,6 +246,28 @@ class ProjectResponse(BaseModel):
     config: dict | None
     created_at: datetime
     updated_at: datetime
+    queue_position: int | None = None
+    queue_length: int | None = None
+    queued_at: datetime | None = None
+
+
+class PipelineQueueStatusResponse(BaseModel):
+    position: int
+    queue_length: int
+    priority: int
+    queued_at: datetime | None = None
+    blocked_reason: str | None = None
+
+
+class PipelineQueueEntryResponse(BaseModel):
+    position: int
+    project_id: UUID
+    channel_id: UUID
+    channel_name: str | None = None
+    theme: str
+    title: str | None = None
+    priority: int
+    queued_at: str | None = None
 
 
 class ResearchBriefResponse(BaseModel):

@@ -38,14 +38,17 @@ import {
   deriveScenarioStatus,
   effectiveMaxIterations,
   getCriticReportForIteration,
+  getEffectiveProjectStatus,
   getIterationRowState,
   getResumeStep,
   isCriticLoopApproved,
+  isPipelineInFlight,
   isResumeTarget,
   matchesSelection,
   pickAgentProgress,
   statusDotColor,
   type AgentStatus,
+  type PipelineKickoff,
   type PipelineSelection,
   type ResumeTarget,
 } from '@/lib/pipeline'
@@ -364,6 +367,7 @@ function AgentChain({
   agentRuns,
   redisStatuses,
   projectStatus,
+  pipelineKickoff,
   projectId,
   selection,
   resumeTarget,
@@ -383,6 +387,7 @@ function AgentChain({
   agentRuns: AgentRun[]
   redisStatuses: Record<string, string> | undefined
   projectStatus: string
+  pipelineKickoff?: PipelineKickoff | null
   projectId: string
   selection: PipelineSelection | undefined
   resumeTarget: ResumeTarget | null
@@ -396,6 +401,7 @@ function AgentChain({
   restartingReportId?: string | null
   pipelineProgress?: PipelineProgressResponse
 }) {
+  const effectiveProjectStatus = getEffectiveProjectStatus(projectStatus, pipelineKickoff)
   const report = getCriticReportForIteration(criticReports, iteration)
   const isPlannedRow = rowState === 'planned'
 
@@ -409,6 +415,7 @@ function AgentChain({
           agentRuns,
           redisStatuses,
           projectStatus,
+          pipelineKickoff,
         )
         const sel: PipelineSelection = { step, iteration }
         const isCritic = step === 'critic_agent'
@@ -427,7 +434,7 @@ function AgentChain({
               onSelect={() => onSelect?.(sel)}
               showLaunch={isResume}
               onLaunch={isResume && onLaunch ? () => onLaunch(step, iteration) : undefined}
-              showStop={projectStatus === 'running'}
+              showStop={effectiveProjectStatus === 'running'}
               onStop={onStop}
               actionLoading={actionLoading}
               onReplay={
@@ -465,6 +472,7 @@ function IterationRow({
   agentRuns,
   redisStatuses,
   projectStatus,
+  pipelineKickoff,
   projectId,
   selection,
   resumeTarget,
@@ -483,6 +491,7 @@ function IterationRow({
   agentRuns: AgentRun[]
   redisStatuses: Record<string, string> | undefined
   projectStatus: string
+  pipelineKickoff?: PipelineKickoff | null
   projectId: string
   selection: PipelineSelection | undefined
   resumeTarget: ResumeTarget | null
@@ -524,6 +533,7 @@ function IterationRow({
         agentRuns={agentRuns}
         redisStatuses={redisStatuses}
         projectStatus={projectStatus}
+        pipelineKickoff={pipelineKickoff}
         projectId={projectId}
         selection={selection}
         resumeTarget={resumeTarget}
@@ -548,6 +558,7 @@ interface Props {
   projectStatus: string
   agentRuns: AgentRun[]
   criticReports: CriticReport[]
+  pipelineKickoff?: PipelineKickoff | null
   onRunFrom?: (step: string) => void | Promise<void>
   onStop?: () => void
   onRestartFromCritic?: (reportId: string) => void
@@ -562,6 +573,7 @@ export default function PipelineVisualizer({
   isShort = false,
   maxIterations,
   projectStatus,
+  pipelineKickoff = null,
   agentRuns,
   criticReports,
   onRunFrom,
@@ -573,31 +585,33 @@ export default function PipelineVisualizer({
   actionLoading = false,
 }: Props) {
   const [confirmTarget, setConfirmTarget] = useState<ConfirmTarget | null>(null)
+  const effectiveProjectStatus = getEffectiveProjectStatus(projectStatus, pipelineKickoff)
 
   const { data: redisStatuses } = useSWR<Record<string, string>>(
     `/api/v1/agents/status/${projectId}`,
     fetcher,
-    { refreshInterval: ['running', 'stopped', 'pending'].includes(projectStatus) ? 2000 : 0 },
+    { refreshInterval: isPipelineInFlight(projectStatus, pipelineKickoff) ? 2000 : 0 },
   )
 
   const { data: pipelineProgress } = useSWR<PipelineProgressResponse>(
     pipelineProgressUrl(projectId),
     fetcher,
-    { refreshInterval: ['running', 'pending'].includes(projectStatus) ? 5000 : 0 },
+    { refreshInterval: isPipelineInFlight(projectStatus, pipelineKickoff) ? 5000 : 0 },
   )
 
   const effectiveMax = effectiveMaxIterations(maxIterations, isShort)
   const criticApproved = isCriticLoopApproved(criticReports)
   const includeClipper = !isShort
-  const resumeTarget = getResumeStep(agentRuns, projectStatus, criticReports, isShort)
+  const resumeTarget = getResumeStep(agentRuns, projectStatus, criticReports, isShort, pipelineKickoff)
 
-  const researchStatus = deriveResearchStatus(agentRuns, redisStatuses, projectStatus)
-  const scenarioStatus = deriveScenarioStatus(agentRuns, redisStatuses, projectStatus)
+  const researchStatus = deriveResearchStatus(agentRuns, redisStatuses, projectStatus, pipelineKickoff)
+  const scenarioStatus = deriveScenarioStatus(agentRuns, redisStatuses, projectStatus, pipelineKickoff)
   const hookOptimizerStatus = deriveHookOptimizerStatus(
     agentRuns,
     redisStatuses,
     projectStatus,
     scenarioStatus,
+    pipelineKickoff,
   )
 
   const openConfirm = (target: Omit<ConfirmTarget, 'mode'> & { mode?: ConfirmTarget['mode'] }) => {
@@ -628,7 +642,7 @@ export default function PipelineVisualizer({
     const iter = i + 1
     return {
       iter,
-      rowState: getIterationRowState(iter, criticReports, projectStatus, agentRuns),
+      rowState: getIterationRowState(iter, criticReports, projectStatus, agentRuns, pipelineKickoff),
     }
   })
   const startedRows = iterationRows.filter((r) => r.rowState !== 'planned')
@@ -644,6 +658,7 @@ export default function PipelineVisualizer({
       agentRuns={agentRuns}
       redisStatuses={redisStatuses}
       projectStatus={projectStatus}
+      pipelineKickoff={pipelineKickoff}
       projectId={projectId}
       selection={selection}
       resumeTarget={resumeTarget}
@@ -676,7 +691,7 @@ export default function PipelineVisualizer({
       onSelect: () => onSelect?.({ step }),
       showLaunch: isResume,
       onLaunch: isResume ? () => handleLaunch(step) : undefined,
-      showStop: projectStatus === 'running',
+      showStop: effectiveProjectStatus === 'running',
       onStop,
       actionLoading,
       onReplay:
@@ -761,7 +776,7 @@ export default function PipelineVisualizer({
         <Box>
           <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
             Post-production
-            {!criticApproved && projectStatus !== 'running' && (
+            {!criticApproved && effectiveProjectStatus !== 'running' && (
               <Typography component="span" variant="caption" sx={{ ml: 1 }}>
                 — après approbation critique
               </Typography>
@@ -779,8 +794,9 @@ export default function PipelineVisualizer({
                       redisStatuses,
                       projectStatus,
                       criticApproved,
+                      pipelineKickoff,
                     ),
-                    !criticApproved && projectStatus !== 'running',
+                    !criticApproved && effectiveProjectStatus !== 'running',
                   )}
                 />
                 <ArrowForwardIcon sx={{ color: 'text.disabled', fontSize: 16 }} />
@@ -795,8 +811,9 @@ export default function PipelineVisualizer({
                   redisStatuses,
                   projectStatus,
                   criticApproved,
+                  pipelineKickoff,
                 ),
-                !criticApproved && projectStatus !== 'running',
+                !criticApproved && effectiveProjectStatus !== 'running',
               )}
             />
           </Box>

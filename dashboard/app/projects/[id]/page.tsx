@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import useSWR, { useSWRConfig } from 'swr'
 import Box from '@mui/material/Box'
@@ -31,6 +31,7 @@ import {
   fetcher,
   stopPipeline,
   restartPipeline,
+  dequeueProject,
   runFromStep,
   restartFromCriticIteration,
   updateProjectMaxIterations,
@@ -40,7 +41,7 @@ import {
   type CriticReport,
   type Scenario,
 } from '@/lib/api'
-import { selectionKey, getResumeStep, type PipelineSelection } from '@/lib/pipeline'
+import { selectionKey, getResumeStep, getEffectiveProjectStatus, type PipelineSelection, type PipelineKickoff } from '@/lib/pipeline'
 
 interface Props {
   params: { id: string }
@@ -48,6 +49,7 @@ interface Props {
 
 const STATUS_LABEL: Record<string, string> = {
   pending: 'En attente',
+  queued: 'En file d\'attente',
   running: 'En cours',
   approved: 'Approuvé',
   failed: 'Échoué',
@@ -63,45 +65,93 @@ export default function ProjectDetailPage({ params }: Props) {
   const [maxIterSaving, setMaxIterSaving] = useState(false)
   const [selectedAgent, setSelectedAgent] = useState<PipelineSelection | null>(null)
   const [restartingReportId, setRestartingReportId] = useState<string | null>(null)
+  const [pipelineKickoff, setPipelineKickoff] = useState<PipelineKickoff | null>(null)
   const { mutate: swrMutate } = useSWRConfig()
 
   const { data: project, isLoading, error, mutate: mutateProject } = useSWR<Project>(
     `/api/v1/projects/${id}`,
     fetcher,
-    { refreshInterval: 3000 },
+    { refreshInterval: pipelineKickoff ? 1000 : project?.status === 'queued' ? 5000 : 3000 },
   )
   const { data: agentRuns } = useSWR<AgentRun[]>(
     `/api/v1/agents/runs/${id}`,
     fetcher,
-    { refreshInterval: ['running', 'stopped', 'pending'].includes(project?.status ?? '') ? 3000 : 0 },
+    {
+      refreshInterval: ['running', 'queued', 'stopped', 'pending'].includes(project?.status ?? '') || pipelineKickoff
+        ? 3000
+        : 0,
+    },
   )
   const { data: criticReports } = useSWR<CriticReport[]>(
     `/api/v1/projects/${id}/critic-reports`,
     fetcher,
-    { refreshInterval: project?.status === 'running' ? 5000 : 0 },
+    { refreshInterval: project?.status === 'running' || pipelineKickoff ? 5000 : 0 },
   )
   const { data: scenario } = useSWR<Scenario | null>(
     `/api/v1/projects/${id}/scenario`,
     fetcher,
-    { refreshInterval: project?.status === 'running' ? 5000 : 0 },
+    { refreshInterval: project?.status === 'running' || pipelineKickoff ? 5000 : 0 },
   )
+
+  useEffect(() => {
+    if (!pipelineKickoff || !project) return
+    if (project.status === 'running') {
+      setPipelineKickoff(null)
+      return
+    }
+    if (project.status === 'failed' || project.status === 'stopped') {
+      setPipelineKickoff(null)
+    }
+  }, [project?.status, pipelineKickoff, project])
 
   if (isLoading) return <AppShell><CircularProgress sx={{ m: 4 }} /></AppShell>
   if (error || !project) return <AppShell><Alert severity="error">Projet introuvable</Alert></AppShell>
 
+  const effectiveProjectStatus = getEffectiveProjectStatus(project.status, pipelineKickoff)
+  const isRunning = effectiveProjectStatus === 'running'
+  const isQueued = project.status === 'queued'
   const failedRuns = agentRuns?.filter((r) => r.status === 'failed' && r.error) ?? []
-  const isRunning = project.status === 'running'
-  const canRestart = ['failed', 'stopped', 'approved'].includes(project.status)
+  const canRestart = ['failed', 'stopped', 'approved', 'pending'].includes(project.status)
   const isShort = project.config?.format === 'short_standalone' || project.config?.format === 'short'
   const resumeTarget = getResumeStep(
     agentRuns ?? [],
     project.status,
     criticReports ?? [],
     isShort,
+    pipelineKickoff,
   )
+
+  const beginPipelineKickoff = (fromStep: string) => {
+    setPipelineKickoff({ fromStep, startedAt: Date.now() })
+  }
+
+  const revalidatePipelineData = async () => {
+    await Promise.all([
+      swrMutate(`/api/v1/projects/${id}/critic-reports`),
+      swrMutate(`/api/v1/projects/${id}/scenario`),
+      swrMutate(`/api/v1/projects/${id}/media-assets`),
+      swrMutate(`/api/v1/projects/${id}/audio`),
+      swrMutate(`/api/v1/projects/${id}/videos`),
+      swrMutate(`/api/v1/agents/runs/${id}`),
+      swrMutate(`/api/v1/agents/status/${id}`),
+    ])
+  }
 
   const currentMaxIter: number = (project.config?.max_critic_iterations as number | undefined) ?? 5
   const iterCount = criticReports?.length ?? 0
+
+  const handleDequeue = async () => {
+    setActionError(null)
+    setActionLoading(true)
+    try {
+      await dequeueProject(id)
+      await mutateProject()
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : 'Erreur inconnue')
+    } finally {
+      setActionLoading(false)
+    }
+  }
 
   const handleStop = async () => {
     setActionError(null)
@@ -119,10 +169,13 @@ export default function ProjectDetailPage({ params }: Props) {
   const handleRestart = async () => {
     setActionError(null)
     setActionLoading(true)
+    beginPipelineKickoff('research_agent')
     try {
+      await mutateProject({ ...project, status: 'queued' }, { revalidate: false })
       await restartPipeline(id)
       await mutateProject()
     } catch (e) {
+      setPipelineKickoff(null)
       setActionError(e instanceof Error ? e.message : 'Erreur inconnue')
     } finally {
       setActionLoading(false)
@@ -147,19 +200,14 @@ export default function ProjectDetailPage({ params }: Props) {
   const handleRunFrom = async (step: string) => {
     setActionError(null)
     setActionLoading(true)
+    beginPipelineKickoff(step)
     try {
+      await mutateProject({ ...project, status: 'queued' }, { revalidate: false })
       await runFromStep(id, step)
       await mutateProject()
-      await Promise.all([
-        swrMutate(`/api/v1/projects/${id}/critic-reports`),
-        swrMutate(`/api/v1/projects/${id}/scenario`),
-        swrMutate(`/api/v1/projects/${id}/media-assets`),
-        swrMutate(`/api/v1/projects/${id}/audio`),
-        swrMutate(`/api/v1/projects/${id}/videos`),
-        swrMutate(`/api/v1/agents/runs/${id}`),
-        swrMutate(`/api/v1/agents/status/${id}`),
-      ])
+      await revalidatePipelineData()
     } catch (e) {
+      setPipelineKickoff(null)
       const message = e instanceof Error ? e.message : 'Erreur inconnue'
       setActionError(message)
       throw e
@@ -178,18 +226,13 @@ export default function ProjectDetailPage({ params }: Props) {
     setActionLoading(true)
     setRestartingReportId(reportId)
     try {
-      await restartFromCriticIteration(id, reportId)
+      const result = await restartFromCriticIteration(id, reportId)
+      beginPipelineKickoff(result.critic_start_from)
+      await mutateProject({ ...project, status: 'queued' }, { revalidate: false })
       await mutateProject()
-      await Promise.all([
-        swrMutate(`/api/v1/projects/${id}/critic-reports`),
-        swrMutate(`/api/v1/projects/${id}/scenario`),
-        swrMutate(`/api/v1/projects/${id}/media-assets`),
-        swrMutate(`/api/v1/projects/${id}/audio`),
-        swrMutate(`/api/v1/projects/${id}/videos`),
-        swrMutate(`/api/v1/agents/runs/${id}`),
-        swrMutate(`/api/v1/agents/status/${id}`),
-      ])
+      await revalidatePipelineData()
     } catch (e) {
+      setPipelineKickoff(null)
       setActionError(e instanceof Error ? e.message : 'Erreur inconnue')
     } finally {
       setActionLoading(false)
@@ -210,12 +253,15 @@ export default function ProjectDetailPage({ params }: Props) {
   const handleForceIteration = async () => {
     setActionError(null)
     setActionLoading(true)
+    beginPipelineKickoff('research_agent')
     try {
+      await mutateProject({ ...project, status: 'queued' }, { revalidate: false })
       await updateProjectMaxIterations(id, currentMaxIter + 1)
       await mutateProject()
       await restartPipeline(id)
       await mutateProject()
     } catch (e) {
+      setPipelineKickoff(null)
       setActionError(e instanceof Error ? e.message : 'Erreur inconnue')
     } finally {
       setActionLoading(false)
@@ -236,10 +282,11 @@ export default function ProjectDetailPage({ params }: Props) {
   }
 
   const statusColor =
-    project.status === 'approved' ? 'success' :
-    project.status === 'failed' ? 'error' :
-    project.status === 'stopped' ? 'warning' :
-    project.status === 'running' ? 'info' : 'default'
+    effectiveProjectStatus === 'approved' ? 'success' :
+    effectiveProjectStatus === 'failed' ? 'error' :
+    effectiveProjectStatus === 'stopped' ? 'warning' :
+    effectiveProjectStatus === 'running' ? 'info' :
+    effectiveProjectStatus === 'queued' ? 'secondary' : 'default'
 
   return (
     <AppShell>
@@ -249,7 +296,7 @@ export default function ProjectDetailPage({ params }: Props) {
             {project.title || project.theme}
           </Typography>
           <Chip
-            label={STATUS_LABEL[project.status] ?? project.status}
+            label={STATUS_LABEL[effectiveProjectStatus] ?? effectiveProjectStatus}
             color={statusColor as 'success' | 'error' | 'warning' | 'info' | 'default'}
           />
         </Box>
@@ -260,7 +307,29 @@ export default function ProjectDetailPage({ params }: Props) {
           {project.target_duration_seconds && ` · ${Math.round(project.target_duration_seconds / 60)} min`}
         </Typography>
 
+        {isQueued && project.queue_position != null && (
+          <Alert severity="info" sx={{ mb: 2 }}>
+            Position <strong>#{project.queue_position}</strong>
+            {project.queue_length != null && <> sur <strong>{project.queue_length}</strong> projet(s) en file</>}
+            {project.error_message && (
+              <> — {project.error_message}</>
+            )}
+          </Alert>
+        )}
+
         <Stack direction="row" spacing={1} sx={{ mb: 3, flexWrap: 'wrap', gap: 1 }}>
+          {isQueued && (
+            <Button
+              variant="outlined"
+              color="warning"
+              size="small"
+              startIcon={actionLoading ? <CircularProgress size={16} color="inherit" /> : <StopIcon />}
+              onClick={handleDequeue}
+              disabled={actionLoading}
+            >
+              Retirer de la file
+            </Button>
+          )}
           {isRunning && (
             <Button
               variant="contained"
@@ -311,7 +380,7 @@ export default function ProjectDetailPage({ params }: Props) {
               </Button>
             </Tooltip>
           )}
-          {project.status !== 'running' && (
+          {!isRunning && !isQueued && (
             <Button
               variant="outlined"
               color="error"
@@ -415,6 +484,7 @@ export default function ProjectDetailPage({ params }: Props) {
           isShort={isShort}
           maxIterations={currentMaxIter}
           projectStatus={project.status}
+          pipelineKickoff={pipelineKickoff}
           agentRuns={agentRuns ?? []}
           criticReports={criticReports ?? []}
           onRunFrom={handleRunFrom}
@@ -434,6 +504,8 @@ export default function ProjectDetailPage({ params }: Props) {
               selection={selectedAgent}
               agentRuns={agentRuns ?? []}
               criticReports={criticReports ?? []}
+              projectStatus={project.status}
+              pipelineKickoff={pipelineKickoff}
             />
           </>
         ) : (

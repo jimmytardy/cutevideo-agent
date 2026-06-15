@@ -161,3 +161,27 @@ def test_parse_gemini_response_extracts_partial_scores() -> None:
     data = parse_gemini_response(response, "gemini-2.5-flash", required_field="scores")
     assert len(data["scores"]) == 1
     assert data["scores"][0]["score"] == 70
+
+
+def test_parse_gemini_response_scalar_from_parsed() -> None:
+    response = SimpleNamespace(
+        parsed={"subject_en": "Leaning Tower foundations cross section"},
+        text="",
+    )
+    data = parse_gemini_response(response, "gemini-test", required_field="subject_en")
+    assert data["subject_en"] == "Leaning Tower foundations cross section"
+
+
+def test_parse_gemini_response_scalar_from_text() -> None:
+    response = SimpleNamespace(
+        parsed=None,
+        text='{"subject_en": "Educational diagram of soil layers with arrows"}',
+    )
+    data = parse_gemini_response(response, "gemini-test", required_field="subject_en")
+    assert data["subject_en"] == "Educational diagram of soil layers with arrows"
+
+
+def test_parse_gemini_response_scalar_rejects_empty() -> None:
+    response = SimpleNamespace(parsed={"subject_en": ""}, text='{"subject_en": ""}')
+    with pytest.raises(ValueError, match="champ subject_en absent"):
+        parse_gemini_response(response, "gemini-test", required_field="subject_en")

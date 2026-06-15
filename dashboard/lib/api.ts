@@ -196,6 +196,17 @@ export interface Project {
   config: Record<string, unknown> | null
   created_at: string
   updated_at: string
+  queue_position?: number | null
+  queue_length?: number | null
+  queued_at?: string | null
+}
+
+export interface PipelineQueueStatus {
+  position: number
+  queue_length: number
+  priority: number
+  queued_at: string | null
+  blocked_reason: string | null
 }
 
 export interface AgentRun {
@@ -593,6 +604,14 @@ export async function stopPipeline(projectId: string): Promise<void> {
 
 export async function restartPipeline(projectId: string): Promise<void> {
   await apiJson<unknown>(`${BASE}/projects/${projectId}/restart`, { method: 'POST' })
+}
+
+export async function dequeueProject(projectId: string): Promise<void> {
+  await apiJson<unknown>(`${BASE}/projects/${projectId}/queue`, { method: 'DELETE' })
+}
+
+export async function fetchQueueStatus(projectId: string): Promise<PipelineQueueStatus> {
+  return fetcher(`${BASE}/projects/${projectId}/queue-status`)
 }
 
 export async function runFromStep(projectId: string, step: string): Promise<void> {

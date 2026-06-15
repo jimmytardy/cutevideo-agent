@@ -15,6 +15,56 @@ export interface ResumeTarget {
   label: string
 }
 
+export interface PipelineKickoff {
+  fromStep: string
+  startedAt: number
+}
+
+const KICKOFF_OVERRIDABLE_STATUSES = new Set(['pending', 'queued', 'stopped', 'failed', 'approved'])
+
+export function getEffectiveProjectStatus(
+  projectStatus: string,
+  kickoff: PipelineKickoff | null | undefined,
+): string {
+  if (kickoff && KICKOFF_OVERRIDABLE_STATUSES.has(projectStatus)) {
+    return 'running'
+  }
+  return projectStatus
+}
+
+export function isPipelineInFlight(
+  projectStatus: string,
+  kickoff: PipelineKickoff | null | undefined,
+): boolean {
+  return projectStatus === 'running' || projectStatus === 'queued' || projectStatus === 'pending' || Boolean(kickoff)
+}
+
+function shouldCheckRedis(
+  projectStatus: string,
+  kickoff: PipelineKickoff | null | undefined,
+): boolean {
+  return projectStatus === 'running' || projectStatus === 'queued' || projectStatus === 'pending' || Boolean(kickoff)
+}
+
+function resolveRedisStatus(
+  redisStatuses: Record<string, string> | undefined,
+  agentName: string,
+): AgentStatus | null {
+  const redis = redisStatuses?.[agentName]
+  if (redis === 'running' || redis === 'stopped' || redis === 'failed') {
+    return redis as AgentStatus
+  }
+  return null
+}
+
+function isKickoffAgent(
+  agentName: string,
+  kickoff: PipelineKickoff | null | undefined,
+  run: AgentRun | undefined,
+): boolean {
+  return kickoff?.fromStep === agentName && run?.status !== 'running'
+}
+
 export const AGENT_LABELS: Record<string, string> = {
   research_agent: 'Chercheur',
   scenario_agent: 'Scénariste',
@@ -122,11 +172,13 @@ export function getActiveCriticIteration(
   criticReports: CriticReport[],
   projectStatus: string,
   agentRuns: AgentRun[] = [],
+  kickoff?: PipelineKickoff | null,
 ): number {
+  const effectiveStatus = getEffectiveProjectStatus(projectStatus, kickoff)
   const runsIter = getHighestIterationFromRuns(agentRuns)
 
   if (criticReports.length === 0) {
-    if (projectStatus === 'running') {
+    if (effectiveStatus === 'running') {
       return Math.max(1, runsIter)
     }
     return runsIter
@@ -153,7 +205,9 @@ export function getIterationRowState(
   criticReports: CriticReport[],
   projectStatus: string,
   agentRuns: AgentRun[],
+  kickoff?: PipelineKickoff | null,
 ): IterationRowState {
+  const effectiveStatus = getEffectiveProjectStatus(projectStatus, kickoff)
   const report = criticReports.find((r, idx) => reportIteration(r, idx + 1) === iteration)
   if (report) {
     const hasFailed = agentRuns.some(
@@ -162,21 +216,21 @@ export function getIterationRowState(
     return hasFailed ? 'failed' : 'done'
   }
 
-  const activeIter = getActiveCriticIteration(criticReports, projectStatus, agentRuns)
+  const activeIter = getActiveCriticIteration(criticReports, projectStatus, agentRuns, kickoff)
 
   if (activeIter === 0) {
     return 'planned'
   }
 
   if (iteration === activeIter) {
-    if (projectStatus === 'running') return 'active'
+    if (effectiveStatus === 'running' || projectStatus === 'pending') return 'active'
     if (projectStatus === 'stopped') return 'stopped'
     if (iterationHasAgentRuns(agentRuns, iteration)) return 'failed'
     return 'planned'
   }
 
   if (iteration < activeIter) {
-    return projectStatus === 'running' ? 'active' : projectStatus === 'stopped' ? 'stopped' : 'failed'
+    return effectiveStatus === 'running' ? 'active' : projectStatus === 'stopped' ? 'stopped' : 'failed'
   }
 
   return 'planned'
@@ -203,6 +257,7 @@ export function deriveAgentStatus(
   agentRuns: AgentRun[],
   redisStatuses: Record<string, string> | undefined,
   projectStatus: string,
+  kickoff?: PipelineKickoff | null,
 ): AgentStatus {
   if (rowState === 'planned') return 'planned'
 
@@ -215,15 +270,15 @@ export function deriveAgentStatus(
   if (run?.status === 'success') return 'success'
   if (run?.status === 'running') return 'running'
 
-  if (projectStatus === 'running' && rowState === 'active') {
-    const redis = redisStatuses?.[agentName]
-    if (redis === 'running' || redis === 'stopped' || redis === 'failed') {
-      return redis as AgentStatus
-    }
+  if (isKickoffAgent(agentName, kickoff, run)) return 'running'
+
+  if (shouldCheckRedis(projectStatus, kickoff) && rowState === 'active') {
+    const redis = resolveRedisStatus(redisStatuses, agentName)
+    if (redis) return redis
   }
 
   if (projectStatus === 'stopped' && rowState === 'stopped') {
-    const redis = redisStatuses?.[agentName]
+    const redis = resolveRedisStatus(redisStatuses, agentName)
     if (redis === 'stopped') return 'stopped'
     if (redis === 'running') return 'running'
   }
@@ -242,17 +297,17 @@ export function deriveResearchStatus(
   agentRuns: AgentRun[],
   redisStatuses: Record<string, string> | undefined,
   projectStatus: string,
+  kickoff?: PipelineKickoff | null,
 ): AgentStatus {
   const run = getAgentRunForStep(agentRuns, 'research_agent')
   if (run?.status === 'failed') return 'failed'
   if (run?.status === 'stopped') return 'stopped'
   if (run?.status === 'success') return 'success'
   if (run?.status === 'running') return 'running'
-  if (projectStatus === 'running') {
-    const redis = redisStatuses?.research_agent
-    if (redis === 'running' || redis === 'stopped' || redis === 'failed') {
-      return redis as AgentStatus
-    }
+  if (isKickoffAgent('research_agent', kickoff, run)) return 'running'
+  if (shouldCheckRedis(projectStatus, kickoff)) {
+    const redis = resolveRedisStatus(redisStatuses, 'research_agent')
+    if (redis) return redis
   }
   return 'pending'
 }
@@ -261,17 +316,17 @@ export function deriveScenarioStatus(
   agentRuns: AgentRun[],
   redisStatuses: Record<string, string> | undefined,
   projectStatus: string,
+  kickoff?: PipelineKickoff | null,
 ): AgentStatus {
   const run = getAgentRunForStep(agentRuns, 'scenario_agent')
   if (run?.status === 'failed') return 'failed'
   if (run?.status === 'stopped') return 'stopped'
   if (run?.status === 'success') return 'success'
   if (run?.status === 'running') return 'running'
-  if (projectStatus === 'running') {
-    const redis = redisStatuses?.scenario_agent
-    if (redis === 'running' || redis === 'stopped' || redis === 'failed') {
-      return redis as AgentStatus
-    }
+  if (isKickoffAgent('scenario_agent', kickoff, run)) return 'running'
+  if (shouldCheckRedis(projectStatus, kickoff)) {
+    const redis = resolveRedisStatus(redisStatuses, 'scenario_agent')
+    if (redis) return redis
   }
   return 'pending'
 }
@@ -281,17 +336,17 @@ export function deriveHookOptimizerStatus(
   redisStatuses: Record<string, string> | undefined,
   projectStatus: string,
   scenarioStatus: AgentStatus,
+  kickoff?: PipelineKickoff | null,
 ): AgentStatus {
   const run = getAgentRunForStep(agentRuns, 'hook_optimizer_agent')
   if (run?.status === 'failed') return 'failed'
   if (run?.status === 'stopped') return 'stopped'
   if (run?.status === 'success') return 'success'
   if (run?.status === 'running') return 'running'
-  if (projectStatus === 'running' && scenarioStatus === 'success') {
-    const redis = redisStatuses?.hook_optimizer_agent
-    if (redis === 'running' || redis === 'stopped' || redis === 'failed') {
-      return redis as AgentStatus
-    }
+  if (isKickoffAgent('hook_optimizer_agent', kickoff, run)) return 'running'
+  if (shouldCheckRedis(projectStatus, kickoff) && scenarioStatus === 'success') {
+    const redis = resolveRedisStatus(redisStatuses, 'hook_optimizer_agent')
+    if (redis) return redis
   }
   if (scenarioStatus === 'success' && run?.status === 'success') return 'success'
   if (scenarioStatus === 'success' || scenarioStatus === 'running') return 'pending'
@@ -304,17 +359,18 @@ export function derivePostProdStatus(
   redisStatuses: Record<string, string> | undefined,
   projectStatus: string,
   criticApproved: boolean,
+  kickoff?: PipelineKickoff | null,
 ): AgentStatus {
   const run = getAgentRunForStep(agentRuns, agentName)
   if (run?.status === 'failed') return 'failed'
   if (run?.status === 'stopped') return 'stopped'
   if (run?.status === 'success') return 'success'
 
-  if (projectStatus === 'running') {
-    const redis = redisStatuses?.[agentName]
-    if (redis === 'running' || redis === 'stopped' || redis === 'failed') {
-      return redis as AgentStatus
-    }
+  if (isKickoffAgent(agentName, kickoff, run)) return 'running'
+
+  if (shouldCheckRedis(projectStatus, kickoff)) {
+    const redis = resolveRedisStatus(redisStatuses, agentName)
+    if (redis) return redis
   }
 
   if (!criticApproved) return 'planned'
@@ -351,9 +407,11 @@ export function getResumeStep(
   projectStatus: string,
   criticReports: CriticReport[],
   isShort: boolean,
+  kickoff?: PipelineKickoff | null,
 ): ResumeTarget | null {
-  if (projectStatus === 'approved' || projectStatus === 'running') return null
-  if (projectStatus === 'pending' && agentRuns.length === 0) return null
+  const effectiveStatus = getEffectiveProjectStatus(projectStatus, kickoff)
+  if (effectiveStatus === 'approved' || effectiveStatus === 'running') return null
+  if (projectStatus === 'pending') return null
 
   if (!isAgentStepComplete(agentRuns, 'research_agent')) {
     return { step: 'research_agent', label: AGENT_LABELS.research_agent }
@@ -368,7 +426,7 @@ export function getResumeStep(
     return { step: 'hook_optimizer_agent', label: AGENT_LABELS.hook_optimizer_agent }
   }
 
-  const activeIter = Math.max(1, getActiveCriticIteration(criticReports, projectStatus, agentRuns))
+  const activeIter = Math.max(1, getActiveCriticIteration(criticReports, projectStatus, agentRuns, kickoff))
   const iterationSteps = activeIter === 1 ? ITERATION_1_AGENT_KEYS : ITERATION_AGENT_KEYS
 
   for (const step of iterationSteps) {
