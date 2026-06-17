@@ -31,6 +31,8 @@ import {
   type PipelineProgressResponse,
   type Video,
   type Scenario,
+  type ScenarioSegment,
+  type VisualBeat,
   type AudioFile,
   type CriticReport,
   type ResearchBrief,
@@ -100,6 +102,80 @@ function ScenarioView({
       )}
       <ScenarioDetailView scenario={scenario} isRunning={isRunning} />
     </Box>
+  )
+}
+
+function segmentHasBeats(seg: ScenarioSegment): boolean {
+  return (seg.visual_beats?.length ?? 0) > 0
+}
+
+function BeatPlannerBeatRow({ beat }: { beat: VisualBeat }) {
+  return (
+    <Box sx={{ py: 0.75, borderTop: '1px solid', borderColor: 'divider' }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flexWrap: 'wrap', mb: 0.5 }}>
+        <Chip size="small" label={`Beat ${beat.order}`} />
+        <Chip size="small" label={beat.visual_type} variant="outlined" />
+        {beat.duration_hint_s != null && (
+          <Chip size="small" label={`${beat.duration_hint_s}s`} variant="outlined" />
+        )}
+        {beat.on_screen_text && (
+          <Chip size="small" color="info" variant="outlined" label={`Écran : ${beat.on_screen_text}`} />
+        )}
+      </Box>
+      {beat.phrase_anchor && (
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', fontStyle: 'italic' }}>
+          « {beat.phrase_anchor} »
+        </Typography>
+      )}
+      <Typography variant="body2">{beat.prompt}</Typography>
+    </Box>
+  )
+}
+
+function BeatPlannerView({
+  scenario,
+  isRunning,
+}: {
+  scenario: Scenario | null | undefined
+  isRunning: boolean
+}) {
+  if (isRunning) return <Running />
+  const segments = [...(scenario?.segments ?? [])]
+    .filter(segmentHasBeats)
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+  if (segments.length === 0) {
+    return <Empty message="Aucun storyboard de beats généré par le planificateur segment." />
+  }
+  const totalBeats = segments.reduce((acc, s) => acc + (s.visual_beats?.length ?? 0), 0)
+
+  return (
+    <Stack spacing={2}>
+      <Typography variant="body2" color="text.secondary">
+        {segments.length} segment{segments.length > 1 ? 's' : ''} · {totalBeats} visual beats
+      </Typography>
+      {segments.map((seg) => {
+        const beats = [...(seg.visual_beats ?? [])].sort((a, b) => a.order - b.order)
+        return (
+          <Card key={seg.order ?? Math.random()} variant="outlined">
+            <CardContent>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5, flexWrap: 'wrap' }}>
+                <Typography variant="subtitle2">
+                  Segment {seg.order ?? '?'}
+                  {seg.title ? ` — ${seg.title}` : ''}
+                </Typography>
+                <Chip size="small" variant="outlined" label={`${beats.length} beats`} />
+                {seg.duration_s != null && (
+                  <Chip size="small" variant="outlined" label={`${seg.duration_s}s`} />
+                )}
+              </Box>
+              {beats.map((beat) => (
+                <BeatPlannerBeatRow key={beat.order} beat={beat} />
+              ))}
+            </CardContent>
+          </Card>
+        )
+      })}
+    </Stack>
   )
 }
 
@@ -540,7 +616,7 @@ function JsonOutputView({ agentRun, isRunning }: { agentRun: AgentRun | undefine
 }
 
 const VIDEO_STEPS = ['editor_agent', 'subtitle_agent', 'short_editor_agent']
-const MEDIA_AUDIO_STEPS = ['media_agent', 'narrator_agent']
+const MEDIA_AUDIO_STEPS = ['media_agent', 'narrator_agent', 'beat_planner_agent']
 
 export default function AgentOutputPanel({
   projectId,
@@ -628,6 +704,11 @@ export default function AgentOutputPanel({
     fetcher,
     { refreshInterval: 3000 },
   )
+  const { data: beatPlannerScenario } = useSWR<Scenario | null>(
+    step === 'beat_planner_agent' ? projectScenarioUrl(projectId) : null,
+    fetcher,
+    { refreshInterval: isRunning ? 5000 : 3000 },
+  )
   const { data: montagePlan } = useSWR<MontagePlan | null>(
     step === 'montage_planner_agent'
       ? montagePlanUrl(projectId, iteration ?? undefined)
@@ -705,6 +786,9 @@ export default function AgentOutputPanel({
       )}
       {step === 'narrator_agent' && (
         <AudioFilesView files={audioFiles} isRunning={isRunning} agentRun={agentRun} />
+      )}
+      {step === 'beat_planner_agent' && (
+        <BeatPlannerView scenario={beatPlannerScenario} isRunning={isRunning} />
       )}
       {(step === 'editor_agent' || step === 'subtitle_agent') && (
         <VideoView

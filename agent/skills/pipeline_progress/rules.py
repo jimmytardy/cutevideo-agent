@@ -73,8 +73,9 @@ def compute_scenario_progress(segments: list[Any] | None) -> AgentProgressData:
 
 
 def compute_hook_progress(hook_segment: dict[str, Any] | None) -> AgentProgressData:
+    total = len(HOOK_OPTIMIZABLE_KEYS)
     if not hook_segment:
-        return build_progress(0, len(HOOK_OPTIMIZABLE_KEYS), detail="0/5 champs")
+        return build_progress(0, total, detail=f"0/{total} champs")
     filled = sum(
         1 for key in HOOK_OPTIMIZABLE_KEYS if hook_segment.get(key) not in (None, "", [], {})
     )

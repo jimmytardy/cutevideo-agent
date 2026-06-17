@@ -10,6 +10,16 @@ from agent.core.pipeline_restart import (
 from agent.skills.video.trim_selector import select_trim_window
 
 
+def test_resolve_restart_step_beat_planner() -> None:
+    changes = [{"agent": "beat_planner_agent", "change_description": "découpage"}]
+    assert resolve_restart_step(changes, "media_agent") == "beat_planner_agent"
+
+
+def test_needs_revision_when_beat_planner_in_changes() -> None:
+    changes = [{"agent": "beat_planner_agent", "change_description": "replanifier beats"}]
+    assert needs_revision_agent(changes, "media_agent") is True
+
+
 def test_resolve_restart_step_media_over_editor() -> None:
     changes = [{"agent": "editor_agent", "change_description": "timing"}, {"agent": "media_agent", "change_description": "images"}]
     assert resolve_restart_step(changes, "editor_agent") == "media_agent"

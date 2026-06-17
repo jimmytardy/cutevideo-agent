@@ -56,6 +56,28 @@ async def run_comments_for_publication(publication_id: uuid.UUID) -> dict:
         raise HTTPException(status_code=404, detail=str(e)) from e
 
 
+@router.get("/pending-replies")
+async def list_pending_replies(publication_id: uuid.UUID | None = None) -> list[dict]:
+    """Réponses générées en attente de validation humaine (require_reply_review actif)."""
+    return await CommentsAgent.list_pending_replies(publication_id)
+
+
+@router.post("/comments/{comment_id}/approve-reply")
+async def approve_pending_reply(comment_id: uuid.UUID) -> dict:
+    try:
+        return await CommentsAgent().approve_pending_reply(comment_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+
+@router.post("/comments/{comment_id}/reject-reply")
+async def reject_pending_reply(comment_id: uuid.UUID) -> dict:
+    try:
+        return await CommentsAgent().reject_pending_reply(comment_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+
 @router.get("/channels/{channel_id}/learning-context", response_model=LearningContextResponse)
 async def get_channel_learning_context(channel_id: uuid.UUID) -> LearningContextResponse:
     snapshot = await load_channel_context(channel_id)

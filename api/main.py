@@ -12,6 +12,7 @@ from agent.core.auth import decode_access_token
 from agent.core.config import settings
 from agent.core.database import AsyncSessionFactory, User
 from agent.core.queue import queue
+from agent.core.pipeline_queue import prune_orphan_queue_entries
 from agent.scheduler.service import scheduler_service
 from api.middleware_auth import is_public_api_path, resolve_request_auth_token, set_request_user_id
 from api.routes import (
@@ -42,6 +43,12 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await queue.connect()
+    try:
+        pruned = await prune_orphan_queue_entries()
+        if pruned:
+            logger.info("Démarrage API : %d entrée(s) orpheline(s) purgée(s) de la file", pruned)
+    except Exception as exc:
+        logger.warning("Purge file d'attente au démarrage échouée : %s", exc)
     if settings.scheduler_enabled:
         await scheduler_service.start()
     logger.info("API démarrée — Redis connecté")

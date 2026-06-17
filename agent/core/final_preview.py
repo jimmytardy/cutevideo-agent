@@ -49,3 +49,28 @@ def subtitles_available_for_video(video: Video | None, project_id: uuid.UUID) ->
     if (video.video_type or "").startswith("short_"):
         return False
     return resolve_project_srt_path(project_id, video_id=video.id) is not None
+
+
+def is_short_preview_video_type(video_type: str | None) -> bool:
+    if not video_type:
+        return False
+    if video_type in ("short_tiktok", "short_master", "short_youtube", "short_instagram"):
+        return True
+    return video_type.startswith("short_native_") or video_type.startswith("short_")
+
+
+def build_duration_warnings(
+    video: Video,
+    *,
+    min_duration_tiktok: int,
+) -> list[str]:
+    if not is_short_preview_video_type(video.video_type):
+        return []
+    duration = video.duration_s
+    if duration is None or duration >= min_duration_tiktok:
+        return []
+    rounded = int(round(duration))
+    return [
+        f"Durée {rounded}s < minimum TikTok ({min_duration_tiktok}s) "
+        "— publication TikTok bloquée."
+    ]

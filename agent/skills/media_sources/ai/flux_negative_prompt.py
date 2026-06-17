@@ -8,8 +8,15 @@ FLUX_DIAGRAM_NEGATIVE_PROMPT = (
     "banner, readable characters, numbers"
 )
 
+# Négatif léger pour les visuels photo/illustration (FLUX dépend peu des négatifs).
+FLUX_PHOTO_NEGATIVE_PROMPT = (
+    "blurry, low quality, low resolution, deformed, disfigured, extra fingers, "
+    "extra limbs, bad anatomy, watermark, signature, logo, text, caption, "
+    "oversaturated, jpeg artifacts, collage, frame border"
+)
+
 
 def flux_negative_prompt_for_visual_type(visual_type: str) -> str | None:
     if visual_type in DIAGRAM_VISUAL_TYPES:
         return FLUX_DIAGRAM_NEGATIVE_PROMPT
-    return None
+    return FLUX_PHOTO_NEGATIVE_PROMPT

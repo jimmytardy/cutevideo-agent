@@ -49,15 +49,24 @@ def _resolved_azure_region(azure_speech_region: str | None | object) -> str:
     return (azure_speech_region or settings.azure_speech_region).strip()
 
 
-async def normalize_wav(src: Path, dst: Path) -> Path:
-    """Convertit en WAV 48kHz 16bit normalisé (-16 LUFS broadcast)."""
+async def normalize_wav(
+    src: Path, dst: Path, *, mastering: dict[str, Any] | None = None
+) -> Path:
+    """Convertit en WAV 48kHz 16bit avec mastering studio + loudnorm broadcast.
+
+    `mastering=None` utilise la config globale (data/agent_config.json → audio_mastering).
+    Quand le mastering est désactivé, seul le loudnorm est appliqué (non-régression).
+    """
+    from agent.skills.audio.mastering import build_audio_filter
+
+    audio_filter = await build_audio_filter(mastering)
     cmd = [
         "ffmpeg", "-y",
         "-i", str(src),
         "-ar", "48000",
         "-ac", "1",
         "-sample_fmt", "s16",
-        "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
+        "-af", audio_filter,
         str(dst),
     ]
     proc = await asyncio.create_subprocess_exec(
@@ -203,12 +212,14 @@ async def generate_tts(
     tts_pitch: str = "+0Hz",
     mood: str = "",
     insert_pauses: bool = True,
+    comma_pauses: bool = False,
     *,
     gemini_model: str = DEFAULT_GEMINI_TTS_MODEL,
     gemini_language_code: str = DEFAULT_GEMINI_LANGUAGE,
     gemini_api_key: str | None | object = _NOT_PASSED,
     azure_speech_key: str | None | object = _NOT_PASSED,
     azure_speech_region: str | None | object = _NOT_PASSED,
+    mastering: dict[str, Any] | None = None,
 ) -> tuple[float, str]:
     """Génère un fichier audio WAV depuis un texte. Retourne (durée_s, moteur_effectif)."""
     resolved = resolve_engine(
@@ -235,6 +246,7 @@ async def generate_tts(
             editorial_tone=editorial_tone,
             tts_style=tts_style,
             api_key=effective_gemini,
+            mastering=mastering,
         )
         return duration, "gemini"
 
@@ -252,6 +264,7 @@ async def generate_tts(
             default_rate=tts_rate,
             default_pitch=tts_pitch,
             insert_pauses=insert_pauses,
+            comma_pauses=comma_pauses,
         )
         duration = await synthesize_ssml(
             ssml,
@@ -259,14 +272,17 @@ async def generate_tts(
             voice,
             subscription_key=effective_azure or None,
             region=effective_region,
+            mastering=mastering,
         )
         return duration, "azure"
 
-    duration = await _generate_edge_tts(text, output_path, voice)
+    duration = await _generate_edge_tts(text, output_path, voice, mastering=mastering)
     return duration, "edge-tts"
 
 
-async def _generate_edge_tts(text: str, output_path: Path, voice: str) -> float:
+async def _generate_edge_tts(
+    text: str, output_path: Path, voice: str, *, mastering: dict[str, Any] | None = None
+) -> float:
     import edge_tts
 
     tmp_mp3 = output_path.with_suffix(".mp3")
@@ -276,7 +292,7 @@ async def _generate_edge_tts(text: str, output_path: Path, voice: str) -> float:
     except Exception as exc:
         raise RuntimeError(f"edge-tts échoué (voix={voice}): {exc}") from exc
 
-    await normalize_wav(tmp_mp3, output_path)
+    await normalize_wav(tmp_mp3, output_path, mastering=mastering)
     tmp_mp3.unlink(missing_ok=True)
 
     duration = await probe_duration(output_path)

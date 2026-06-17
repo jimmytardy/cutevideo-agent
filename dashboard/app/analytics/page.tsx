@@ -9,7 +9,7 @@ import Alert from '@mui/material/Alert'
 import Chip from '@mui/material/Chip'
 import { BarChart } from '@mui/x-charts/BarChart'
 import AppShell from '@/components/AppShell'
-import { fetcher } from '@/lib/api'
+import { fetcher, type Project } from '@/lib/api'
 
 interface Publication {
   id: string
@@ -21,7 +21,7 @@ interface Publication {
 }
 
 export default function AnalyticsPage() {
-  const { data: projects } = useSWR('/api/v1/projects', fetcher, { refreshInterval: 10000 })
+  const { data: projects } = useSWR<Project[]>('/api/v1/projects', fetcher, { refreshInterval: 10000 })
   const latestProject = projects?.[0]
 
   const { data: publications } = useSWR<Publication[]>(

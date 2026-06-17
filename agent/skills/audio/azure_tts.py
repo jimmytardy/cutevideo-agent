@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +15,7 @@ async def synthesize_ssml(
     *,
     subscription_key: str | None = None,
     region: str | None = None,
+    mastering: dict[str, Any] | None = None,
 ) -> float:
     """Synthèse Azure Neural TTS depuis SSML."""
     import azure.cognitiveservices.speech as speechsdk
@@ -50,7 +52,7 @@ async def synthesize_ssml(
 
     from agent.skills.audio.tts import normalize_wav
 
-    await normalize_wav(tmp_path, output_path)
+    await normalize_wav(tmp_path, output_path, mastering=mastering)
     tmp_path.unlink(missing_ok=True)
 
     from agent.skills.audio.tts import probe_duration

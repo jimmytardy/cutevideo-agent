@@ -101,3 +101,42 @@ def test_build_azure_ssml_dragon_hd_inserts_pauses() -> None:
     )
     assert "<break time='300ms'/>" in ssml
     assert "mstts:express-as" not in ssml
+
+
+def test_build_azure_ssml_comma_pauses_opt_in() -> None:
+    base = build_azure_ssml(
+        "Un, deux, trois.",
+        "fr-FR-HenriNeural",
+        insert_pauses=True,
+        comma_pauses=False,
+    )
+    assert "150ms" not in base
+
+    with_commas = build_azure_ssml(
+        "Un, deux, trois.",
+        "fr-FR-HenriNeural",
+        insert_pauses=True,
+        comma_pauses=True,
+    )
+    assert "<break time='150ms'/>" in with_commas
+
+
+def test_build_azure_ssml_clamps_excessive_rate() -> None:
+    ssml = build_azure_ssml(
+        "Test",
+        "fr-FR-HenriNeural",
+        delivery_style={"azure_style": "excited"},
+        default_rate="+40%",
+    )
+    assert "+40%" not in ssml
+    assert 'rate="+15%"' in ssml
+
+
+def test_build_azure_ssml_clamps_excessive_pitch() -> None:
+    ssml = build_azure_ssml(
+        "Test",
+        "fr-FR-HenriNeural",
+        delivery_style={"pitch": "+20Hz"},
+    )
+    assert "+20Hz" not in ssml
+    assert 'pitch="+8Hz"' in ssml

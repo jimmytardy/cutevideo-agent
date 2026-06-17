@@ -49,6 +49,40 @@ def _load_ken_burns_config() -> dict[str, float | bool]:
     }
 
 
+def color_grade_from_style_block(style_block: str) -> str:
+    """P5 — Dérive un étalonnage léger (FFmpeg) du `style_block` de l'art_director.
+
+    Appliqué uniformément à toute la timeline (réel + IA) pour harmoniser le look.
+    Retourne une chaîne de filtres FFmpeg (ex. ``colorbalance=...,eq=...``) ou ``""``
+    si le style ne suggère aucune dominante (rendu neutre).
+    """
+    s = (style_block or "").lower()
+    if not s.strip():
+        return ""
+
+    parts: list[str] = []
+
+    warm_kw = ("warm", "sepia", "amber", "ambr", "golden", "earthy", "chaud")
+    cool_kw = ("cool", " blue", "teal", "cold", "cosmic", "froid", "noir")
+    if any(k in s for k in warm_kw):
+        # Pousse les médians vers l'ambré, retire un peu de bleu.
+        parts.append("colorbalance=rm=0.05:gm=0.02:bm=-0.05")
+    elif any(k in s for k in cool_kw):
+        parts.append("colorbalance=rm=-0.04:bm=0.06")
+
+    desat_kw = ("desaturated", "muted", "low-key", "low key", "noir", "désatur")
+    vivid_kw = ("vivid", "saturated", "rich", "vibrant", "bold")
+    if any(k in s for k in desat_kw):
+        parts.append("eq=saturation=0.85:contrast=1.06")
+    elif any(k in s for k in vivid_kw):
+        parts.append("eq=saturation=1.12:contrast=1.04")
+    else:
+        # Léger « pop » d'unification quand aucune intention forte n'est exprimée.
+        parts.append("eq=saturation=1.05:contrast=1.03")
+
+    return ",".join(parts)
+
+
 def _escape_drawtext(text: str) -> str:
     return (
         text.replace("\\", "\\\\")
@@ -76,37 +110,41 @@ def _build_motion_vf(
             f"crop={w}:{h},fps={fps}[{output_label}]"
         )
 
-    prescale_w = w * 4
-    prescale_h = h * 4
+    # Suréchantillonnage léger (1.5x) : le `scale ... eval=frame` ci-dessous
+    # rééchantillonne (Lanczos) CHAQUE frame. Un facteur élevé (ex. 4x → 8K par
+    # frame) sature CPU/RAM et fait freezer la machine. Garder ce facteur bas.
+    prescale_w = (w * 3 // 2) // 2 * 2
+    prescale_h = (h * 3 // 2) // 2 * 2
 
     if motion_style == "zoom_out":
-        z = f"(1+{zoom_factor}*(1-on/{n_frames}))"
+        z = f"(1+{zoom_factor}*(1-n/{n_frames}))"
     else:
-        z = f"(1+{zoom_factor}*on/{n_frames})"
+        z = f"(1+{zoom_factor}*n/{n_frames})"
 
-    crop_w = f"trunc({prescale_w}/{z}/2)*2"
-    crop_h = f"trunc({prescale_h}/{z}/2)*2"
+    scale_w = f"trunc(iw*{z}/2)*2"
+    scale_h = f"trunc(ih*{z}/2)*2"
 
     pan_enabled = motion_style in ("pan_left", "pan_right") or bool(kb["pan_enabled"])
     if motion_style == "pan_left":
-        pan_expr = f"-{40}*on/{n_frames}"
+        pan_expr = f"-{40}*n/{n_frames}"
     elif motion_style == "pan_right":
-        pan_expr = f"{40}*on/{n_frames}"
+        pan_expr = f"{40}*n/{n_frames}"
     elif pan_enabled:
         pan_expr = "0"
     else:
         pan_expr = None
 
     if pan_expr is not None:
-        x_expr = f"trunc(({prescale_w}-({crop_w}))/2+({pan_expr})/2)*2"
+        x_expr = f"(in_w-out_w)/2+({pan_expr})"
     else:
-        x_expr = f"trunc(({prescale_w}-({crop_w}))/2/2)*2"
-    y_expr = f"trunc(({prescale_h}-({crop_h}))/2/2)*2"
+        x_expr = "(in_w-out_w)/2"
+    y_expr = "(in_h-out_h)/2"
 
     return (
         f"[{input_label}]scale={prescale_w}:{prescale_h}:force_original_aspect_ratio=increase:flags=lanczos,"
         f"crop={prescale_w}:{prescale_h},"
-        f"crop=w='{crop_w}':h='{crop_h}':x='{x_expr}':y='{y_expr}',"
+        f"scale=w='{scale_w}':h='{scale_h}':eval=frame:flags=lanczos,"
+        f"crop={prescale_w}:{prescale_h}:x='{x_expr}':y='{y_expr}',"
         f"scale={w}:{h}:flags=lanczos,fps={fps}[{output_label}]"
     )
 
@@ -157,8 +195,14 @@ def build_segment_filter_complex(
     profile: VideoProfile,
     *,
     is_vertical: bool,
-) -> tuple[list[str], str, str]:
-    """Construit les arguments d'entrée FFmpeg et le filter_complex pour un segment."""
+    narration_audio_path: str | None = None,
+    grade: str = "",
+) -> tuple[list[str], str, str, str]:
+    """Construit les arguments d'entrée FFmpeg et le filter_complex pour un segment.
+
+    ``grade`` : chaîne de filtres d'étalonnage appliquée à la sortie vidéo finale
+    (voir :func:`color_grade_from_style_block`).
+    """
     if not clips:
         raise ValueError("Aucun clip dans le segment")
 
@@ -170,6 +214,7 @@ def build_segment_filter_complex(
     filter_parts: list[str] = []
     stream_labels: list[str] = []
     input_idx = 0
+    ambient_audio_specs: list[tuple[int, float, float, float]] = []
 
     for i, plan in enumerate(clips):
         duration = durations[i]
@@ -192,6 +237,10 @@ def build_segment_filter_complex(
                     f"{input_idx}:v", processed_label, trim_start, duration, profile
                 )
             )
+            if not plan.strip_source_audio:
+                ambient_audio_specs.append(
+                    (input_idx, trim_start, duration, plan.timeline_start_s)
+                )
             input_idx += 1
         else:
             input_args.extend([
@@ -253,7 +302,44 @@ def build_segment_filter_complex(
         out_label = "vout"
         filter_parts.append(f"{concat_in}concat=n={len(stream_labels)}:v=1:a=0[{out_label}]")
 
-    return input_args, ";".join(filter_parts), out_label
+    if grade.strip():
+        graded = "vgr"
+        filter_parts.append(f"[{out_label}]{grade.strip()}[{graded}]")
+        out_label = graded
+
+    if not narration_audio_path:
+        return input_args, ";".join(filter_parts), out_label, "aout"
+
+    narration_idx = input_idx
+    input_args.extend(["-i", narration_audio_path])
+    ambient_volume = 0.35
+    ambient_labels: list[str] = []
+    for spec_i, (vid_idx, trim_start, dur, delay_s) in enumerate(ambient_audio_specs):
+        amb_label = f"amb{spec_i}"
+        end = trim_start + dur
+        delay_ms = max(int(delay_s * 1000), 0)
+        filter_parts.append(
+            f"[{vid_idx}:a]atrim=start={trim_start:.3f}:end={end:.3f},asetpts=PTS-STARTPTS,"
+            f"volume={ambient_volume},adelay={delay_ms}|{delay_ms}[{amb_label}]"
+        )
+        ambient_labels.append(amb_label)
+
+    if ambient_labels:
+        if len(ambient_labels) == 1:
+            mixed_amb = ambient_labels[0]
+        else:
+            mixed_amb = "ambmix"
+            ins = "".join(f"[{lbl}]" for lbl in ambient_labels)
+            filter_parts.append(
+                f"{ins}amix=inputs={len(ambient_labels)}:duration=longest:normalize=0[{mixed_amb}]"
+            )
+        filter_parts.append(
+            f"[{narration_idx}:a][{mixed_amb}]amix=inputs=2:duration=first:normalize=0[aout]"
+        )
+    else:
+        filter_parts.append(f"[{narration_idx}:a]anull[aout]")
+
+    return input_args, ";".join(filter_parts), out_label, "aout"
 
 
 async def render_segment_from_clips(
@@ -262,24 +348,24 @@ async def render_segment_from_clips(
     output_path: Path,
     *,
     is_vertical: bool = False,
+    grade: str = "",
 ) -> None:
     """Encode un segment complet (un seul passage libx264)."""
     profile = profile_from_config(is_vertical)
-    input_args, filter_complex, vout = build_segment_filter_complex(
-        clips, profile, is_vertical=is_vertical
+    audio_duration_s = await _probe_audio_duration(audio_path)
+    input_args, filter_complex, vout, aout = build_segment_filter_complex(
+        clips, profile, is_vertical=is_vertical, narration_audio_path=audio_path, grade=grade
     )
-    audio_input_idx = count_audio_input_index(input_args)
 
     cmd = [
         "ffmpeg", "-y",
         *input_args,
-        "-i", audio_path,
         "-filter_complex", filter_complex,
         "-map", f"[{vout}]",
-        "-map", f"{audio_input_idx}:a:0",
+        "-map", f"[{aout}]",
         "-c:v", "libx264", "-crf", "22", "-preset", "medium",
         "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
-        "-shortest",
+        "-t", f"{audio_duration_s:.3f}",
         str(output_path),
     ]
 
@@ -291,6 +377,19 @@ async def render_segment_from_clips(
     _, stderr = await proc.communicate()
     if proc.returncode != 0:
         raise RuntimeError(f"FFmpeg segment render error: {stderr.decode()[-2000:]}")
+
+
+async def _probe_audio_duration(audio_path: str) -> float:
+    proc = await asyncio.create_subprocess_exec(
+        "ffprobe", "-v", "error",
+        "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+        audio_path,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, _ = await proc.communicate()
+    return max(float(stdout.decode().strip() or "0"), 0.5)
 
 
 def count_audio_input_index(input_args: list[str]) -> int:

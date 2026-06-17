@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from agent.core.visual_beats import (
     VisualBeat,
+    beat_narration_excerpt,
     parse_visual_beats,
     validate_beats_against_narration,
 )
@@ -11,6 +12,17 @@ from agent.skills.media_sources.ai.prompt_builder import (
     is_known_visual_type,
     list_visual_types,
 )
+
+
+def test_beat_narration_excerpt_prefers_spoken_text() -> None:
+    beat = VisualBeat(
+        order=1,
+        phrase_anchor="ancre courte",
+        visual_type="documentary_photo",
+        prompt="photo",
+        spoken_text="Texte complet prononcé pour ce beat.",
+    )
+    assert beat_narration_excerpt(beat) == "Texte complet prononcé pour ce beat."
 
 
 def test_visual_beat_custom_requires_style_hint_filled_from_prompt() -> None:
@@ -51,11 +63,29 @@ def test_validate_beats_against_narration_ok() -> None:
     assert validate_beats_against_narration(segment) == []
 
 
-def test_ensure_visual_beats_fallback() -> None:
+def test_ensure_visual_beats_strips_voice_segments() -> None:
     segment = {
         "needs_voice": True,
         "title": "Hook",
         "narration_text": "Phrase un. Phrase deux. Phrase trois.",
+        "visual_beats": [{"order": 1, "phrase_anchor": "Phrase un", "visual_type": "documentary_photo", "prompt": "x"}],
+    }
+    result = ensure_visual_beats_on_segments(
+        [segment],
+        is_short=True,
+        min_beats=3,
+        max_beats=8,
+        editorial_tone="documentaire",
+        theme_category="nature",
+    )
+    assert "visual_beats" not in result[0]
+
+
+def test_ensure_visual_beats_fallback_no_voice() -> None:
+    segment = {
+        "needs_voice": False,
+        "title": "Hook",
+        "narration_text": "",
         "on_screen_text": "Label",
     }
     result = ensure_visual_beats_on_segments(
@@ -67,8 +97,8 @@ def test_ensure_visual_beats_fallback() -> None:
         theme_category="nature",
     )
     beats = result[0]["visual_beats"]
-    assert len(beats) >= 3
-    assert beats[0]["visual_type"] in list_visual_types() or beats[0]["visual_type"] == "custom"
+    assert len(beats) >= 1
+    assert beats[0]["on_screen_text"] == "Label"
 
 
 def test_build_visual_prompt_diagram_forbids_text() -> None:

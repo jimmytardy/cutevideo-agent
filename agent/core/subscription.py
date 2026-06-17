@@ -107,6 +107,10 @@ def apply_subscription_caps(
         int(production.get("short_duration_s", limits.max_short_duration_s)),
         limits.max_short_duration_s,
     )
+    production["max_short_duration_s"] = min(
+        int(production.get("max_short_duration_s", limits.max_short_duration_s)),
+        limits.max_short_duration_s,
+    )
     out["production"] = production
 
     pipeline = dict(out.get("pipeline") or {})

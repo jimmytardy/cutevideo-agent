@@ -35,6 +35,7 @@ import {
   deriveHookOptimizerStatus,
   derivePostProdStatus,
   deriveResearchStatus,
+  deriveOutlineStatus,
   deriveScenarioStatus,
   effectiveMaxIterations,
   getCriticReportForIteration,
@@ -506,8 +507,8 @@ function IterationRow({
   pipelineProgress?: PipelineProgressResponse
 }) {
   const steps = iter === 1
-    ? ['media_agent', 'narrator_agent', 'montage_planner_agent', 'editor_agent', 'subtitle_agent', 'critic_agent']
-    : ['revision_agent', 'media_agent', 'narrator_agent', 'montage_planner_agent', 'editor_agent', 'subtitle_agent', 'critic_agent']
+    ? ['narrator_agent', 'beat_planner_agent', 'media_agent', 'montage_planner_agent', 'editor_agent', 'subtitle_agent', 'critic_agent']
+    : ['revision_agent', 'narrator_agent', 'beat_planner_agent', 'media_agent', 'montage_planner_agent', 'editor_agent', 'subtitle_agent', 'critic_agent']
 
   return (
     <Box
@@ -554,6 +555,10 @@ function IterationRow({
 interface Props {
   projectId: string
   isShort?: boolean
+  /** Agents de préparation réellement concernés (selon le type de vidéo). */
+  preparationAgents?: string[]
+  /** Agents de post-production réellement concernés (selon le type de vidéo). */
+  postProductionAgents?: string[]
   maxIterations: number
   projectStatus: string
   agentRuns: AgentRun[]
@@ -571,6 +576,8 @@ interface Props {
 export default function PipelineVisualizer({
   projectId,
   isShort = false,
+  preparationAgents,
+  postProductionAgents,
   maxIterations,
   projectStatus,
   pipelineKickoff = null,
@@ -601,10 +608,24 @@ export default function PipelineVisualizer({
 
   const effectiveMax = effectiveMaxIterations(maxIterations, isShort)
   const criticApproved = isCriticLoopApproved(criticReports)
-  const includeClipper = !isShort
-  const resumeTarget = getResumeStep(agentRuns, projectStatus, criticReports, isShort, pipelineKickoff)
+
+  // Listes d'agents réellement concernés (fournies par le plan ; sinon repli sur isShort).
+  const prepAgents = preparationAgents
+    ?? ['research_agent', 'outline_agent', 'scenario_agent', ...(!isShort ? ['hook_optimizer_agent'] : [])]
+  const postAgents = postProductionAgents
+    ?? (isShort ? ['short_editor_agent'] : ['clipper_agent', 'short_editor_agent'])
+
+  const resumeTarget = getResumeStep(
+    agentRuns,
+    projectStatus,
+    criticReports,
+    isShort,
+    pipelineKickoff,
+    postAgents,
+  )
 
   const researchStatus = deriveResearchStatus(agentRuns, redisStatuses, projectStatus, pipelineKickoff)
+  const outlineStatus = deriveOutlineStatus(agentRuns, redisStatuses, projectStatus, pipelineKickoff)
   const scenarioStatus = deriveScenarioStatus(agentRuns, redisStatuses, projectStatus, pipelineKickoff)
   const hookOptimizerStatus = deriveHookOptimizerStatus(
     agentRuns,
@@ -612,7 +633,14 @@ export default function PipelineVisualizer({
     projectStatus,
     scenarioStatus,
     pipelineKickoff,
+    isShort,
   )
+  const prepStatusFor: Record<string, AgentStatus> = {
+    research_agent: researchStatus,
+    outline_agent: outlineStatus,
+    scenario_agent: scenarioStatus,
+    hook_optimizer_agent: hookOptimizerStatus,
+  }
 
   const openConfirm = (target: Omit<ConfirmTarget, 'mode'> & { mode?: ConfirmTarget['mode'] }) => {
     setConfirmTarget({ mode: target.mode ?? 'replay', ...target })
@@ -717,17 +745,20 @@ export default function PipelineVisualizer({
             Préparation
           </Typography>
           <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-            <AgentCard {...prepCardProps('research_agent', researchStatus)} />
-            <ArrowForwardIcon fontSize="small" color="disabled" />
-            <AgentCard {...prepCardProps('scenario_agent', scenarioStatus)} />
-            <ArrowForwardIcon fontSize="small" color="disabled" />
-            <AgentCard
-              {...prepCardProps(
-                'hook_optimizer_agent',
-                hookOptimizerStatus,
-                scenarioStatus !== 'success' && scenarioStatus !== 'running' && hookOptimizerStatus === 'planned',
-              )}
-            />
+            {prepAgents.map((step, idx) => {
+              const status = prepStatusFor[step] ?? 'pending'
+              const disabled =
+                step === 'hook_optimizer_agent'
+                && scenarioStatus !== 'success'
+                && scenarioStatus !== 'running'
+                && status === 'planned'
+              return (
+                <Box key={step} sx={{ display: 'inline-flex', alignItems: 'center', gap: 1 }}>
+                  {idx > 0 && <ArrowForwardIcon fontSize="small" color="disabled" />}
+                  <AgentCard {...prepCardProps(step, status, disabled)} />
+                </Box>
+              )
+            })}
           </Box>
         </Box>
 
@@ -772,52 +803,40 @@ export default function PipelineVisualizer({
           </Stack>
         </Box>
 
-        {/* Post-production */}
-        <Box>
-          <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
-            Post-production
-            {!criticApproved && effectiveProjectStatus !== 'running' && (
-              <Typography component="span" variant="caption" sx={{ ml: 1 }}>
-                — après approbation critique
-              </Typography>
-            )}
-          </Typography>
-          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
-            {includeClipper && (
-              <>
-                <AgentCard
-                  {...prepCardProps(
-                    'clipper_agent',
-                    derivePostProdStatus(
-                      'clipper_agent',
-                      agentRuns,
-                      redisStatuses,
-                      projectStatus,
-                      criticApproved,
-                      pipelineKickoff,
-                    ),
-                    !criticApproved && effectiveProjectStatus !== 'running',
-                  )}
-                />
-                <ArrowForwardIcon sx={{ color: 'text.disabled', fontSize: 16 }} />
-              </>
-            )}
-            <AgentCard
-              {...prepCardProps(
-                'short_editor_agent',
-                derivePostProdStatus(
-                  'short_editor_agent',
-                  agentRuns,
-                  redisStatuses,
-                  projectStatus,
-                  criticApproved,
-                  pipelineKickoff,
-                ),
-                !criticApproved && effectiveProjectStatus !== 'running',
+        {/* Post-production — uniquement les agents que ce type de vidéo produit. */}
+        {postAgents.length > 0 && (
+          <Box>
+            <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
+              Post-production
+              {!criticApproved && effectiveProjectStatus !== 'running' && (
+                <Typography component="span" variant="caption" sx={{ ml: 1 }}>
+                  — après approbation critique
+                </Typography>
               )}
-            />
+            </Typography>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
+              {postAgents.map((step, idx) => (
+                <Box key={step} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  {idx > 0 && <ArrowForwardIcon sx={{ color: 'text.disabled', fontSize: 16 }} />}
+                  <AgentCard
+                    {...prepCardProps(
+                      step,
+                      derivePostProdStatus(
+                        step,
+                        agentRuns,
+                        redisStatuses,
+                        projectStatus,
+                        criticApproved,
+                        pipelineKickoff,
+                      ),
+                      !criticApproved && effectiveProjectStatus !== 'running',
+                    )}
+                  />
+                </Box>
+              ))}
+            </Box>
           </Box>
-        </Box>
+        )}
       </Stack>
 
       <Dialog open={!!confirmTarget} onClose={() => setConfirmTarget(null)} maxWidth="xs" fullWidth>

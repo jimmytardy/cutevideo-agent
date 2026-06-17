@@ -26,6 +26,11 @@ def _load_ken_burns_config() -> dict[str, float | bool]:
     }
 
 
+def _even(value: int) -> int:
+    """Arrondit à un entier pair (requis par libx264 pour les dimensions)."""
+    return int(value) // 2 * 2
+
+
 def _build_static_filter(width: int, height: int, fps: int) -> str:
     return (
         f"scale={width}:{height}:force_original_aspect_ratio=increase:flags=lanczos,"
@@ -52,23 +57,30 @@ def _build_zoom_filter(
     if zoom_factor <= 0:
         return _build_static_filter(width, height, fps)
 
-    prescale_w = width * 4
-    prescale_h = height * 4
-    z = f"(1+{zoom_factor}*on/{n_frames})"
-    crop_w = f"trunc({prescale_w}/{z}/2)*2"
-    crop_h = f"trunc({prescale_h}/{z}/2)*2"
+    # Suréchantillonnage léger : le zoom max ne dépasse ~1+zoom_factor (≈1.03),
+    # donc 1.5x suffit pour rester net. /!\ Le `scale ... eval=frame` ci-dessous
+    # rééchantillonne (Lanczos) CHAQUE frame ; un facteur élevé (ex. 4x → 8K) sature
+    # CPU/RAM et fait freezer la machine. Garder ce facteur bas.
+    prescale_w = _even(width * 3 // 2)
+    prescale_h = _even(height * 3 // 2)
+    # crop n'évalue w/h qu'une fois à l'init — pas de zoom temporel possible.
+    # On agrandit l'image via scale (eval=frame, variable n), puis on recadre au centre.
+    z = f"(1+{zoom_factor}*n/{n_frames})"
+    scale_w = f"trunc(iw*{z}/2)*2"
+    scale_h = f"trunc(ih*{z}/2)*2"
 
     if pan_enabled and pan_direction != 0:
-        pan_expr = f"{pan_direction * 40}*on/{n_frames}"
-        x_expr = f"trunc(({prescale_w}-({crop_w}))/2+({pan_expr})/2)*2"
+        pan_expr = f"{pan_direction * 40}*n/{n_frames}"
+        x_expr = f"(in_w-out_w)/2+({pan_expr})"
     else:
-        x_expr = f"trunc(({prescale_w}-({crop_w}))/2/2)*2"
-    y_expr = f"trunc(({prescale_h}-({crop_h}))/2/2)*2"
+        x_expr = "(in_w-out_w)/2"
+    y_expr = "(in_h-out_h)/2"
 
     return (
         f"scale={prescale_w}:{prescale_h}:force_original_aspect_ratio=increase:flags=lanczos,"
         f"crop={prescale_w}:{prescale_h},"
-        f"crop=w='{crop_w}':h='{crop_h}':x='{x_expr}':y='{y_expr}',"
+        f"scale=w='{scale_w}':h='{scale_h}':eval=frame:flags=lanczos,"
+        f"crop={prescale_w}:{prescale_h}:x='{x_expr}':y='{y_expr}',"
         f"scale={width}:{height}:flags=lanczos,fps={fps}"
     )
 

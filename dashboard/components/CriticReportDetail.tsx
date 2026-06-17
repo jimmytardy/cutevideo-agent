@@ -29,8 +29,10 @@ const GEMINI_STATUS_MESSAGES: Record<string, string> = {
 const AGENT_LABELS: Record<string, string> = {
   scenario_agent: 'Scénario',
   research_agent: 'Recherche',
+  beat_planner_agent: 'Planificateur segment',
   media_agent: 'Médias',
   narrator_agent: 'Narration',
+  montage_planner_agent: 'Plan montage',
   editor_agent: 'Montage',
   subtitle_agent: 'Sous-titres',
 }

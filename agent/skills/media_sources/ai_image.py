@@ -28,8 +28,10 @@ async def generate_image(
     plan_override: str | None = None,
     use_prompt_as_is: bool = False,
     visual_type: str = "",
+    style_block: str = "",
     fal_api_key: str | None = None,
     gcp_credentials: GcpCredentials | None = None,
+    seed: int | None = None,
 ) -> dict | None:
     """Génère une image IA en secours via Flux ou Google Imagen 3."""
     if not ai_cfg.enabled or ai_cfg.plan.value == "off":
@@ -45,10 +47,12 @@ async def generate_image(
         image_width=width,
         image_height=height,
         visual_type=visual_type,
+        style_block=style_block,
         use_prompt_as_is=use_prompt_as_is,
         fal_api_key=fal_api_key,
         gcp_credentials=gcp_credentials,
         user_resolved_keys=True,
+        seed=seed,
     )
 
     if plan_override:

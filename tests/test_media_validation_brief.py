@@ -121,6 +121,45 @@ def test_build_relevance_prompt_species_segment_override() -> None:
     assert "segment2_specific" in prompt
 
 
+def test_build_relevance_prompt_beat_spoken_text_not_full_segment() -> None:
+    from agent.core.visual_beats import VisualBeat
+
+    brief = MediaValidationBrief(
+        subject_entity="Monarque",
+        subject_type="species",
+        must_include=["migration"],
+        must_exclude=["papillon générique"],
+        min_relevance_score=75,
+    )
+    full_narration = (
+        "Les monarques traversent l'Amérique du Nord chaque automne "
+        "pour rejoindre leurs sites d'hivernage au Mexique."
+    )
+    beat = VisualBeat(
+        order=1,
+        phrase_anchor="traversent l'Amérique",
+        visual_type="map",
+        prompt="Carte des routes de migration",
+        duration_hint_s=6.0,
+        spoken_text="traversent l'Amérique du Nord",
+    )
+    prompt = build_relevance_prompt(
+        video_subject="Migration des monarques",
+        channel_category="nature",
+        segment_title="Migration",
+        segment_narration=full_narration,
+        validation_brief=brief,
+        segment_order=1,
+        beat=beat,
+    )
+    assert "DOIT illustrer spécifiquement" in prompt
+    assert "traversent l'Amérique du Nord" in prompt
+    intention_start = prompt.index("INTENTION VISUELLE DU BEAT")
+    intention_block = prompt[intention_start : intention_start + 500]
+    assert "traversent l'Amérique du Nord" in intention_block
+    assert "pour rejoindre" not in intention_block
+
+
 def test_build_relevance_prompt_with_beat_includes_visual_type() -> None:
     from agent.core.visual_beats import VisualBeat
 

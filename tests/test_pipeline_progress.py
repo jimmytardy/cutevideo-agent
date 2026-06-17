@@ -66,17 +66,17 @@ def test_scenario_progress() -> None:
 def test_hook_progress() -> None:
     empty = compute_hook_progress(None)
     assert empty.done == 0
-    assert empty.total == 5
+    assert empty.total == 4
 
     hook = {
         "order": 1,
         "narration_text": "Saviez-vous que…",
-        "visual_beats": [{"order": 1}],
         "delivery_style": {"pace": "fast"},
+        "search_keywords": ["kw"],
     }
     partial = compute_hook_progress(hook)
     assert partial.done == 3
-    assert partial.percent == 60
+    assert partial.percent == 75
 
 
 def test_count_voice_segments() -> None:

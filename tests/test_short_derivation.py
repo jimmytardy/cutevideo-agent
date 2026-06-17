@@ -53,7 +53,11 @@ async def test_mixed_hybrid_runs_native_and_crop_pipelines() -> None:
         orch, "_run_native_shorts_pipeline", new_callable=AsyncMock
     ) as mock_native, patch.object(
         orch, "_run_shorts_pipeline", new_callable=AsyncMock
-    ) as mock_crop, patch(
+    ) as mock_crop, patch.object(
+        orch, "_run_metadata", new_callable=AsyncMock
+    ), patch.object(
+        orch, "_run_thumbnail", new_callable=AsyncMock
+    ), patch(
         "agent.core.storage.cleanup_local_videos_for_project", new_callable=AsyncMock
     ), patch(
         "agent.core.storage.cleanup_temp_ai_images", new_callable=AsyncMock
@@ -61,6 +65,10 @@ async def test_mixed_hybrid_runs_native_and_crop_pipelines() -> None:
         "agent.core.storage.cleanup_temp_ai_images", new_callable=AsyncMock
     ), patch.object(
         orch, "_update_project_status", new_callable=AsyncMock
+    ), patch(
+        "agent.core.orchestrator._raise_if_cancelled", new_callable=AsyncMock
+    ), patch(
+        "agent.core.orchestrator.resolve_user_limits", new_callable=AsyncMock, return_value=None
     ), patch(
         "agent.core.orchestrator.can_start_pipeline", new_callable=AsyncMock, return_value=True
     ), patch(

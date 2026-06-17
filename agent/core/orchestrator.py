@@ -52,17 +52,22 @@ async def _raise_if_cancelled(project_id: uuid.UUID) -> None:
 
 AGENT_ORDER = [
     "research_agent",
+    "outline_agent",
     "scenario_agent",
     "fact_checker_agent",
     "hook_optimizer_agent",
-    "diagram_specialist_agent",
     "revision_agent",
-    "media_agent",
     "narrator_agent",
+    "art_director_agent",
+    "beat_planner_agent",
+    "diagram_specialist_agent",
+    "media_agent",
     "montage_planner_agent",
     "editor_agent",
     "subtitle_agent",
     "critic_agent",
+    "metadata_agent",
+    "thumbnail_agent",
     "clipper_agent",
     "short_editor_agent",
 ]
@@ -91,6 +96,7 @@ class PipelineContext:
     fact_check_warnings: list[dict] | None = None
     fact_check_feedback: list[dict] | None = None
     skip_media_pool_reuse: bool = False
+    visual_style_block: str = ""
     research_brief: dict[str, Any] | None = None
     derivation_short_index: int | None = None
     short_derivation_mode: Literal["reuse_pool_only", "free_sources_only", "full"] | None = None
@@ -180,6 +186,7 @@ class Orchestrator:
                 critic_start_from=critic_start_from,
                 resume_iteration=resume_iteration,
                 research_brief=project_config.get("research_brief"),
+                visual_style_block=project_config.get("visual_style_block", ""),
             )
 
         except Exception as e:
@@ -208,6 +215,11 @@ class Orchestrator:
                     else:
                         await self._run_native_shorts_pipeline(ctx, planned_only=True)
                         await self._run_shorts_pipeline(ctx, teaser_only=True)
+
+            if start_from not in self._SHORTS_STEPS:
+                await self._run_metadata(ctx)
+                if channel_config.production_mode != "shorts_only":
+                    await self._run_thumbnail(ctx)
 
             from agent.core.storage import cleanup_local_videos_for_project, cleanup_temp_ai_images
 
@@ -253,36 +265,43 @@ class Orchestrator:
         from agent.agents.scenario_agent import ScenarioAgent
         from agent.agents.fact_checker_agent import FactCheckerAgent
         from agent.agents.hook_optimizer_agent import HookOptimizerAgent
+        from agent.agents.art_director_agent import ArtDirectorAgent
         from agent.agents.diagram_specialist_agent import DiagramSpecialistAgent
         from agent.agents.revision_agent import RevisionAgent
         from agent.agents.media_agent import MediaAgent
         from agent.agents.narrator_agent import NarratorAgent
+        from agent.agents.beat_planner_agent import BeatPlannerAgent
         from agent.agents.montage_planner_agent import MontagePlannerAgent
         from agent.agents.editor_agent import EditorAgent
         from agent.agents.subtitle_agent import SubtitleAgent
         from agent.agents.critic_agent import CriticAgent
         from agent.agents.video_analyst_agent import run_video_analysis
+        from agent.agents.outline_agent import OutlineAgent
 
         _STEPS = [
-            "research_agent", "scenario_agent", "media_agent", "narrator_agent",
-            "montage_planner_agent", "editor_agent", "subtitle_agent", "critic_agent",
+            "research_agent", "outline_agent", "scenario_agent", "narrator_agent", "beat_planner_agent",
+            "media_agent", "montage_planner_agent", "editor_agent", "subtitle_agent", "critic_agent",
         ]
         effective_start = "editor_agent" if start_from == "subtitle_agent" else start_from
         hook_only_restart = effective_start == "hook_optimizer_agent"
-        _PRE_MEDIA = ("fact_checker_agent", "hook_optimizer_agent", "diagram_specialist_agent")
+        _PRE_MEDIA = ("fact_checker_agent", "hook_optimizer_agent")
         if effective_start in _PRE_MEDIA and not hook_only_restart:
             effective_start = "scenario_agent"
         _STEP_TO_LOOP_IDX: dict[str, int] = {
             "research_agent": 0,
+            "outline_agent": 1,
             "scenario_agent": 1,
             "fact_checker_agent": 1,
             "hook_optimizer_agent": 1,
-            "diagram_specialist_agent": 1,
-            "media_agent": 2,
-            "narrator_agent": 3,
-            "montage_planner_agent": 4,
-            "editor_agent": 5,
-            "subtitle_agent": 6,
+            "revision_agent": 1,
+            "narrator_agent": 2,
+            "art_director_agent": 3,
+            "beat_planner_agent": 3,
+            "diagram_specialist_agent": 3,
+            "media_agent": 4,
+            "montage_planner_agent": 5,
+            "editor_agent": 6,
+            "subtitle_agent": 7,
         }
         if effective_start in _STEP_TO_LOOP_IDX:
             start_idx = _STEP_TO_LOOP_IDX[effective_start]
@@ -303,25 +322,23 @@ class Orchestrator:
                 ctx.research_brief = brief.to_dict()
                 await queue.set_agent_status(pid, "research_agent", "success")
 
-                await queue.set_agent_status(pid, "scenario_agent", "running")
-                scenario = await _agent(ScenarioAgent, ctx).run(ctx)
-                await queue.set_agent_status(pid, "scenario_agent", "success")
+                scenario = await self._run_outline_and_scenario(ctx, pid)
                 scenario = await self._run_pre_media_quality_agents(ctx, scenario, pid)
             elif hook_only_restart:
                 scenario = await self._load_latest_scenario(ctx.project_id)
                 await queue.set_agent_status(pid, "research_agent", "success")
+                await queue.set_agent_status(pid, "outline_agent", "success")
                 await queue.set_agent_status(pid, "scenario_agent", "success")
                 scenario = await self._run_pre_media_quality_agents(ctx, scenario, pid)
             elif start_idx <= 1:
                 if start_idx == 0:
                     await queue.set_agent_status(pid, "research_agent", "success")
-                await queue.set_agent_status(pid, "scenario_agent", "running")
-                scenario = await _agent(ScenarioAgent, ctx).run(ctx)
-                await queue.set_agent_status(pid, "scenario_agent", "success")
+                scenario = await self._run_outline_and_scenario(ctx, pid)
                 scenario = await self._run_pre_media_quality_agents(ctx, scenario, pid)
             else:
                 scenario = await self._load_latest_scenario(ctx.project_id)
                 await queue.set_agent_status(pid, "research_agent", "success")
+                await queue.set_agent_status(pid, "outline_agent", "success")
                 await queue.set_agent_status(pid, "scenario_agent", "success")
 
             best_score = 0
@@ -368,10 +385,7 @@ class Orchestrator:
                         brief = await _agent(ResearchAgent, ctx).run(ctx)
                         ctx.research_brief = brief.to_dict()
                         await queue.set_agent_status(pid, "research_agent", "success")
-                        current_agent = "scenario_agent"
-                        await queue.set_agent_status(pid, "scenario_agent", "running")
-                        scenario = await _agent(ScenarioAgent, ctx).run(ctx)
-                        await queue.set_agent_status(pid, "scenario_agent", "success")
+                        scenario = await self._run_outline_and_scenario(ctx, pid)
                         scenario = await self._run_pre_media_quality_agents(ctx, scenario, pid)
                     elif will_revise:
                         current_agent = "revision_agent"
@@ -387,8 +401,54 @@ class Orchestrator:
                 else:
                     loop_start = _STEP_TO_LOOP_IDX.get(effective_start or "", start_idx) if effective_start in _STEP_TO_LOOP_IDX else start_idx
 
+                narrator_due = loop_start <= 2
+                art_director_due = loop_start <= 3 and not ctx.visual_style_block
+
+                if narrator_due and art_director_due:
+                    # P6 — l'art_director ne dépend que du scénario (pas de la voix) : on le
+                    # parallélise avec le narrateur pour raccourcir le chemin critique.
+                    current_agent = "narrator_agent"
+                    await queue.set_agent_status(pid, "narrator_agent", "running")
+                    await queue.set_agent_status(pid, "art_director_agent", "running")
+                    narr_task = asyncio.create_task(_agent(NarratorAgent, ctx).run(ctx, scenario))
+                    art_task = asyncio.create_task(_agent(ArtDirectorAgent, ctx).run(ctx, scenario))
+                    try:
+                        _, style_block = await asyncio.gather(narr_task, art_task)
+                    except BaseException:
+                        for task in (narr_task, art_task):
+                            task.cancel()
+                        await asyncio.gather(narr_task, art_task, return_exceptions=True)
+                        raise
+                    ctx.visual_style_block = style_block
+                    await queue.set_agent_status(pid, "narrator_agent", "success")
+                    await queue.set_agent_status(pid, "art_director_agent", "success")
+                    scenario = await self._load_latest_scenario(ctx.project_id)
+                else:
+                    current_agent = "narrator_agent"
+                    if narrator_due:
+                        await queue.set_agent_status(pid, current_agent, "running")
+                        await _agent(NarratorAgent, ctx).run(ctx, scenario)
+                        await queue.set_agent_status(pid, current_agent, "success")
+                        scenario = await self._load_latest_scenario(ctx.project_id)
+
+                    current_agent = "art_director_agent"
+                    if art_director_due:
+                        await queue.set_agent_status(pid, current_agent, "running")
+                        ctx.visual_style_block = await _agent(ArtDirectorAgent, ctx).run(ctx, scenario)
+                        await queue.set_agent_status(pid, current_agent, "success")
+
+                current_agent = "beat_planner_agent"
+                if loop_start <= 3:
+                    await queue.set_agent_status(pid, current_agent, "running")
+                    scenario = await _agent(BeatPlannerAgent, ctx).run(ctx, scenario)
+                    await queue.set_agent_status(pid, current_agent, "success")
+
+                    await queue.set_agent_status(pid, "diagram_specialist_agent", "running")
+                    scenario = await _agent(DiagramSpecialistAgent, ctx).run(ctx, scenario)
+                    await queue.set_agent_status(pid, "diagram_specialist_agent", "success")
+
                 current_agent = "media_agent"
-                if loop_start <= 2:
+                if loop_start <= 4:
                     from agent.core.scenario_integrity import validate_scenario_integrity
 
                     validate_scenario_integrity(scenario, ctx.channel_config)
@@ -396,20 +456,14 @@ class Orchestrator:
                     await _agent(MediaAgent, ctx).run(ctx, scenario)
                     await queue.set_agent_status(pid, current_agent, "success")
 
-                current_agent = "narrator_agent"
-                if loop_start <= 3:
-                    await queue.set_agent_status(pid, current_agent, "running")
-                    await _agent(NarratorAgent, ctx).run(ctx, scenario)
-                    await queue.set_agent_status(pid, current_agent, "success")
-
                 current_agent = "montage_planner_agent"
-                if loop_start <= 4:
+                if loop_start <= 5:
                     await queue.set_agent_status(pid, current_agent, "running")
                     await _agent(MontagePlannerAgent, ctx).run(ctx, scenario)
                     await queue.set_agent_status(pid, current_agent, "success")
 
                 current_agent = "editor_agent"
-                if loop_start <= 5:
+                if loop_start <= 6:
                     await queue.set_agent_status(pid, current_agent, "running")
                     video = await _agent(EditorAgent, ctx).run(ctx, scenario)
                     await queue.set_agent_status(pid, current_agent, "success")
@@ -418,7 +472,7 @@ class Orchestrator:
                     await queue.set_agent_status(pid, "editor_agent", "success")
 
                 current_agent = "subtitle_agent"
-                if loop_start <= 6:
+                if loop_start <= 7:
                     await queue.set_agent_status(pid, current_agent, "running")
                     await _agent(SubtitleAgent, ctx).run(ctx, video)
                     video = await self._load_latest_video(ctx.project_id)
@@ -475,6 +529,46 @@ class Orchestrator:
         except Exception:
             await queue.set_agent_status(pid, current_agent, "failed")
             raise
+
+    async def _run_metadata(self, ctx: PipelineContext) -> None:
+        """Génère titre/description SEO + tags + chapitres (non bloquant)."""
+        from agent.agents.metadata_agent import MetadataAgent
+
+        pid = str(ctx.project_id)
+        try:
+            scenario = await self._load_latest_scenario(ctx.project_id)
+        except RuntimeError:
+            return
+        try:
+            await queue.set_agent_status(pid, "metadata_agent", "running")
+            await _agent(MetadataAgent, ctx).run(ctx, scenario)
+            await queue.set_agent_status(pid, "metadata_agent", "success")
+        except asyncio.CancelledError:
+            await queue.set_agent_status(pid, "metadata_agent", "stopped")
+            raise
+        except Exception as e:
+            await queue.set_agent_status(pid, "metadata_agent", "failed")
+            logger.warning("Génération métadonnées échouée (non bloquant) : %s", e)
+
+    async def _run_thumbnail(self, ctx: PipelineContext) -> None:
+        """Génère des concepts de miniature YouTube (non bloquant)."""
+        from agent.agents.thumbnail_agent import ThumbnailAgent
+
+        pid = str(ctx.project_id)
+        try:
+            scenario = await self._load_latest_scenario(ctx.project_id)
+        except RuntimeError:
+            return
+        try:
+            await queue.set_agent_status(pid, "thumbnail_agent", "running")
+            await _agent(ThumbnailAgent, ctx).run(ctx, scenario)
+            await queue.set_agent_status(pid, "thumbnail_agent", "success")
+        except asyncio.CancelledError:
+            await queue.set_agent_status(pid, "thumbnail_agent", "stopped")
+            raise
+        except Exception as e:
+            await queue.set_agent_status(pid, "thumbnail_agent", "failed")
+            logger.warning("Génération miniature échouée (non bloquant) : %s", e)
 
     async def _run_platform_exports(self, ctx: PipelineContext) -> None:
         from agent.agents.short_editor_agent import ShortEditorAgent
@@ -535,8 +629,11 @@ class Orchestrator:
         *,
         planned_only: bool = False,
     ) -> None:
+        from agent.agents.beat_planner_agent import BeatPlannerAgent
+        from agent.agents.diagram_specialist_agent import DiagramSpecialistAgent
         from agent.agents.editor_agent import EditorAgent
         from agent.agents.media_agent import MediaAgent
+        from agent.agents.montage_planner_agent import MontagePlannerAgent
         from agent.agents.narrator_agent import NarratorAgent
         from agent.agents.short_editor_agent import ShortEditorAgent
         from agent.agents.short_producer_agent import ShortProducerAgent
@@ -556,14 +653,30 @@ class Orchestrator:
             for plan in plans:
                 ctx.derivation_short_index = plan.index
 
+                current_agent = "narrator_agent"
+                await queue.set_agent_status(pid, current_agent, "running")
+                await _agent(NarratorAgent, ctx).run_derivation(ctx, plan)
+                await queue.set_agent_status(pid, current_agent, "success")
+
+                scenario = await self._load_latest_scenario(ctx.project_id)
+
+                current_agent = "beat_planner_agent"
+                await queue.set_agent_status(pid, current_agent, "running")
+                scenario = await _agent(BeatPlannerAgent, ctx).run(ctx, scenario)
+                await queue.set_agent_status(pid, current_agent, "success")
+
+                await queue.set_agent_status(pid, "diagram_specialist_agent", "running")
+                scenario = await _agent(DiagramSpecialistAgent, ctx).run(ctx, scenario)
+                await queue.set_agent_status(pid, "diagram_specialist_agent", "success")
+
                 current_agent = "media_agent"
                 await queue.set_agent_status(pid, current_agent, "running")
                 await _agent(MediaAgent, ctx).run_derivation(ctx, plan)
                 await queue.set_agent_status(pid, current_agent, "success")
 
-                current_agent = "narrator_agent"
+                current_agent = "montage_planner_agent"
                 await queue.set_agent_status(pid, current_agent, "running")
-                await _agent(NarratorAgent, ctx).run_derivation(ctx, plan)
+                await _agent(MontagePlannerAgent, ctx).run(ctx, scenario)
                 await queue.set_agent_status(pid, current_agent, "success")
 
                 current_agent = "editor_agent"
@@ -601,6 +714,20 @@ class Orchestrator:
             logger.info("Changement demandé pour %s : %s", change.get("agent"), change.get("change_description"))
         logger.info("Point de reprise : %s", ctx.critic_start_from)
 
+    async def _run_outline_and_scenario(self, ctx: PipelineContext, pid: str) -> Scenario:
+        """P2 — passe « traitement » (outline_agent) puis passe « écriture » (scenario_agent)."""
+        from agent.agents.outline_agent import OutlineAgent
+        from agent.agents.scenario_agent import ScenarioAgent
+
+        await queue.set_agent_status(pid, "outline_agent", "running")
+        outline = await _agent(OutlineAgent, ctx).run(ctx)
+        await queue.set_agent_status(pid, "outline_agent", "success")
+
+        await queue.set_agent_status(pid, "scenario_agent", "running")
+        scenario = await _agent(ScenarioAgent, ctx).run(ctx, outline)
+        await queue.set_agent_status(pid, "scenario_agent", "success")
+        return scenario
+
     async def _run_pre_media_quality_agents(
         self,
         ctx: PipelineContext,
@@ -609,7 +736,6 @@ class Orchestrator:
     ) -> Scenario:
         from agent.agents.fact_checker_agent import FactCheckerAgent
         from agent.agents.hook_optimizer_agent import HookOptimizerAgent
-        from agent.agents.diagram_specialist_agent import DiagramSpecialistAgent
         from agent.agents.research_agent import ResearchAgent
         from agent.agents.scenario_agent import ScenarioAgent
 
@@ -652,18 +778,25 @@ class Orchestrator:
                 brief = await _agent(ResearchAgent, ctx).run(ctx)
                 ctx.research_brief = brief.to_dict()
                 await queue.set_agent_status(pid, "research_agent", "success")
+                # Recherche refaite → le squelette est obsolète : on régénère outline + écriture.
+                scenario = await self._run_outline_and_scenario(ctx, pid)
+            else:
+                # Correction factuelle ciblée : on réécrit la narration sur le squelette existant.
+                await queue.set_agent_status(pid, "scenario_agent", "running")
+                scenario = await _agent(ScenarioAgent, ctx).run(ctx)
+                await queue.set_agent_status(pid, "scenario_agent", "success")
 
-            await queue.set_agent_status(pid, "scenario_agent", "running")
-            scenario = await _agent(ScenarioAgent, ctx).run(ctx)
-            await queue.set_agent_status(pid, "scenario_agent", "success")
-
-        await queue.set_agent_status(pid, "hook_optimizer_agent", "running")
-        scenario = await _agent(HookOptimizerAgent, ctx).run(ctx, scenario)
-        await queue.set_agent_status(pid, "hook_optimizer_agent", "success")
-
-        await queue.set_agent_status(pid, "diagram_specialist_agent", "running")
-        scenario = await _agent(DiagramSpecialistAgent, ctx).run(ctx, scenario)
-        await queue.set_agent_status(pid, "diagram_specialist_agent", "success")
+        is_short = (
+            ctx.channel_config.production_mode == "shorts_only"
+            or ctx.is_short_project
+        )
+        if not is_short:
+            await queue.set_agent_status(pid, "hook_optimizer_agent", "running")
+            scenario = await _agent(HookOptimizerAgent, ctx).run(ctx, scenario)
+            await queue.set_agent_status(pid, "hook_optimizer_agent", "success")
+        else:
+            await queue.set_agent_status(pid, "hook_optimizer_agent", "planned")
+            logger.info("hook_optimizer_agent ignoré (shorts_only)")
         return scenario
 
     @staticmethod
@@ -680,11 +813,11 @@ class Orchestrator:
         clear_scenarios = start_from in ("research_agent", "scenario_agent") and not keep_scenarios
         pre_media = start_from in (
             "research_agent", "scenario_agent", "fact_checker_agent",
-            "hook_optimizer_agent", "diagram_specialist_agent",
+            "hook_optimizer_agent", "revision_agent",
         )
-        clear_media = pre_media or start_from == "media_agent"
-        clear_audio = clear_media or start_from == "narrator_agent"
-        clear_montage = _AGENT_LOOP_IDX.get(start_from, 99) <= _AGENT_LOOP_IDX.get("montage_planner_agent", 4)
+        clear_media = pre_media or start_from in ("media_agent", "beat_planner_agent")
+        clear_audio = clear_media or start_from in ("narrator_agent", "beat_planner_agent")
+        clear_montage = _AGENT_LOOP_IDX.get(start_from, 99) <= _AGENT_LOOP_IDX.get("montage_planner_agent", 5)
 
         async with AsyncSessionFactory() as session:
             if clear_scenarios:

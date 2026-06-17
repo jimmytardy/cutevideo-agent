@@ -9,7 +9,7 @@ from sqlalchemy import select
 from typing import Any
 
 from agent.core.base_agent import BaseAgent
-from agent.core.database import AsyncSessionFactory, AudioFile, Scenario, Video
+from agent.core.database import AsyncSessionFactory, AudioFile, Project, Scenario, Video
 from agent.agents.narrator_agent import segment_needs_music, segment_needs_voice
 
 logger = logging.getLogger(__name__)
@@ -53,6 +53,7 @@ class EditorAgent(BaseAgent):
     async def _assemble_video(self, ctx: "PipelineContext", scenario: Scenario | None) -> Video:
         from agent.agents.montage_planner_agent import load_latest_montage_plan
         from agent.skills.video.ffmpeg_utils import assemble_from_montage_plan, assert_audio_has_signal
+        from agent.skills.video.filter_graph_builder import color_grade_from_style_block
 
         montage_plan = await load_latest_montage_plan(ctx.project_id)
         if not montage_plan or not montage_plan.segments:
@@ -68,7 +69,12 @@ class EditorAgent(BaseAgent):
                 .order_by(AudioFile.segment_order)
             )
             audio_files = list(audio_result.scalars().all())
+            project = await session.get(Project, ctx.project_id)
+            style_block = str((project.config or {}).get("visual_style_block", "")) if project else ""
 
+        grade = color_grade_from_style_block(style_block)
+        if grade:
+            logger.info("Étalonnage final (P5) dérivé du style : %s", grade)
         segment_meta = self._build_segment_meta(scenario)
         is_vertical = montage_plan.is_vertical or ctx.channel_config.production_mode == "shorts_only"
 
@@ -86,9 +92,11 @@ class EditorAgent(BaseAgent):
             audio_files=audio_files,
             output_path=output_path,
             project_id=ctx.project_id,
+            grade=grade,
         )
 
         output_path = await self._mix_music_by_mood(ctx, output_path, segment_meta, duration_s)
+        output_path = await self._apply_sound_design(ctx, output_path, segment_meta)
 
         has_narration = any(m.get("needs_voice") for m in segment_meta.values())
         await assert_audio_has_signal(
@@ -132,6 +140,7 @@ class EditorAgent(BaseAgent):
                 "needs_music": segment_needs_music(seg),
                 "mood": seg.get("mood", "calme"),
                 "strip_source_audio": seg.get("strip_source_audio", needs_voice),
+                "hook_type": seg.get("hook_type"),
             }
         return segment_meta
 
@@ -237,6 +246,36 @@ class EditorAgent(BaseAgent):
             return await self._fallback_music(
                 ctx, video_path, music_volume, duck_narration
             )
+
+    async def _apply_sound_design(
+        self,
+        ctx: "PipelineContext",
+        video_path: Path,
+        segment_meta: dict[int, dict],
+    ) -> Path:
+        """P4 — pose des SFX (whoosh transitions, accent révélations) sur la piste finale."""
+        from agent.core.config import load_agent_config
+        from agent.skills.audio.sound_design import apply_sfx_cues, build_sfx_cues
+
+        sfx_cfg = load_agent_config().get("sfx", {})
+        if not sfx_cfg.get("enabled", True):
+            return video_path
+
+        cues = build_sfx_cues(segment_meta)
+        if not cues:
+            return video_path
+
+        try:
+            out_path = video_path.with_stem(video_path.stem + "_sfx")
+            result = await apply_sfx_cues(video_path, cues, out_path)
+            if result:
+                video_path.unlink(missing_ok=True)
+                logger.info("Design sonore : %d SFX posés", len(cues))
+                return result
+            out_path.unlink(missing_ok=True)
+        except Exception as e:
+            logger.warning("Design sonore ignoré (erreur) : %s", e)
+        return video_path
 
     async def _fallback_music(
         self,

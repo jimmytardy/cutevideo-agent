@@ -332,9 +332,11 @@ class MediaAgent(BaseAgent):
     ) -> tuple[list[dict], list[dict]]:
         from agent.skills.media_sources.relevance_scorer import score_media_candidates
 
+        from agent.core.visual_beats import beat_narration_excerpt
+
         narration = (segment.get("narration_text") or "")[:500]
         if beat is not None:
-            narration = f"{beat.phrase_anchor} — {beat.prompt}"
+            narration = beat_narration_excerpt(beat)
 
         scored = await score_media_candidates(
             candidates,
@@ -404,13 +406,28 @@ class MediaAgent(BaseAgent):
         visual_type: str = "",
     ) -> AiImageResult:
         """Génère une image IA (dev puis payant), valide via Gemini, best-score en dernier recours."""
+        from agent.core.visual_beats import beat_narration_excerpt
         from agent.skills.media_sources.ai.prompt_builder import is_diagram_visual_type
         from agent.skills.media_sources.relevance_scorer import is_text_artifact_rejection, score_media_candidates
 
         dev_plan, dev_attempts, paid_attempts = ai_fallback_attempt_config()
         paid_plan = ai_cfg.plan.value
+        # A4 — schémas/infographies : rester sur Flux.2 (dev_plan) même en phase payante,
+        # meilleure typographie/structure que Flux 1.1 Pro pour les diagrammes.
+        effective_visual_type = visual_type or (beat.visual_type if beat else "")
+        if is_diagram_visual_type(effective_visual_type):
+            paid_plan = dev_plan
         order = segment.get("order", 0)
         total_attempts = dev_attempts + paid_attempts
+
+        # P3 — bible de sujet : graine déterministe partagée par les plans qui montrent
+        # l'entité récurrente (cohérence inter-plans). Pas de graine pour les schémas.
+        from agent.skills.media_sources.ai.subject_bible import beat_subject_seed, seed_for_attempt
+
+        base_seed: int | None = None
+        if not is_diagram_visual_type(effective_visual_type):
+            beat_text = f"{ai_prompt} {getattr(beat, 'phrase_anchor', '') if beat else ''}"
+            base_seed = beat_subject_seed(validation_brief.subject_entity, beat_text)
 
         candidates: list[tuple[dict, int, str, str, str | None, str]] = []
 
@@ -419,8 +436,10 @@ class MediaAgent(BaseAgent):
             ("paid", paid_plan, paid_attempts),
         ]
 
+        gen_index = 0
         for phase, plan_id, max_t in phases:
             for attempt in range(1, max_t + 1):
+                gen_index += 1
                 ai_item = await self._generate_ai_fallback(
                     ai_prompt,
                     output_dir,
@@ -431,6 +450,7 @@ class MediaAgent(BaseAgent):
                     plan_override=plan_id,
                     use_prompt_as_is=use_prompt_as_is,
                     visual_type=visual_type or (beat.visual_type if beat else ""),
+                    seed=seed_for_attempt(base_seed, gen_index),
                 )
                 if not ai_item:
                     self._relevance_log.append({
@@ -453,7 +473,7 @@ class MediaAgent(BaseAgent):
                     channel_category=ctx.theme_category,
                     segment_title=segment.get("title", ""),
                     segment_narration=(
-                        f"{beat.phrase_anchor} — {beat.prompt}"
+                        beat_narration_excerpt(beat)
                         if beat is not None
                         else (segment.get("narration_text") or "")[:500]
                     ),
@@ -921,14 +941,17 @@ class MediaAgent(BaseAgent):
             missing = max(image_target - selected_images, 0)
             if niche_early_ai and missing == 0:
                 missing = max(1, image_target)
-            ai_prompt = (
-                f"{ctx.theme} — {segment.get('title', '')} — "
-                f"{validation_brief.subject_entity} — {' '.join(keywords[:3])}"
-            )
             aspect_ratio = (
                 "9:16"
                 if ctx.channel_config.production_mode == "shorts_only" or self._is_derivation(ctx)
                 else "16:9"
+            )
+            from agent.skills.media.segment_beats_media import synthesize_segment_ai_prompt
+
+            ai_prompt, ai_beat, ai_visual_type = await synthesize_segment_ai_prompt(
+                self, ctx, segment, keywords,
+                aspect_ratio=aspect_ratio,
+                cache_dir=output_dir / "segment_prompt_cache",
             )
             max_segment_ai = min(missing or image_target, ai_cfg.max_images_per_segment)
             for _ in range(max_segment_ai):
@@ -943,6 +966,9 @@ class MediaAgent(BaseAgent):
                     ai_cfg,
                     aspect_ratio,
                     validation_brief,
+                    use_prompt_as_is=True,
+                    beat=ai_beat,
+                    visual_type=ai_visual_type,
                 )
                 await self._apply_ai_image_result(
                     ai_result,
@@ -994,14 +1020,17 @@ class MediaAgent(BaseAgent):
             and (not self._is_derivation(ctx) or self._derivation_allows_ai(ctx))
         ):
             remaining = assets_needed - len(selected)
-            ai_prompt = (
-                f"{ctx.theme} — {segment.get('title', '')} — "
-                f"{validation_brief.subject_entity} — {' '.join(keywords[:3])}"
-            )
             aspect_ratio = (
                 "9:16"
                 if ctx.channel_config.production_mode == "shorts_only" or self._is_derivation(ctx)
                 else "16:9"
+            )
+            from agent.skills.media.segment_beats_media import synthesize_segment_ai_prompt
+
+            ai_prompt, ai_beat, ai_visual_type = await synthesize_segment_ai_prompt(
+                self, ctx, segment, keywords,
+                aspect_ratio=aspect_ratio,
+                cache_dir=output_dir / "segment_prompt_cache",
             )
             for _ in range(min(remaining, ai_cfg.max_images_per_segment)):
                 if len(selected) >= assets_needed:
@@ -1017,6 +1046,9 @@ class MediaAgent(BaseAgent):
                     ai_cfg,
                     aspect_ratio,
                     validation_brief,
+                    use_prompt_as_is=True,
+                    beat=ai_beat,
+                    visual_type=ai_visual_type,
                 )
                 await self._apply_ai_image_result(
                     ai_result,
@@ -1482,6 +1514,7 @@ class MediaAgent(BaseAgent):
         plan_override: str | None = None,
         use_prompt_as_is: bool = False,
         visual_type: str = "",
+        seed: int | None = None,
     ) -> dict | None:
         from agent.skills.media_sources.ai_image import generate_image
 
@@ -1497,6 +1530,7 @@ class MediaAgent(BaseAgent):
             visual_type=visual_type,
             fal_api_key=self._fal_api_key,
             gcp_credentials=self._gcp_credentials,
+            seed=seed,
         )
 
     @staticmethod

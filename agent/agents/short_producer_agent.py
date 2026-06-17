@@ -9,16 +9,16 @@ from sqlalchemy import select
 from agent.agents.scenario_agent import (
     AVAILABLE_SOURCES,
     SYSTEM_PROMPT_SHORT,
-    _build_visual_beats_prompt_context,
-    _format_content_plan_block,
     _format_creative_brief_block,
     _format_research_block,
     _format_research_rules_block,
 )
 from agent.core.base_agent import BaseAgent
 from agent.core.database import AsyncSessionFactory, Scenario
+from agent.core.json_parse import parse_json_text
 from agent.core.learning_context import LEARNING_CONTEXT_BLOCK
 from agent.core.short_derivation import DerivedShortPlan
+from agent.core.visual_beats_prompt import SCENARIO_VOICE_BEATS_CONTEXT
 from agent.skills.media.segment_beats_media import ensure_visual_beats_on_segments
 
 logger = logging.getLogger(__name__)
@@ -27,7 +27,7 @@ SHORT_PRODUCER_SYSTEM = """Tu es un scénariste expert en shorts verticaux virau
 Tu crées des mini-scénarios autonomes à partir d'une vidéo longue existante — angle différent, hook immédiat, rythme court.
 Tu retournes UNIQUEMENT du JSON valide."""
 
-DERIVATION_PROMPT = """Crée un mini-scénario SHORT vertical de {duration_s} secondes, dérivé de la vidéo longue ci-dessous.
+DERIVATION_PROMPT = """Crée un mini-scénario SHORT vertical de {min_duration_s} à {max_duration_s} secondes, dérivé de la vidéo longue ci-dessous.
 
 CHAÎNE : {channel_name} ({theme_category})
 SUJET LONG : "{theme}"
@@ -68,11 +68,11 @@ Retourne UNIQUEMENT ce JSON :
       }}
     }}
   ],
-  "total_duration_s": {duration_s}
+  "total_duration_s": {target_duration_s}
 }}
 
 RÈGLES :
-- 1 à 3 segments de 15-30 s, total ~{duration_s} s
+- 1 à 3 segments de 15-30 s ; durée totale indicative {min_duration_s}–{max_duration_s} s (durée réelle post-voix)
 - Angle DISTINCT de la vidéo longue (focus sur un fait, une anecdote, une question)
 - Hook dans les 3 premières secondes de narration
 - Réutiliser les faits de la recherche — n'invente rien
@@ -84,7 +84,7 @@ RÈGLES :
 {visual_beats_rules}"""
 
 FALLBACK_ANGLES_PROMPT = """La vidéo longue « {theme} » n'a pas de shorts planifiés.
-Propose {count} angles courts distincts (45-90 s chacun) pour des shorts viraux autonomes.
+Propose {count} angles courts distincts ({min_duration_s}-{max_duration_s} s chacun) pour des shorts viraux autonomes.
 
 SEGMENTS LONGS :
 {segments_json}
@@ -113,6 +113,58 @@ def _format_planned_short_block(planned: dict[str, Any] | None) -> str:
         + json.dumps(planned, ensure_ascii=False, indent=2)
         + "\n"
     )
+
+
+def postprocess_derivation_segments(
+    raw_segments: list[dict[str, Any]],
+    *,
+    min_beats: int,
+    max_beats: int,
+    editorial_tone: str,
+    theme_category: str,
+    vb_config: Any,
+) -> list[dict[str, Any]]:
+    """Post-traitement des segments dérivés : pas de visual_beats sur segments voix."""
+    voice_segments: list[dict[str, Any]] = []
+    no_voice_segments: list[dict[str, Any]] = []
+    for seg in raw_segments:
+        if not isinstance(seg, dict):
+            continue
+        seg = dict(seg)
+        has_voice = (
+            seg.get("needs_voice", True) is not False
+            and bool((seg.get("narration_text") or "").strip())
+        )
+        if has_voice:
+            seg.pop("visual_beats", None)
+            voice_segments.append(seg)
+        else:
+            no_voice_segments.append(seg)
+
+    if no_voice_segments:
+        enriched = ensure_visual_beats_on_segments(
+            no_voice_segments,
+            is_short=True,
+            min_beats=min_beats,
+            max_beats=max_beats,
+            editorial_tone=editorial_tone,
+            theme_category=theme_category,
+            vb_config=vb_config,
+        )
+        enriched_by_order = {int(s.get("order", 0)): s for s in enriched}
+        for seg in no_voice_segments:
+            voice_segments.append(enriched_by_order.get(int(seg.get("order", 0)), seg))
+    return sorted(voice_segments, key=lambda s: int(s.get("order", 0)))
+
+
+def clamp_short_total_duration(
+    value: int | None,
+    *,
+    min_duration_s: int,
+    max_duration_s: int,
+    fallback: int,
+) -> int:
+    return min(max_duration_s, max(min_duration_s, int(value or fallback)))
 
 
 class ShortProducerAgent(BaseAgent):
@@ -155,6 +207,8 @@ class ShortProducerAgent(BaseAgent):
             return []
 
         duration_s = ctx.channel_config.short_duration_s
+        min_d = ctx.channel_config.min_short_duration_s
+        max_d = ctx.channel_config.max_short_duration_s
         segment_duration = min(30, max(15, duration_s // 2))
         planned_list = list(ctx.planned_shorts or [])
 
@@ -165,7 +219,7 @@ class ShortProducerAgent(BaseAgent):
         if not planned_list:
             max_shorts = max(ctx.channel_config.daily_quotas.short, 1)
             planned_list = await self._generate_fallback_angles(
-                ctx, long_scenario, count=min(max_shorts, 3)
+                ctx, long_scenario, count=min(max_shorts, 3), min_d=min_d, max_d=max_d
             )
 
         plans: list[DerivedShortPlan] = []
@@ -176,6 +230,8 @@ class ShortProducerAgent(BaseAgent):
                 planned_short=planned,
                 index=idx,
                 duration_s=duration_s,
+                min_duration_s=min_d,
+                max_duration_s=max_d,
                 segment_duration=segment_duration,
             )
             if plan:
@@ -190,10 +246,14 @@ class ShortProducerAgent(BaseAgent):
         long_scenario: Scenario,
         *,
         count: int,
+        min_d: int,
+        max_d: int,
     ) -> list[dict[str, Any]]:
         prompt = FALLBACK_ANGLES_PROMPT.format(
             theme=ctx.theme,
             count=count,
+            min_duration_s=min_d,
+            max_duration_s=max_d,
             segments_json=json.dumps(long_scenario.segments or [], ensure_ascii=False, indent=2),
             research_block=_format_research_block(ctx.research_brief),
         )
@@ -209,25 +269,20 @@ class ShortProducerAgent(BaseAgent):
         planned_short: dict[str, Any],
         index: int,
         duration_s: int,
+        min_duration_s: int,
+        max_duration_s: int,
         segment_duration: int,
     ) -> DerivedShortPlan | None:
-        theme_prompt = ctx.channel.theme_prompt or ctx.niche_prompt or ""
-        vb_ctx = _build_visual_beats_prompt_context(
-            ctx.channel_config.editorial_tone,
-            ctx.theme_category,
-            min_beats_short=ctx.channel_config.visual_beats.min_beats_per_short_segment,
-            max_beats=ctx.channel_config.visual_beats.max_beats_per_segment,
-            content_language=ctx.channel_config.content_language,
-            min_diagram_duration_long=ctx.channel_config.visual_beats.min_diagram_duration_s,
-            min_diagram_duration_short=ctx.channel_config.visual_beats.min_diagram_duration_short_s,
-            is_short=True,
-        )
+        target_duration = min(max_duration_s, max(min_duration_s, duration_s))
+        vb_ctx = dict(SCENARIO_VOICE_BEATS_CONTEXT)
         creative_brief_block = _format_creative_brief_block(ctx.channel_config.creative_brief)
         learning_block = LEARNING_CONTEXT_BLOCK.format(
             learning_context_prompt=ctx.learning_context_prompt,
         )
         prompt = DERIVATION_PROMPT.format(
-            duration_s=duration_s,
+            min_duration_s=min_duration_s,
+            max_duration_s=max_duration_s,
+            target_duration_s=target_duration,
             segment_duration=segment_duration,
             channel_name=ctx.channel.name,
             theme_category=ctx.theme_category,
@@ -244,13 +299,13 @@ class ShortProducerAgent(BaseAgent):
         raw = await self._call_claude(
             prompt,
             system=SYSTEM_PROMPT_SHORT,
-            max_tokens=4096,
+            max_tokens=8192,
         )
         data = self._parse_json(raw)
 
-        segments = ensure_visual_beats_on_segments(
-            data.get("segments", []),
-            is_short=True,
+        raw_segments = [dict(seg) for seg in data.get("segments", []) if isinstance(seg, dict)]
+        segments = postprocess_derivation_segments(
+            raw_segments,
             min_beats=ctx.channel_config.visual_beats.min_beats_per_short_segment,
             max_beats=ctx.channel_config.visual_beats.max_beats_per_segment,
             editorial_tone=ctx.channel_config.editorial_tone,
@@ -268,14 +323,15 @@ class ShortProducerAgent(BaseAgent):
             hook=str(data.get("hook") or planned_short.get("hook") or ""),
             cta=str(data.get("cta") or planned_short.get("cta") or "Vidéo complète sur la chaîne"),
             segments=segments,
-            total_duration_s=int(data.get("total_duration_s") or duration_s),
+            total_duration_s=clamp_short_total_duration(
+                data.get("total_duration_s"),
+                min_duration_s=min_duration_s,
+                max_duration_s=max_duration_s,
+                fallback=target_duration,
+            ),
             planned_short=planned_short,
         )
 
     @staticmethod
     def _parse_json(raw: str) -> dict[str, Any]:
-        raw = raw.strip()
-        if raw.startswith("```"):
-            lines = raw.split("\n")
-            raw = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
-        return json.loads(raw)
+        return parse_json_text(raw, "short_producer_agent")

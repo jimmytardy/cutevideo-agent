@@ -43,6 +43,7 @@ class BeatClipPlan(BaseModel):
     motion_style: MotionStyle = "zoom_in"
     overlay_mode: OverlayMode = "none"
     overlay_asset_path: str = ""
+    strip_source_audio: bool = True
 
 
 class EffectiveBeat(BaseModel):

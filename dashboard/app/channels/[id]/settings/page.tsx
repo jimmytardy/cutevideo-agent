@@ -174,9 +174,9 @@ export default function ChannelSettingsPage({ params }: Props) {
 
   const { data: channel, isLoading, mutate } = useSWR<Channel>(`/api/v1/channels/${id}`, fetcher)
 
-  const { data: voices } = useSWR('/api/v1/config/tts/voices', fetcher)
+  const { data: voices } = useSWR<{ id: string; label: string }[]>('/api/v1/config/tts/voices', fetcher)
 
-  const { data: geminiVoices } = useSWR('/api/v1/config/tts/gemini-voices', fetcher)
+  const { data: geminiVoices } = useSWR<{ id: string; label: string }[]>('/api/v1/config/tts/gemini-voices', fetcher)
 
   const { data: runwayStatus } = useSWR<RunwayStatus>(
     id ? `/api/v1/channels/${id}/runway-status` : null,
@@ -294,6 +294,10 @@ export default function ChannelSettingsPage({ params }: Props) {
 
       short_duration_s: prod.short_duration_s || 60,
 
+      min_short_duration_s: prod.min_short_duration_s || 60,
+
+      max_short_duration_s: prod.max_short_duration_s || 120,
+
       long_quota: (pub.daily_quotas as Record<string, number>)?.long ?? 1,
 
       short_quota: (pub.daily_quotas as Record<string, number>)?.short ?? 3,
@@ -369,6 +373,10 @@ export default function ChannelSettingsPage({ params }: Props) {
         mode: form.production_mode,
 
         short_duration_s: Number(form.short_duration_s),
+
+        min_short_duration_s: Number(form.min_short_duration_s),
+
+        max_short_duration_s: Number(form.max_short_duration_s),
 
       },
 
@@ -614,9 +622,21 @@ export default function ChannelSettingsPage({ params }: Props) {
 
             onChange={(e) => setForm({ ...form, short_quota: e.target.value })} />
 
-          <TextField type="number" label="Durée short (s)" value={form.short_duration_s}
+          <TextField type="number" label="Durée short cible (s)" value={form.short_duration_s}
 
             onChange={(e) => setForm({ ...form, short_duration_s: e.target.value })} />
+
+          <TextField type="number" label="Durée min short (s)" helperText="Minimum TikTok : 60 s"
+
+            value={form.min_short_duration_s}
+
+            onChange={(e) => setForm({ ...form, min_short_duration_s: e.target.value })} />
+
+          <TextField type="number" label="Durée max short (s)" helperText="Plafond export : 120 s (60 s max sur abonnement gratuit)"
+
+            value={form.max_short_duration_s}
+
+            onChange={(e) => setForm({ ...form, max_short_duration_s: e.target.value })} />
 
         </Box>
 

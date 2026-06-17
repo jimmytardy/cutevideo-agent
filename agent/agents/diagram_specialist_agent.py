@@ -21,6 +21,9 @@ Retourne UNIQUEMENT du JSON valide."""
 
 DIAGRAM_PROMPT = """Enrichis les visual_beats de type diagramme/infographie du scénario.
 
+Les phrase_anchor et duration_hint_s sont IMMUTABLES (définis par beat_planner post-TTS).
+Ne modifie pas phrase_anchor, order, duration_hint_s ni spoken_text.
+
 SUJET : {theme}
 LANGUE : {language}
 MIN DIAGRAMME : {min_diagram}s

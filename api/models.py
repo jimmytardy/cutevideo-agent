@@ -335,6 +335,7 @@ class FinalPreviewResponse(BaseModel):
     subtitles_available: bool
     subtitles_download_url: str | None
     subtitles_note: str | None = None
+    duration_warnings: list[str] = Field(default_factory=list)
 
 
 class AudioFileResponse(BaseModel):
@@ -461,6 +462,17 @@ class PipelineProgressResponse(BaseModel):
     preparation: dict[str, AgentProgressItem]
     iterations: dict[str, dict[str, AgentProgressItem]]
     post_production: dict[str, AgentProgressItem]
+
+
+class PipelinePlanResponse(BaseModel):
+    """Agents réellement concernés par le pipeline selon le type de vidéo."""
+
+    is_short: bool
+    preparation: list[str]
+    iteration_first: list[str]
+    iteration_revision: list[str]
+    post_production: list[str]
+    max_iterations: int
 
 
 class AgentRunResponse(BaseModel):

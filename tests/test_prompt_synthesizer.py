@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 from agent.skills.media_sources.ai.flux_negative_prompt import (
     FLUX_DIAGRAM_NEGATIVE_PROMPT,
+    FLUX_PHOTO_NEGATIVE_PROMPT,
     flux_negative_prompt_for_visual_type,
 )
 from agent.skills.media_sources.ai.prompt_builder import build_visual_prompt
@@ -34,9 +35,10 @@ def test_build_visual_prompt_diagram_no_empty_zones() -> None:
     assert "text placeholders" in lower or "annotation areas" in lower
 
 
-def test_flux_negative_prompt_for_diagram_only() -> None:
+def test_flux_negative_prompt_by_visual_type() -> None:
     assert flux_negative_prompt_for_visual_type("scientific_diagram") == FLUX_DIAGRAM_NEGATIVE_PROMPT
-    assert flux_negative_prompt_for_visual_type("documentary_photo") is None
+    # A3 — les photos reçoivent désormais un négatif qualité (anatomie/artefacts).
+    assert flux_negative_prompt_for_visual_type("documentary_photo") == FLUX_PHOTO_NEGATIVE_PROMPT
 
 
 def test_is_text_artifact_rejection() -> None:

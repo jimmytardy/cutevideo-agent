@@ -2,10 +2,46 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# Whisper large-v3 pèse ~3 Go en RAM et sature tous les cœurs CPU. Le narrateur
+# génère les segments en parallèle (asyncio.gather) ; sans garde-fou, chaque
+# segment chargeait son propre modèle → N×3 Go + N inférences simultanées →
+# saturation RAM/CPU et freeze machine. On charge donc le modèle UNE fois
+# (singleton) et on sérialise les transcriptions (une seule à la fois).
+_MODEL_CACHE: dict[tuple[str, str, str], Any] = {}
+_MODEL_LOCK = threading.Lock()
+_TRANSCRIBE_SEMAPHORE: asyncio.Semaphore | None = None
+
+
+def _get_transcribe_semaphore() -> asyncio.Semaphore:
+    global _TRANSCRIBE_SEMAPHORE
+    if _TRANSCRIBE_SEMAPHORE is None:
+        _TRANSCRIBE_SEMAPHORE = asyncio.Semaphore(1)
+    return _TRANSCRIBE_SEMAPHORE
+
+
+def _get_whisper_model(model_name: str, *, device: str = "cpu", compute_type: str = "int8") -> Any:
+    from faster_whisper import WhisperModel
+
+    key = (model_name, device, compute_type)
+    model = _MODEL_CACHE.get(key)
+    if model is None:
+        with _MODEL_LOCK:
+            model = _MODEL_CACHE.get(key)
+            if model is None:
+                logger.info(
+                    "Chargement du modèle Whisper %s (device=%s, %s)…",
+                    model_name, device, compute_type,
+                )
+                model = WhisperModel(model_name, device=device, compute_type=compute_type)
+                _MODEL_CACHE[key] = model
+    return model
 
 
 @dataclass
@@ -21,10 +57,11 @@ async def transcribe_to_words(
     language: str = "fr",
 ) -> list[WordSegment]:
     """Transcrit une liste de fichiers audio en segments mot-à-mot via Whisper."""
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(
-        None, _transcribe_words_sync, audio_paths, model_name, language
-    )
+    async with _get_transcribe_semaphore():
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None, _transcribe_words_sync, audio_paths, model_name, language
+        )
 
 
 async def transcribe_to_srt(
@@ -34,10 +71,11 @@ async def transcribe_to_srt(
     language: str = "fr",
 ) -> None:
     """Transcrit une liste de fichiers audio en fichier .srt via Whisper."""
-    loop = asyncio.get_event_loop()
-    await loop.run_in_executor(
-        None, _transcribe_srt_sync, audio_paths, output_srt, model_name, language
-    )
+    async with _get_transcribe_semaphore():
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(
+            None, _transcribe_srt_sync, audio_paths, output_srt, model_name, language
+        )
 
 
 def _transcribe_words_sync(
@@ -66,9 +104,7 @@ def _transcribe_internal(
     model_name: str,
     language: str,
 ) -> tuple[list[dict], list[WordSegment]]:
-    from faster_whisper import WhisperModel
-
-    model = WhisperModel(model_name, device="cpu", compute_type="int8")
+    model = _get_whisper_model(model_name)
     all_segments: list[dict] = []
     all_words: list[WordSegment] = []
     time_offset = 0.0

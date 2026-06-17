@@ -30,7 +30,7 @@ Règles absolues :
 REVISION_PROMPT = """Applique les corrections ci-dessous sur le scénario existant.
 
 SUJET : {theme}
-DURÉE CIBLE : {target_duration_s}s
+{duration_header}
 TYPE DE CORRECTION : {start_from_label}
 
 SCÉNARIO ACTUEL ({segment_count} segments — {current_duration}s au total) :
@@ -40,9 +40,10 @@ CORRECTIONS DEMANDÉES PAR LE CRITIQUE :
 {changes_list}
 
 CORRESPONDANCE corrections → champs à modifier :
-- "scenario_agent" / "scénario" / "contenu" / "angle" → title (si besoin), narration_text, hook_type, on_screen_text, visual_beats des segments concernés
-- "media_agent" / "médias" / "images" → visual_beats[].prompt, visual_type, search_keywords (cibler uniquement les beats concernés)
-- "narrator_agent" / "narration" / "voix" / "durée" → narration_text, duration_s, delivery_style, visual_beats si narration change
+- "scenario_agent" / "scénario" / "contenu" / "angle" → title (si besoin), narration_text, hook_type, on_screen_text
+- "beat_planner_agent" / "beats" / "découpage" / "phrase_anchor" → signaler dans revision_notes (regénération beat_planner gérée par l'orchestrateur)
+- "media_agent" / "médias" / "images" → search_keywords si segment avec voix ; visual_beats uniquement si needs_voice false (beats voix regénérés par beat_planner)
+- "narrator_agent" / "narration" / "voix" / "durée" → narration_text, duration_s, delivery_style
 - "editor_agent" / "montage" / "timing" → duration_s uniquement (sans toucher narration_text)
 - Erreurs factuelles majeures → signaler dans revision_notes (reprise research_agent gérée par l'orchestrateur)
 
@@ -50,19 +51,16 @@ CORRESPONDANCE corrections → champs à modifier :
 
 RÈGLES BIBLIOTHÈQUE MÉDIA :
 - Les images déjà générées restent en pool réutilisable — ne regénère que les beats explicitement concernés
-- Si un seul beat est mauvais, modifie uniquement ce beat dans visual_beats
-- Copie les beats non concernés à l'identique
+- Segments avec voix : corrections images → search_keywords uniquement (visual_beats regénérés par beat_planner)
+- Segments sans voix : modifier visual_beats directement si nécessaire
 
 {research_block}
 
 RÈGLES IMPÉRATIVES :
 1. Ne modifie PAS les segments non concernés — copie-les à l'identique
-2. Pour une correction de durée totale (ex : "réduire de 240s à 60s") :
-   → Réduis proportionnellement duration_s de chaque segment
-   → Condense narration_text en gardant UNIQUEMENT les faits essentiels
-   → Le total_duration_s final DOIT être exactement {target_duration_s}
-3. Pour une correction d'images : mets à jour visual_beats[].prompt, visual_type (clé du catalogue), search_keywords sans toucher narration_text
-4. Conserve TOUS les champs existants (order, hook_type, delivery_style, mood, strip_source_audio, needs_music, visual_beats, etc.)
+{duration_rule_2}
+3. Pour une correction d'images sur segment voix : mets à jour search_keywords ; ne modifie pas visual_beats (générés post-TTS)
+4. Conserve TOUS les champs existants (order, hook_type, delivery_style, mood, strip_source_audio, needs_music, etc.)
 
 {visual_beats_block}
 
@@ -88,12 +86,28 @@ Retourne UNIQUEMENT ce JSON :
       "visual_beats": []
     }}
   ],
-  "total_duration_s": {target_duration_s},
+  "total_duration_s": {total_duration_hint},
   "revision_notes": "Résumé en 1-2 phrases de ce qui a été modifié et pourquoi"
 }}"""
 
+_DURATION_HEADER_SHORT = (
+    "PLAGE SHORT : {min_short_duration_s}–{max_short_duration_s} s "
+    "(indicatif, durée réelle post-TTS)"
+)
+_DURATION_HEADER_LONG = "DURÉE CIBLE : {target_duration_s}s"
+
+_DURATION_RULE_SHORT = """2. Pour une correction de durée sur un short :
+   → Condense ou étends narration_text pour viser la plage {min_short_duration_s}–{max_short_duration_s} s
+   → total_duration_s indicatif (durée réelle fixée après synthèse vocale) — pas de valeur exacte imposée"""
+
+_DURATION_RULE_LONG = """2. Pour une correction de durée totale (ex : "réduire de 240s à 60s") :
+   → Réduis proportionnellement duration_s de chaque segment
+   → Condense narration_text en gardant UNIQUEMENT les faits essentiels
+   → Le total_duration_s final DOIT être exactement {target_duration_s}"""
+
 _START_FROM_LABELS: dict[str, str] = {
     "scenario_agent": "Refonte du contenu/angle éditorial",
+    "beat_planner_agent": "Correction du découpage visuel (beats)",
     "media_agent": "Remplacement des sources visuelles",
     "narrator_agent": "Correction de la narration/durée",
     "editor_agent": "Ajustement du montage/timing",
@@ -152,14 +166,48 @@ class RevisionAgent(BaseAgent):
 
         from agent.core.visual_beats_prompt import build_revision_visual_beats_block
 
-        visual_beats_block = build_revision_visual_beats_block(
-            ctx.channel_config.editorial_tone,
-            ctx.theme_category,
+        is_short = (
+            ctx.is_short_project
+            or ctx.channel_config.production_mode == "shorts_only"
         )
+        has_no_voice_segment = any(
+            seg.get("needs_voice") is False for seg in segments if isinstance(seg, dict)
+        )
+        visual_beats_block = (
+            build_revision_visual_beats_block(
+                ctx.channel_config.editorial_tone,
+                ctx.theme_category,
+            )
+            if has_no_voice_segment
+            else ""
+        )
+
+        min_short = ctx.channel_config.min_short_duration_s
+        max_short = ctx.channel_config.max_short_duration_s
+        if is_short:
+            duration_header = _DURATION_HEADER_SHORT.format(
+                min_short_duration_s=min_short,
+                max_short_duration_s=max_short,
+            )
+            duration_rule_2 = _DURATION_RULE_SHORT.format(
+                min_short_duration_s=min_short,
+                max_short_duration_s=max_short,
+            )
+            total_duration_hint = f"indicatif entre {min_short} et {max_short}"
+        else:
+            duration_header = _DURATION_HEADER_LONG.format(
+                target_duration_s=ctx.target_duration_seconds,
+            )
+            duration_rule_2 = _DURATION_RULE_LONG.format(
+                target_duration_s=ctx.target_duration_seconds,
+            )
+            total_duration_hint = str(ctx.target_duration_seconds)
 
         prompt = REVISION_PROMPT.format(
             theme=ctx.theme,
-            target_duration_s=ctx.target_duration_seconds,
+            duration_header=duration_header,
+            duration_rule_2=duration_rule_2,
+            total_duration_hint=total_duration_hint,
             start_from_label=start_from_label,
             segment_count=len(segments),
             current_duration=current_scenario.total_duration_s or 0,

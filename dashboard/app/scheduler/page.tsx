@@ -45,8 +45,13 @@ const STATUS_COLOR: Record<string, 'default' | 'success' | 'error' | 'warning'> 
   running: 'warning',
 }
 
+interface SchedulerStatus {
+  running: boolean
+  jobs_count: number
+}
+
 export default function SchedulerPage() {
-  const { data: status, mutate: mutateStatus } = useSWR('/api/v1/scheduler/status', fetcher, {
+  const { data: status, mutate: mutateStatus } = useSWR<SchedulerStatus>('/api/v1/scheduler/status', fetcher, {
     refreshInterval: 5000,
   })
   const { data: jobs, mutate: mutateJobs } = useSWR<JobInfo[]>('/api/v1/scheduler/jobs', fetcher, {

@@ -11,11 +11,19 @@ from agent.core.pipeline_resume import ResumePlan, next_agent_after, resolve_sta
 
 
 def test_next_agent_after_research() -> None:
-    assert next_agent_after("research_agent") == "scenario_agent"
+    assert next_agent_after("research_agent") == "outline_agent"
+
+
+def test_next_agent_after_outline() -> None:
+    assert next_agent_after("outline_agent") == "scenario_agent"
 
 
 def test_next_agent_after_media() -> None:
-    assert next_agent_after("media_agent") == "narrator_agent"
+    assert next_agent_after("media_agent") == "montage_planner_agent"
+
+
+def test_next_agent_after_narrator() -> None:
+    assert next_agent_after("narrator_agent") == "beat_planner_agent"
 
 
 def test_next_agent_after_critic() -> None:
@@ -72,7 +80,7 @@ async def test_resolve_start_from_media_success() -> None:
     with patch("agent.core.pipeline_resume.AsyncSessionFactory", return_value=mock_factory):
         plan = await resolve_start_from(project_id)
 
-    assert plan == ResumePlan(step="narrator_agent", iteration=1)
+    assert plan == ResumePlan(step="montage_planner_agent", iteration=1)
 
 
 @pytest.mark.asyncio
@@ -97,4 +105,4 @@ async def test_resolve_start_from_ignores_running_agent() -> None:
     with patch("agent.core.pipeline_resume.AsyncSessionFactory", return_value=mock_factory):
         plan = await resolve_start_from(project_id)
 
-    assert plan.step == "narrator_agent"
+    assert plan.step == "montage_planner_agent"

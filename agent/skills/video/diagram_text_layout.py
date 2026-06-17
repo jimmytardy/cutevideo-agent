@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from agent.core.json_parse import parse_gemini_response
+from agent.core.llm_retry import retry_transient_sync
 from agent.core.visual_beats import DiagramLabel, TextOverlayPlacement
 
 logger = logging.getLogger(__name__)
@@ -243,15 +244,18 @@ def _analyze_sync(
 
     for model_name in LAYOUT_MODELS:
         try:
-            response = client.models.generate_content(
-                model=model_name,
-                contents=contents,
-                config=types.GenerateContentConfig(
-                    temperature=0.1,
-                    max_output_tokens=2048,
-                    response_mime_type="application/json",
-                    response_json_schema=LAYOUT_RESPONSE_SCHEMA,
+            response = retry_transient_sync(
+                lambda model_name=model_name: client.models.generate_content(
+                    model=model_name,
+                    contents=contents,
+                    config=types.GenerateContentConfig(
+                        temperature=0.1,
+                        max_output_tokens=2048,
+                        response_mime_type="application/json",
+                        response_json_schema=LAYOUT_RESPONSE_SCHEMA,
+                    ),
                 ),
+                label=f"diagram_layout/{model_name}",
             )
             data = parse_gemini_response(response, model_name, required_field="labels")
             raw_labels = data.get("labels", [])

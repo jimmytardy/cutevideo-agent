@@ -47,6 +47,23 @@ VISUAL_BEATS_JSON = """
       ],
 """
 
+SCENARIO_NO_BEATS_NOTE = """
+VISUAL_BEATS — NE PAS GÉNÉRER au scénario pour les segments avec needs_voice true :
+- Les plans visuels (visual_beats) seront créés automatiquement après la synthèse vocale (beat_planner_agent).
+- Concentre-toi sur narration_text, delivery_style, mood, search_keywords, strip_source_audio.
+- Pour needs_voice false uniquement : inclure visual_beats avec on_screen_text et durées estimées.
+"""
+
+SCENARIO_NO_BEATS_JSON = """
+"""
+
+SCENARIO_VOICE_BEATS_CONTEXT: dict[str, str] = {
+    "visual_beats_comma": "",
+    "visual_beats_example": "",
+    "visual_beats_rules": SCENARIO_NO_BEATS_NOTE.strip(),
+}
+
+
 REVISION_VISUAL_BEATS_BLOCK = """
 CATALOGUE visual_type (clés autorisées pour visual_beats[].visual_type) :
 {visual_beats_catalog}

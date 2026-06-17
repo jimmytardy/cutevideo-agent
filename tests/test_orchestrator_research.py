@@ -11,7 +11,8 @@ from agent.core.pipeline_reset import PIPELINE_STEPS
 
 def test_agent_order_starts_with_research() -> None:
     assert AGENT_ORDER[0] == "research_agent"
-    assert AGENT_ORDER[1] == "scenario_agent"
+    assert AGENT_ORDER[1] == "outline_agent"
+    assert AGENT_ORDER[2] == "scenario_agent"
 
 
 def test_pipeline_steps_include_research() -> None:

@@ -8,13 +8,13 @@ import CardContent from '@mui/material/CardContent'
 import Chip from '@mui/material/Chip'
 import AppShell from '@/components/AppShell'
 import AuthGuard from '@/components/AuthGuard'
-import { fetchMySubscription, fetcher } from '@/lib/api'
+import { fetcher, type AuthUser, type SubscriptionInfo } from '@/lib/api'
 
 const BASE = '/api/v1'
 
 export default function AccountPage() {
-  const { data: sub } = useSWR(`${BASE}/me/subscription`, fetcher)
-  const { data: me } = useSWR(`${BASE}/auth/me`, fetcher)
+  const { data: sub } = useSWR<SubscriptionInfo>(`${BASE}/me/subscription`, fetcher)
+  const { data: me } = useSWR<AuthUser>(`${BASE}/auth/me`, fetcher)
 
   return (
     <AuthGuard>

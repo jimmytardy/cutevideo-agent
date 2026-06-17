@@ -4,12 +4,16 @@ from __future__ import annotations
 
 _AGENT_ORDER = [
     "research_agent",
+    "outline_agent",
     "scenario_agent",
     "fact_checker_agent",
     "hook_optimizer_agent",
+    "revision_agent",
+    "narrator_agent",
+    "art_director_agent",
+    "beat_planner_agent",
     "diagram_specialist_agent",
     "media_agent",
-    "narrator_agent",
     "montage_planner_agent",
     "editor_agent",
     "subtitle_agent",
@@ -18,20 +22,25 @@ _AGENT_ORDER = [
 
 _AGENT_LOOP_IDX: dict[str, int] = {
     "research_agent": 0,
+    "outline_agent": 1,
     "scenario_agent": 1,
     "fact_checker_agent": 1,
     "hook_optimizer_agent": 1,
-    "diagram_specialist_agent": 1,
-    "media_agent": 2,
-    "narrator_agent": 3,
-    "montage_planner_agent": 4,
-    "editor_agent": 5,
-    "subtitle_agent": 6,
+    "revision_agent": 1,
+    "narrator_agent": 2,
+    "art_director_agent": 3,
+    "beat_planner_agent": 3,
+    "diagram_specialist_agent": 3,
+    "media_agent": 4,
+    "montage_planner_agent": 5,
+    "editor_agent": 6,
+    "subtitle_agent": 7,
 }
 
 _REVISION_AGENTS = frozenset({
     "scenario_agent", "media_agent", "narrator_agent",
-    "hook_optimizer_agent", "diagram_specialist_agent",
+    "beat_planner_agent", "diagram_specialist_agent",
+    "hook_optimizer_agent",
 })
 
 _VISUAL_CRITIC_KEYWORDS = frozenset({
@@ -62,28 +71,24 @@ def needs_revision_agent(
     requested_changes: list[dict] | None,
     start_from: str | None,
 ) -> bool:
-    """True si RevisionAgent doit tourner même quand start_from=editor_agent."""
     if not requested_changes:
         return False
     for change in requested_changes:
-        if change.get("agent") in _REVISION_AGENTS:
+        agent = change.get("agent")
+        if agent in _REVISION_AGENTS:
             return True
-    return start_from in _REVISION_AGENTS
+    return start_from in _REVISION_AGENTS if start_from else False
 
 
-def critic_rework_iteration(critic_iteration: int | None) -> int:
-    """Itération pipeline où appliquer les corrections d'un rapport critique.
-
-    Le critique termine l'itération N ; la révision reprend en itération N+1.
-    """
-    return (critic_iteration or 1) + 1
-
-
-def should_skip_pool_reuse(critic_feedback: list[dict] | None) -> bool:
-    if not critic_feedback:
+def should_skip_pool_reuse(requested_changes: list[dict] | None) -> bool:
+    if not requested_changes:
         return False
-    for change in critic_feedback:
-        desc = (change.get("change_description") or "").lower()
+    for change in requested_changes:
+        desc = str(change.get("change_description", "")).lower()
         if any(kw in desc for kw in _VISUAL_CRITIC_KEYWORDS):
             return True
     return False
+
+
+def critic_rework_iteration(current: int | None) -> int:
+    return (current or 1) + 1

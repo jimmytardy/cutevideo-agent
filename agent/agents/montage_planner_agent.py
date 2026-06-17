@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from agent.core.base_agent import BaseAgent
 from agent.core.database import AsyncSessionFactory, AudioFile, MediaAsset, MontagePlan, Scenario
+from agent.core.json_parse import parse_json_text
 from agent.core.montage_plan import (
     BeatClipPlan,
     EffectiveBeat,
@@ -35,6 +36,12 @@ from agent.skills.video.montage_decisions import (
     resolve_overlay_mode,
     resolve_transition,
 )
+from agent.skills.video.clip_timeline_normalize import (
+    TimelineClipDraft,
+    expand_timeline_to_clip_drafts,
+    extend_last_clip_to_match_audio,
+    validate_visual_audio_alignment,
+)
 from agent.skills.video.trim_selector import select_trim_window
 
 if TYPE_CHECKING:
@@ -46,7 +53,10 @@ PLANNER_SYSTEM = """Tu adaptes la structure visuelle (effective_beats) d'un segm
 selon les médias disponibles. La narration ne change pas.
 Retourne UNIQUEMENT du JSON valide."""
 
-PLANNER_PROMPT = """Segment {segment_order} — adapter les beats visuels aux médias.
+PLANNER_PROMPT = """Segment {segment_order} — adapter les beats visuels aux médias disponibles.
+
+Les beats sont déjà calibrés post-TTS (beat_planner). Ne re-découpe pas la narration.
+Fusionne uniquement si une vidéo longue couvre plusieurs beats consécutifs.
 
 Narration (extrait) : {narration_excerpt}
 Durée audio : {audio_duration_s:.1f}s
@@ -56,8 +66,9 @@ Médias disponibles : {assets_json}
 Règles :
 - Fusionner beats si une vidéo longue couvre plusieurs moments
 - Supprimer beats sans média si durée < 3s
-- max {max_static_shot_s}s par plan
+- max {max_static_shot_s}s par plan (sous-clips gérés en aval)
 - Durée totale = {audio_duration_s:.1f}s
+- Ne pas changer phrase_anchor ni le nombre de beats sans raison média
 
 Retourne :
 {{
@@ -245,7 +256,11 @@ class MontagePlannerAgent(BaseAgent):
             image_paths=image_paths,
         )
 
-        clips: list[BeatClipPlan] = []
+        needs_voice = seg.get("needs_voice", True) is not False and bool(
+            (seg.get("narration_text") or "").strip()
+        )
+        strip_source = bool(seg.get("strip_source_audio", needs_voice))
+        drafts: list[TimelineClipDraft] = []
         max_static = float(ctx.channel_config.max_static_shot_s)
         for i, entry in enumerate(timeline):
             src_order = entry.beat.order
@@ -254,10 +269,7 @@ class MontagePlannerAgent(BaseAgent):
                 asset = seg_assets[i] if i < len(seg_assets) else (seg_assets[0] if seg_assets else None)
             if not asset or not asset.local_path:
                 continue
-            beat_duration = min(
-                max(entry.end_s - entry.start_s, 0.5),
-                max_static,
-            )
+            beat_duration = max(entry.end_s - entry.start_s, 0.5)
             meta = clip_metadata_from_dict(
                 asset.clip_metadata if isinstance(asset.clip_metadata, dict) else None
             )
@@ -282,22 +294,49 @@ class MontagePlannerAgent(BaseAgent):
                 trim_end = sel.end_s
                 trim_reason = sel.reason
 
-            clips.append(BeatClipPlan(
-                beat_order=i + 1,
-                source_beat_orders=(
-                    effective_beats[i].source_beat_orders if i < len(effective_beats)
-                    else [entry.beat.order]
-                ),
-                asset_path=asset.local_path,
-                asset_type="video" if is_video else "image",
-                timeline_start_s=entry.start_s,
-                timeline_end_s=entry.start_s + beat_duration,
-                source_trim_start_s=trim_start,
-                source_trim_end_s=trim_end,
-                trim_reason=trim_reason,
-                on_screen_text=entry.on_screen_text or entry.beat.on_screen_text,
-                visual_type=visual_type,
-            ))
+            drafts.append(
+                TimelineClipDraft(
+                    beat_order=i + 1,
+                    source_beat_orders=(
+                        effective_beats[i].source_beat_orders if i < len(effective_beats)
+                        else [entry.beat.order]
+                    ),
+                    asset_path=asset.local_path,
+                    asset_type="video" if is_video else "image",
+                    timeline_start_s=entry.start_s,
+                    timeline_end_s=entry.end_s,
+                    source_trim_start_s=trim_start,
+                    source_trim_end_s=trim_end,
+                    trim_reason=trim_reason,
+                    on_screen_text=entry.on_screen_text or entry.beat.on_screen_text,
+                    visual_type=visual_type,
+                    strip_source_audio=strip_source,
+                )
+            )
+
+        expanded_drafts = expand_timeline_to_clip_drafts(
+            drafts,
+            max_static_shot_s=max_static,
+        )
+        clips: list[BeatClipPlan] = [
+            BeatClipPlan(
+                beat_order=d.beat_order,
+                source_beat_orders=d.source_beat_orders,
+                asset_path=d.asset_path,
+                asset_type=d.asset_type,  # type: ignore[arg-type]
+                timeline_start_s=d.timeline_start_s,
+                timeline_end_s=d.timeline_end_s,
+                source_trim_start_s=d.source_trim_start_s,
+                source_trim_end_s=d.source_trim_end_s,
+                trim_reason=d.trim_reason,
+                on_screen_text=d.on_screen_text,
+                visual_type=d.visual_type,
+                strip_source_audio=d.strip_source_audio,
+            )
+            for d in expanded_drafts
+        ]
+        clips = extend_last_clip_to_match_audio(clips, audio_duration)
+        validate_visual_audio_alignment(clips, audio_duration)
 
         enriched = await self._enrich_clips(
             ctx,
@@ -478,7 +517,7 @@ class MontagePlannerAgent(BaseAgent):
                 assets_json=json.dumps(assets_json, ensure_ascii=False),
                 max_static_shot_s=ctx.channel_config.max_static_shot_s,
             )
-            raw = await self._call_claude(prompt, system=PLANNER_SYSTEM, max_tokens=8192)
+            raw = await self._call_claude(prompt, system=PLANNER_SYSTEM, max_tokens=16384)
             data = self._parse_json(raw)
             raw_beats = data.get("effective_beats") or []
             notes = str(data.get("adaptation_notes") or "")
@@ -503,11 +542,7 @@ class MontagePlannerAgent(BaseAgent):
 
     @staticmethod
     def _parse_json(raw: str) -> dict[str, Any]:
-        raw = raw.strip()
-        if raw.startswith("```"):
-            lines = raw.split("\n")
-            raw = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
-        return json.loads(raw)
+        return parse_json_text(raw, "montage_planner_agent")
 
 
 async def load_latest_montage_plan(project_id: uuid.UUID) -> MontagePlanData | None:

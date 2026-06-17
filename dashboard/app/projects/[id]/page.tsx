@@ -29,6 +29,7 @@ import FinalPreviewSection from '@/components/FinalPreviewSection'
 import MediaValidationPanel from '@/components/MediaValidationPanel'
 import {
   fetcher,
+  pipelinePlanUrl,
   stopPipeline,
   restartPipeline,
   dequeueProject,
@@ -40,6 +41,7 @@ import {
   type AgentRun,
   type CriticReport,
   type Scenario,
+  type PipelinePlanResponse,
 } from '@/lib/api'
 import { selectionKey, getResumeStep, getEffectiveProjectStatus, type PipelineSelection, type PipelineKickoff } from '@/lib/pipeline'
 
@@ -71,7 +73,10 @@ export default function ProjectDetailPage({ params }: Props) {
   const { data: project, isLoading, error, mutate: mutateProject } = useSWR<Project>(
     `/api/v1/projects/${id}`,
     fetcher,
-    { refreshInterval: pipelineKickoff ? 1000 : project?.status === 'queued' ? 5000 : 3000 },
+    {
+      refreshInterval: (data) =>
+        pipelineKickoff ? 1000 : data?.status === 'queued' ? 5000 : 3000,
+    },
   )
   const { data: agentRuns } = useSWR<AgentRun[]>(
     `/api/v1/agents/runs/${id}`,
@@ -91,6 +96,11 @@ export default function ProjectDetailPage({ params }: Props) {
     `/api/v1/projects/${id}/scenario`,
     fetcher,
     { refreshInterval: project?.status === 'running' || pipelineKickoff ? 5000 : 0 },
+  )
+  // Plan du pipeline : quels agents tournent réellement pour ce type de vidéo.
+  const { data: pipelinePlan } = useSWR<PipelinePlanResponse>(
+    pipelinePlanUrl(id),
+    fetcher,
   )
 
   useEffect(() => {
@@ -112,13 +122,16 @@ export default function ProjectDetailPage({ params }: Props) {
   const isQueued = project.status === 'queued'
   const failedRuns = agentRuns?.filter((r) => r.status === 'failed' && r.error) ?? []
   const canRestart = ['failed', 'stopped', 'approved', 'pending'].includes(project.status)
-  const isShort = project.config?.format === 'short_standalone' || project.config?.format === 'short'
+  // Repli sur le format projet tant que le plan n'est pas chargé.
+  const isShort = pipelinePlan?.is_short
+    ?? (project.config?.format === 'short_standalone' || project.config?.format === 'short')
   const resumeTarget = getResumeStep(
     agentRuns ?? [],
     project.status,
     criticReports ?? [],
     isShort,
     pipelineKickoff,
+    pipelinePlan?.post_production,
   )
 
   const beginPipelineKickoff = (fromStep: string) => {
@@ -482,6 +495,8 @@ export default function ProjectDetailPage({ params }: Props) {
         <PipelineVisualizer
           projectId={id}
           isShort={isShort}
+          preparationAgents={pipelinePlan?.preparation}
+          postProductionAgents={pipelinePlan?.post_production}
           maxIterations={currentMaxIter}
           projectStatus={project.status}
           pipelineKickoff={pipelineKickoff}

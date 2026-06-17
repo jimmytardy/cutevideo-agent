@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from enum import Enum
 from typing import Any, Literal, Union
 
@@ -7,6 +8,8 @@ from pydantic import BaseModel, Field
 
 from agent.core.config import load_agent_config
 from agent.core.database import Channel
+
+logger = logging.getLogger(__name__)
 
 PLAN_LEGACY_ALIASES: dict[str, str] = {
     "off": "off",
@@ -129,6 +132,38 @@ class GeminiTtsConfig(BaseModel):
     language_code: str = "fr"
 
 
+class AudioMasteringCompressorConfig(BaseModel):
+    threshold_db: float = -18
+    ratio: float = 3
+    attack_ms: float = 15
+    release_ms: float = 120
+    makeup_db: float = 2
+
+
+class AudioMasteringEqBand(BaseModel):
+    f: int
+    g: float
+    w: float = 1.0
+
+
+class AudioMasteringConfig(BaseModel):
+    """Chaîne de mastering voix appliquée avant le loudnorm final (preset voice-studio)."""
+
+    enabled: bool = True
+    preset: str = "voice-studio"
+    highpass_hz: int = 80
+    deesser: bool = True
+    compressor: AudioMasteringCompressorConfig = Field(
+        default_factory=AudioMasteringCompressorConfig
+    )
+    eq: list[AudioMasteringEqBand] = Field(
+        default_factory=lambda: [
+            AudioMasteringEqBand(f=200, g=-2, w=1),
+            AudioMasteringEqBand(f=3000, g=2, w=2),
+        ]
+    )
+
+
 class SubtitleConfig(BaseModel):
     enabled: bool = True
     style: Literal["karaoke"] = "karaoke"
@@ -156,6 +191,9 @@ class ChannelRuntimeConfig(BaseModel):
     tts_rate: str = "+0%"
     tts_pitch: str = "+0Hz"
     tts_insert_pauses: bool = True
+    tts_comma_pauses: bool = False
+    tts_oralize: bool = True
+    audio_mastering: AudioMasteringConfig = Field(default_factory=AudioMasteringConfig)
     gemini_tts: GeminiTtsConfig = Field(default_factory=GeminiTtsConfig)
     default_tags: list[str] = Field(default_factory=list)
     youtube_category_id: str = "27"
@@ -166,6 +204,9 @@ class ChannelRuntimeConfig(BaseModel):
     enabled_platforms: list[str] = Field(default_factory=lambda: list(DEFAULT_PLATFORMS))
     production_mode: Literal["mixed", "long_only", "shorts_only"] = "mixed"
     short_duration_s: int = 90
+    min_short_duration_s: int = 60
+    max_short_duration_s: int = 120
+    min_duration_tiktok: int = 60
     editorial_tone: str = ""
     editorial_target_audience: str = "Grand public curieux, français"
     editorial_differentiator: str = ""
@@ -182,6 +223,9 @@ class ChannelRuntimeConfig(BaseModel):
     auto_reply_comments: bool = True
     max_replies_per_run: int = 10
     max_comments_fetched: int = 50
+    # Sécurité des réponses sortantes (OWASP LLM01 — action sortante dérivée d'entrée non fiable).
+    reply_llm_screen: bool = True  # 2e couche : classifieur LLM léger avant publication
+    require_reply_review: bool = False  # file de validation humaine au lieu de poster directement
     analytics_enabled: bool = True
     comments_enabled: bool = True
     max_publications_per_engagement_run: int = 40
@@ -253,6 +297,26 @@ def _resolve_gemini_tts(tts: dict[str, Any]) -> GeminiTtsConfig:
         voice=str(gemini.get("voice", "Leda")),
         language_code=str(gemini.get("language_code", "fr")),
     )
+
+
+def _resolve_audio_mastering(
+    global_cfg: dict[str, Any], channel_overrides: dict[str, Any]
+) -> AudioMasteringConfig:
+    base = global_cfg.get("audio_mastering", {})
+    override = channel_overrides.get("audio_mastering", {})
+    base = base if isinstance(base, dict) else {}
+    override = override if isinstance(override, dict) else {}
+    merged: dict[str, Any] = {**base, **override}
+    if base.get("compressor") or override.get("compressor"):
+        merged["compressor"] = {
+            **(base.get("compressor") or {}),
+            **(override.get("compressor") or {}),
+        }
+    try:
+        return AudioMasteringConfig(**merged)
+    except Exception:  # config invalide → preset par défaut
+        logger.warning("Config audio_mastering invalide — preset par défaut utilisé")
+        return AudioMasteringConfig()
 
 
 def _resolve_subtitles(channel_overrides: dict[str, Any]) -> SubtitleConfig:
@@ -455,6 +519,9 @@ def resolve_channel_config(
         tts_rate=str(tts.get("rate", tts.get("default_rate", "+0%"))),
         tts_pitch=str(tts.get("pitch", "+0Hz")),
         tts_insert_pauses=bool(tts.get("insert_pauses", True)),
+        tts_comma_pauses=bool(tts.get("comma_pauses", False)),
+        tts_oralize=bool(tts.get("oralize", True)),
+        audio_mastering=_resolve_audio_mastering(global_cfg, channel_overrides),
         gemini_tts=_resolve_gemini_tts(tts),
         default_tags=default_tags,
         youtube_category_id=str(publishing.get("youtube_category_id", "27")),
@@ -465,6 +532,24 @@ def resolve_channel_config(
         enabled_platforms=enabled_platforms,
         production_mode=production_mode,  # type: ignore[arg-type]
         short_duration_s=int(production.get("short_duration_s", global_cfg.get("content_planning", {}).get("default_short_duration_s", 60))),
+        min_short_duration_s=int(
+            production.get(
+                "min_short_duration_s",
+                global_cfg.get("content_planning", {}).get("min_short_duration_s", 60),
+            )
+        ),
+        max_short_duration_s=int(
+            production.get(
+                "max_short_duration_s",
+                global_cfg.get("content_planning", {}).get(
+                    "max_short_duration_s",
+                    global_cfg.get("video", {}).get("short", {}).get("max_duration_tiktok", 120),
+                ),
+            )
+        ),
+        min_duration_tiktok=int(
+            global_cfg.get("video", {}).get("short", {}).get("min_duration_tiktok", 60)
+        ),
         editorial_tone=str(editorial.get("tone", "")),
         editorial_target_audience=str(editorial.get("target_audience", "Grand public curieux, français")),
         editorial_differentiator=str(editorial.get("differentiator", kit.get("content_angle", ""))),
@@ -529,6 +614,8 @@ def resolve_channel_config(
         auto_reply_comments=bool(engagement.get("auto_reply_comments", True)),
         max_replies_per_run=int(engagement.get("max_replies_per_run", 10)),
         max_comments_fetched=int(engagement.get("max_comments_fetched", 50)),
+        reply_llm_screen=bool(engagement.get("reply_llm_screen", True)),
+        require_reply_review=bool(engagement.get("require_reply_review", False)),
         analytics_enabled=bool(engagement.get("analytics_enabled", True)),
         comments_enabled=bool(engagement.get("comments_enabled", True)),
         max_publications_per_engagement_run=int(

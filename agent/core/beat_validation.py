@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, Field
 
 from agent.core.media_validation import MediaValidationBrief, _merge_unique_lists
-from agent.core.visual_beats import VisualBeat, parse_visual_beats
+from agent.core.visual_beats import VisualBeat, beat_narration_excerpt, parse_visual_beats
 from agent.skills.media.beat_source_routing import DEFAULT_AI_ONLY_VISUAL_TYPES
 from agent.skills.media_sources.ai.prompt_builder import DIAGRAM_VISUAL_TYPES
 
@@ -62,6 +62,7 @@ class BeatValidationContext(BaseModel):
     visual_type: str = ""
     phrase_anchor: str = ""
     prompt: str = ""
+    spoken_text: str = ""
 
 
 class VisualTypeTemplate(BaseModel):
@@ -182,6 +183,7 @@ def resolve_beat_validation(
         visual_type=beat.visual_type,
         phrase_anchor=beat.phrase_anchor,
         prompt=beat.prompt,
+        spoken_text=beat_narration_excerpt(beat),
     )
 
 

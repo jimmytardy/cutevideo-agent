@@ -10,9 +10,10 @@ def test_ken_burns_filter_is_centered_without_pan() -> None:
         pan_enabled=False,
         pan_direction=0,
     )
-    assert "on/" in vf
+    assert "n/" in vf
+    assert "eval=frame" in vf
     assert "zoompan" not in vf
-    assert "scale=7680:4320" in vf
+    assert "scale=2880:1620" in vf
     assert "flags=lanczos" in vf
 
 
@@ -23,7 +24,7 @@ def test_ken_burns_filter_linear_zoom() -> None:
         pan_enabled=False,
         pan_direction=0,
     )
-    assert "(1+0.03*on/150)" in vf
+    assert "(1+0.03*n/150)" in vf
     assert "scale=1080:1920:flags=lanczos" in vf
 
 
@@ -34,7 +35,7 @@ def test_ken_burns_filter_pan_when_enabled() -> None:
         pan_enabled=True,
         pan_direction=1,
     )
-    assert "40*on/" in vf
+    assert "40*n/" in vf
 
 
 def test_ken_burns_static_when_zoom_zero() -> None:

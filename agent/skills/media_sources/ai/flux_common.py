@@ -65,6 +65,7 @@ async def generate_flux_image(
             theme_category=request.theme_category,
             editorial_tone=request.editorial_tone,
             aspect_ratio=request.aspect_ratio,
+            style_block=request.style_block,
         )
     )
     payload: dict = {
@@ -76,6 +77,8 @@ async def generate_flux_image(
     }
     if plan_id == "flux_ultra":
         payload["raw"] = True
+    if request.seed is not None:
+        payload["seed"] = int(request.seed)
     _apply_flux_negative_prompt(payload, request)
 
     headers = {"Authorization": f"Key {fal_key}", "Content-Type": "application/json"}
@@ -150,6 +153,7 @@ async def generate_flux2_image(
             theme_category=request.theme_category,
             editorial_tone=request.editorial_tone,
             aspect_ratio=request.aspect_ratio,
+            style_block=request.style_block,
         )
     )
     payload: dict = {
@@ -160,6 +164,8 @@ async def generate_flux2_image(
         "enable_safety_checker": True,
         "guidance_scale": 2.5,
     }
+    if request.seed is not None:
+        payload["seed"] = int(request.seed)
     _apply_flux_negative_prompt(payload, request)
 
     headers = {"Authorization": f"Key {fal_key}", "Content-Type": "application/json"}

@@ -9,13 +9,15 @@ from agent.core.database import AgentRun, AsyncSessionFactory
 
 _CREATION_AGENT_ORDER: list[str] = [
     "research_agent",
+    "outline_agent",
     "scenario_agent",
     "fact_checker_agent",
     "hook_optimizer_agent",
-    "diagram_specialist_agent",
     "revision_agent",
-    "media_agent",
     "narrator_agent",
+    "beat_planner_agent",
+    "diagram_specialist_agent",
+    "media_agent",
     "montage_planner_agent",
     "editor_agent",
     "subtitle_agent",

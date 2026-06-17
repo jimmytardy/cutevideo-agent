@@ -19,7 +19,7 @@ import Tab from '@mui/material/Tab'
 import AppShell from '@/components/AppShell'
 import AuthGuard from '@/components/AuthGuard'
 import AgentLlmConfigPanel from '@/components/AgentLlmConfigPanel'
-import { fetcher, type AgentRun } from '@/lib/api'
+import { fetcher, type AgentRun, type Project } from '@/lib/api'
 
 const STATUS_COLOR: Record<string, 'default' | 'warning' | 'success' | 'error'> = {
   running: 'warning',
@@ -30,7 +30,7 @@ const STATUS_COLOR: Record<string, 'default' | 'warning' | 'success' | 'error'> 
 }
 
 function AgentsMonitoringTab() {
-  const { data: projects, isLoading: loadingProjects } = useSWR('/api/v1/projects', fetcher, {
+  const { data: projects, isLoading: loadingProjects } = useSWR<Project[]>('/api/v1/projects', fetcher, {
     refreshInterval: 5000,
   })
 

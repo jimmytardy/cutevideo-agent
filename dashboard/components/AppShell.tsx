@@ -25,7 +25,7 @@ import KeyIcon from '@mui/icons-material/Key'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import useSWR from 'swr'
-import { clearAuthToken, fetcher } from '@/lib/api'
+import { clearAuthToken, fetcher, type AuthUser } from '@/lib/api'
 
 const DRAWER_WIDTH = 220
 const BASE = '/api/v1'
@@ -47,7 +47,7 @@ const NAV_ITEMS = [
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const router = useRouter()
-  const { data: me } = useSWR(`${BASE}/auth/me`, fetcher)
+  const { data: me } = useSWR<AuthUser>(`${BASE}/auth/me`, fetcher)
 
   const visibleItems = NAV_ITEMS.filter((item) => !item.adminOnly || me?.is_admin)
 

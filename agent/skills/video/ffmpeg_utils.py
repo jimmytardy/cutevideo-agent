@@ -61,6 +61,7 @@ async def assemble_from_montage_plan(
     audio_files: list[AudioFile],
     output_path: Path,
     project_id: uuid.UUID,
+    grade: str = "",
 ) -> float:
     """Assemble une vidéo depuis un MontagePlan (chemin unique du monteur)."""
     if not montage_plan.segments:
@@ -87,6 +88,7 @@ async def assemble_from_montage_plan(
             audio_file.local_path,
             seg_path,
             is_vertical=is_vertical,
+            grade=grade,
         )
         video_segments.append(seg_path)
 

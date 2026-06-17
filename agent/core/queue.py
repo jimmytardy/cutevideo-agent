@@ -31,8 +31,12 @@ class AgentQueue:
         self._client: aioredis.Redis | None = None
 
     async def connect(self) -> None:
+        # Connexion paresseuse réutilisable : on ne (re)connecte que si le client
+        # n'existe pas. Le client redis.asyncio gère lui-même la reconnexion via
+        # health_check_interval / retry_on_timeout, donc inutile de tout reconstruire
+        # à chaque appel (sinon une nouvelle connexion par opération, plusieurs/s).
         if self._client is not None:
-            await self.disconnect()
+            return
         self._client = aioredis.from_url(
             settings.redis_url,
             decode_responses=True,

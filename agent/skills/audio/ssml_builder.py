@@ -80,9 +80,37 @@ DEFAULT_STYLE = "narration-relaxed"
 DEFAULT_RATE = "+0%"
 DEFAULT_PITCH = "+0Hz"
 
+# Bornes de sécurité : au-delà la voix sonne robotique / accélérée.
+RATE_CLAMP_PCT = 15
+PITCH_CLAMP_HZ = 8
+
 
 def _escape(text: str) -> str:
     return xml.sax.saxutils.escape(text)
+
+
+def _clamp_rate(rate: str) -> str:
+    """Borne un rate SSML (« +12% ») dans [-RATE_CLAMP_PCT, +RATE_CLAMP_PCT]."""
+    match = re.fullmatch(r"\s*([+-]?\d+(?:\.\d+)?)\s*%\s*", rate or "")
+    if not match:
+        return rate
+    value = float(match.group(1))
+    clamped = max(-RATE_CLAMP_PCT, min(RATE_CLAMP_PCT, value))
+    if clamped == value:
+        return rate
+    return f"{clamped:+.0f}%"
+
+
+def _clamp_pitch(pitch: str) -> str:
+    """Borne un pitch SSML (« +5Hz ») dans [-PITCH_CLAMP_HZ, +PITCH_CLAMP_HZ]."""
+    match = re.fullmatch(r"\s*([+-]?\d+(?:\.\d+)?)\s*Hz\s*", pitch or "")
+    if not match:
+        return pitch
+    value = float(match.group(1))
+    clamped = max(-PITCH_CLAMP_HZ, min(PITCH_CLAMP_HZ, value))
+    if clamped == value:
+        return pitch
+    return f"{clamped:+.0f}Hz"
 
 
 def _tone_defaults(editorial_tone: str) -> dict[str, str]:
@@ -149,16 +177,26 @@ def _resolve_prosody(
     if ds.get("pitch"):
         pitch = str(ds["pitch"])
 
-    return style, rate, pitch
+    return style, _clamp_rate(rate), _clamp_pitch(pitch)
 
 
-def _insert_pauses(escaped_body: str) -> str:
-    """Ajoute des pauses SSML après ponctuation forte et avant chiffres/dates."""
+def _insert_pauses(escaped_body: str, comma_pauses: bool = False) -> str:
+    """Ajoute des pauses SSML après ponctuation forte et avant chiffres/dates.
+
+    `comma_pauses=True` ajoute une courte respiration après virgules et points-virgules
+    pour un débit plus aéré.
+    """
     text = re.sub(
         r"([.!?])(\s)",
         r"\1<break time='300ms'/>\2",
         escaped_body,
     )
+    if comma_pauses:
+        text = re.sub(
+            r"([,;])(\s)",
+            r"\1<break time='150ms'/>\2",
+            text,
+        )
     text = re.sub(
         r"(\s)(\d{3,4}|\d{1,2}\s*(?:siècle|av\.|ap\.|°|%))",
         r"\1<break time='200ms'/>\2",
@@ -212,6 +250,7 @@ def build_azure_ssml(
     default_rate: str = DEFAULT_RATE,
     default_pitch: str = DEFAULT_PITCH,
     insert_pauses: bool = True,
+    comma_pauses: bool = False,
 ) -> str:
     """Construit un document SSML Azure avec style par segment."""
     style, rate, pitch = _resolve_prosody(
@@ -225,7 +264,7 @@ def build_azure_ssml(
 
     body = _escape(text.strip())
     if insert_pauses:
-        body = _insert_pauses(body)
+        body = _insert_pauses(body, comma_pauses=comma_pauses)
 
     emphasis_words = (delivery_style or {}).get("emphasis_words") or []
     body = _apply_emphasis(body, text, emphasis_words)

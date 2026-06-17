@@ -42,6 +42,8 @@
     "default_style": "narration-relaxed",
     "default_rate": "+0%",
     "insert_pauses": true,
+    "comma_pauses": false,
+    "oralize": true,
     "gemini": {
       "apply_to": "off",
       "model": "gemini-2.5-flash-preview-tts",
@@ -275,6 +277,8 @@
     "freshness_days": 30,
     "default_long_duration_seconds": 1800,
     "default_short_duration_s": 90,
+    "min_short_duration_s": 60,
+    "max_short_duration_s": 120,
     "evergreen_default": [
       "Portrait d'une figure emblématique du thème",
       "Mythe ou idée reçue à déconstruire",
@@ -359,13 +363,17 @@
     "agent_models": {
       "content_planner_agent": "economy",
       "critic_agent": "economy",
-      "comments_agent": "economy"
+      "comments_agent": "economy",
+      "art_director_agent": "economy",
+      "metadata_agent": "economy"
     },
     "max_tokens": {
       "content_planner_agent": 2048,
       "critic_agent": 2048,
       "comments_agent": 1024,
-      "montage_planner_agent": 8192,
+      "art_director_agent": 512,
+      "metadata_agent": 2048,
+      "montage_planner_agent": 16384,
       "fact_checker_agent": 4096,
       "hook_optimizer_agent": 4096,
       "diagram_specialist_agent": 4096
@@ -428,5 +436,25 @@
     "music_volume_ambient_only": 0.04,
     "music_volume_no_voice": 0.10,
     "ducking_enabled": true
+  },
+  "sfx": {
+    "enabled": true
+  },
+  "audio_mastering": {
+    "enabled": true,
+    "preset": "voice-studio",
+    "highpass_hz": 80,
+    "deesser": true,
+    "compressor": {
+      "threshold_db": -18,
+      "ratio": 3,
+      "attack_ms": 15,
+      "release_ms": 120,
+      "makeup_db": 2
+    },
+    "eq": [
+      { "f": 200, "g": -2, "w": 1 },
+      { "f": 3000, "g": 2, "w": 2 }
+    ]
   }
 }

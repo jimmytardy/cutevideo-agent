@@ -75,6 +75,16 @@ export default function FinalPreviewSection({ projectId, refreshInterval = 5000 
         Aperçu final
       </Typography>
 
+      {data.duration_warnings?.length > 0 && (
+        <Stack spacing={1} sx={{ mb: 1.5 }}>
+          {data.duration_warnings.map((warning) => (
+            <Alert key={warning} severity="warning">
+              {warning}
+            </Alert>
+          ))}
+        </Stack>
+      )}
+
       <Box
         component="video"
         controls

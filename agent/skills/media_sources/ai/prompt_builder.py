@@ -480,6 +480,34 @@ VISUAL_TYPE_REGISTRY: dict[str, VisualTypeEntry] = {
 }
 
 
+# Bloc cinématographie injecté par famille (objectif, lumière, palette, profondeur).
+# Suit les bonnes pratiques FLUX : décrire lumière/objectif/grade plutôt que des mots-clés.
+_FAMILY_CINEMATOGRAPHY: dict[str, str] = {
+    "SPORT": "shot on telephoto 200mm, fast shutter freezing motion, stadium floodlights, vivid saturated colors, dynamic angle",
+    "TRUE_CRIME": "35mm lens, low-key chiaroscuro lighting, desaturated muted palette, shallow depth of field, somber tense mood",
+    "ESPACE_SCIENCE": "ultra-detailed, deep contrast, cool blue and teal tones, crisp clarity, dramatic rim light",
+    "ART_HISTOIRE": "soft directional museum lighting, warm amber tones, fine surface texture, archival authentic look",
+    "NATURE": "natural daylight, golden hour warmth, high dynamic range, rich greens and earth tones, shallow depth of field",
+    "DOCUMENTAIRE": "35mm lens, natural available light, neutral realistic color grade, shallow depth of field, cinematic framing",
+    "ACTUALITE_POLITIQUE": "photojournalistic, natural light, candid moment, neutral balanced tones, documentary realism",
+    "HUMOUR": "bright high-key lighting, bold vivid colors, playful exaggerated composition",
+    "TECH_FINANCE_LIFESTYLE": "clean studio lighting, soft shadows, modern minimal palette, shallow depth of field, crisp product detail",
+}
+_DEFAULT_CINEMATOGRAPHY = (
+    "cinematic lighting, balanced composition, natural color grade, shallow depth of field, sharp focus"
+)
+
+_FAMILY_OF_TYPE: dict[str, str] = {}
+for _family_name, _family_types in VISUAL_TYPE_FAMILIES.items():
+    for _vtype in _family_types:
+        _FAMILY_OF_TYPE.setdefault(_vtype, _family_name)
+
+
+def _cinematography_for(visual_type: str) -> str:
+    family = _FAMILY_OF_TYPE.get(visual_type, "")
+    return _FAMILY_CINEMATOGRAPHY.get(family, _DEFAULT_CINEMATOGRAPHY)
+
+
 def _all_catalog_types() -> list[str]:
     """Tous les types du registre sauf custom, dans l'ordre des familles."""
     ordered: list[str] = []
@@ -592,24 +620,48 @@ def build_visual_prompt(
     theme_category: str = "",
     editorial_tone: str = "",
     aspect_ratio: str = "16:9",
+    style_block: str = "",
 ) -> str:
+    """Compose un prompt FLUX en menant par le sujet (FLUX pondère le début du prompt).
+
+    Ordre : sujet → descripteur du visual_type → cinématographie → style bible →
+    cadrage → thème/ton → qualité → contraintes texte.
+    """
     key = visual_type if visual_type in VISUAL_TYPE_REGISTRY else "custom"
     entry = VISUAL_TYPE_REGISTRY[key]
-    orientation = "portrait 9:16 vertical" if aspect_ratio == "9:16" else "landscape 16:9 horizontal"
-    tone = editorial_tone or "documentaire"
-    category = theme_category or "éducatif"
+    orientation = (
+        "portrait 9:16 vertical framing"
+        if aspect_ratio == "9:16"
+        else "landscape 16:9 horizontal framing"
+    )
 
-    body = entry.template.format(subject=subject, style_hint=style_hint or subject)
-    if key in DIAGRAM_VISUAL_TYPES:
-        text_rule = DIAGRAM_NO_TEXT_RULE
-    elif entry.allows_text:
-        text_rule = "No text, no watermark, no logo."
-    else:
-        text_rule = "No text, no watermark, no logo."
-    return (
-        f"{body} {orientation}. Theme: {category}. Tone: {tone}. "
-        f"High quality. {text_rule} No collage."
-    )[:4000]
+    subject_lead = (subject or "").strip().rstrip(".")
+
+    # Descripteur du type sans la mention "Subject: ..." pour ne pas répéter le sujet en milieu.
+    rendered = entry.template.format(subject=subject, style_hint=style_hint or subject)
+    descriptor = rendered.replace(f"Subject: {subject}.", "").replace(f"Subject: {subject}", "")
+    descriptor = descriptor.strip().rstrip(".").strip()
+
+    is_diagram = key in DIAGRAM_VISUAL_TYPES
+    text_rule = DIAGRAM_NO_TEXT_RULE if is_diagram else "No text, no watermark, no logo, no caption."
+
+    # P1 — FLUX 2 (encodeur Mistral) sort net par défaut : pas de tag qualité ("high quality,
+    # sharp focus…") ni de descripteur abstrait non rendu ("Theme: …. Tone: …"). On réserve le
+    # budget de tokens à la description de scène concrète (sujet + cinématographie + style block).
+    # Réf. : guide officiel Black Forest Labs (docs.bfl.ml/guides/prompting_guide_flux2).
+    parts: list[str] = [subject_lead] if subject_lead else []
+    if descriptor:
+        parts.append(descriptor)
+    if not is_diagram:
+        parts.append(_cinematography_for(key))
+    if style_block.strip():
+        parts.append(style_block.strip().rstrip("."))
+    parts.append(orientation)
+    if is_diagram:
+        # Pour les schémas, "clean / lisible" oriente utilement la composition (pas un tag qualité).
+        parts.append("clean, clear readable composition")
+    prompt = ". ".join(p for p in parts if p) + f". {text_rule} No collage."
+    return prompt[:4000]
 
 
 def build_documentary_prompt(
@@ -618,6 +670,7 @@ def build_documentary_prompt(
     theme_category: str = "",
     editorial_tone: str = "",
     aspect_ratio: str = "16:9",
+    style_block: str = "",
 ) -> str:
     return build_visual_prompt(
         "documentary_photo",
@@ -625,4 +678,5 @@ def build_documentary_prompt(
         theme_category=theme_category,
         editorial_tone=editorial_tone,
         aspect_ratio=aspect_ratio,
+        style_block=style_block,
     )

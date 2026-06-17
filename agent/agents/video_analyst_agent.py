@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from agent.core.json_parse import parse_gemini_response
+from agent.core.llm_retry import retry_transient_sync
 
 logger = logging.getLogger(__name__)
 
@@ -130,15 +131,18 @@ def _is_quota_error(exc: Exception) -> bool:
 
 def _call_model(client: Any, types: Any, model_name: str, video_file: Any, prompt: str) -> dict[str, Any]:
     logger.info("Gemini : analyse avec %s", model_name)
-    response = client.models.generate_content(
-        model=model_name,
-        contents=[video_file, prompt],
-        config=types.GenerateContentConfig(
-            temperature=0.1,
-            max_output_tokens=4096,
-            response_mime_type="application/json",
-            response_schema=ANALYSIS_RESPONSE_SCHEMA,
+    response = retry_transient_sync(
+        lambda: client.models.generate_content(
+            model=model_name,
+            contents=[video_file, prompt],
+            config=types.GenerateContentConfig(
+                temperature=0.1,
+                max_output_tokens=4096,
+                response_mime_type="application/json",
+                response_schema=ANALYSIS_RESPONSE_SCHEMA,
+            ),
         ),
+        label=f"video_analyst/{model_name}",
     )
     return parse_gemini_response(response, model_name)
 

@@ -128,6 +128,7 @@ class Imagen3Provider:
                 theme_category=request.theme_category,
                 editorial_tone=request.editorial_tone,
                 aspect_ratio=request.aspect_ratio,
+                style_block=request.style_block,
             )
         )
         aspect = "9:16" if request.aspect_ratio == "9:16" else "16:9"

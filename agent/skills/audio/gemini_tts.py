@@ -4,6 +4,9 @@ import asyncio
 import logging
 import wave
 from pathlib import Path
+from typing import Any
+
+from agent.core.llm_retry import retry_transient_sync
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +41,16 @@ def build_gemini_tts_prompt(
     editorial_tone: str = "",
     tts_style: str = "",
 ) -> str:
-    """Construit un prompt naturel pour piloter l'expressivité Gemini TTS."""
-    instructions: list[str] = ["Narration en français pour une vidéo éducative."]
+    """Construit un prompt naturel pour piloter l'expressivité Gemini TTS.
+
+    Gemini n'accepte pas de SSML : l'intonation et le rythme passent uniquement par ces
+    instructions en langage naturel. On fixe une base « rendu studio » (débit posé, pauses
+    naturelles, articulation soignée) puis on affine selon le ton éditorial et le mood.
+    """
+    instructions: list[str] = [
+        "Narration en français pour une vidéo éducative.",
+        "Débit posé et naturel, articulation soignée, pauses naturelles à la ponctuation.",
+    ]
 
     tone_key = editorial_tone.strip().lower()
     if tone_key and tone_key in TONE_TO_INSTRUCTION:
@@ -75,6 +86,7 @@ async def synthesize_gemini_tts(
     editorial_tone: str = "",
     tts_style: str = "",
     api_key: str,
+    mastering: dict[str, Any] | None = None,
 ) -> float:
     """Synthèse Gemini Flash TTS → WAV normalisé 48 kHz."""
     if not api_key.strip():
@@ -95,20 +107,23 @@ async def synthesize_gemini_tts(
     client = genai.Client(api_key=api_key.strip())
 
     def _call() -> object:
-        return client.models.generate_content(
-            model=model,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_modalities=["AUDIO"],
-                speech_config=types.SpeechConfig(
-                    language_code=language_code,
-                    voice_config=types.VoiceConfig(
-                        prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                            voice_name=voice,
-                        )
+        return retry_transient_sync(
+            lambda: client.models.generate_content(
+                model=model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_modalities=["AUDIO"],
+                    speech_config=types.SpeechConfig(
+                        language_code=language_code,
+                        voice_config=types.VoiceConfig(
+                            prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                                voice_name=voice,
+                            )
+                        ),
                     ),
                 ),
             ),
+            label="gemini_tts",
         )
 
     loop = asyncio.get_event_loop()
@@ -134,7 +149,7 @@ async def synthesize_gemini_tts(
 
     from agent.skills.audio.tts import normalize_wav, probe_duration
 
-    await normalize_wav(tmp_path, output_path)
+    await normalize_wav(tmp_path, output_path, mastering=mastering)
     tmp_path.unlink(missing_ok=True)
 
     duration = await probe_duration(output_path)

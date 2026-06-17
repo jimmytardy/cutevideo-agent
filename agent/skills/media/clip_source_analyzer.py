@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from agent.core.llm_retry import retry_transient_sync
 from agent.core.montage_plan import ClipMetadata, ClipSegmentMeta
 
 logger = logging.getLogger(__name__)
@@ -78,15 +79,18 @@ async def analyze_clip_source(
             config=types.UploadFileConfig(mime_type="video/mp4"),
         )
         uploaded = _wait_for_active_file(client, types, uploaded)
-        response = client.models.generate_content(
-            model=model_name,
-            contents=[uploaded, prompt],
-            config=types.GenerateContentConfig(
-                temperature=0.1,
-                max_output_tokens=2048,
-                response_mime_type="application/json",
-                response_schema=CLIP_ANALYSIS_SCHEMA,
+        response = retry_transient_sync(
+            lambda: client.models.generate_content(
+                model=model_name,
+                contents=[uploaded, prompt],
+                config=types.GenerateContentConfig(
+                    temperature=0.1,
+                    max_output_tokens=2048,
+                    response_mime_type="application/json",
+                    response_schema=CLIP_ANALYSIS_SCHEMA,
+                ),
             ),
+            label=f"clip_source/{model_name}",
         )
         return parse_gemini_response(response, model_name)
 

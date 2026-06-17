@@ -57,6 +57,9 @@ celery>=5.4.0
 pandas>=2.2.0
 rapidfuzz>=3.0.0
 
+# Oralisation narration (nombres → lettres pour TTS)
+num2words>=0.5.13
+
 # Runway video generation
 runwayml>=1.0.0
 httpx>=0.27.0

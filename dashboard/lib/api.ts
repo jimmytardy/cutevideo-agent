@@ -291,6 +291,15 @@ export interface PipelineProgressResponse {
   post_production: Record<string, AgentProgressItem>
 }
 
+export interface PipelinePlanResponse {
+  is_short: boolean
+  preparation: string[]
+  iteration_first: string[]
+  iteration_revision: string[]
+  post_production: string[]
+  max_iterations: number
+}
+
 export interface BeatValidationResolved {
   segment_order: number
   beat_order: number | null
@@ -473,6 +482,7 @@ export interface FinalPreview {
   subtitles_available: boolean
   subtitles_download_url: string | null
   subtitles_note: string | null
+  duration_warnings: string[]
 }
 
 const MAX_FETCH_RETRIES = 3
@@ -514,7 +524,16 @@ async function parseJsonResponse<T>(response: Response): Promise<T> {
     const body = await response.json().catch(() => ({ detail: response.statusText }))
     throw new Error(body?.detail ?? `HTTP ${response.status}`)
   }
-  return response.json() as Promise<T>
+  // Réponses sans corps (204 No Content, DELETE, …) : ne pas tenter de parser
+  // du JSON sur un body vide, sinon "Unexpected end of JSON input".
+  if (response.status === 204) {
+    return undefined as T
+  }
+  const text = await response.text()
+  if (!text) {
+    return undefined as T
+  }
+  return JSON.parse(text) as T
 }
 
 async function apiJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -522,7 +541,7 @@ async function apiJson<T>(url: string, init?: RequestInit): Promise<T> {
   return parseJsonResponse<T>(response)
 }
 
-const fetcher = async (url: string) => apiJson(url)
+const fetcher = async <T,>(url: string): Promise<T> => apiJson<T>(url)
 
 export function swrOnErrorRetry(
   error: unknown,
@@ -793,6 +812,10 @@ export async function fetchProjectMediaAssets(projectId: string): Promise<MediaA
 
 export function pipelineProgressUrl(projectId: string): string {
   return `${BASE}/projects/${projectId}/pipeline-progress`
+}
+
+export function pipelinePlanUrl(projectId: string): string {
+  return `${BASE}/projects/${projectId}/pipeline-plan`
 }
 
 export async function fetchProjectPipelineProgress(

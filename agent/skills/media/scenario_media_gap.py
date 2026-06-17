@@ -157,6 +157,8 @@ async def adapt_scenario_for_media_gaps(
         order = seg.get("order", 0)
         if order in gap_orders:
             seg["visual_optional"] = True
+            if not (seg.get("on_screen_text") or "").strip():
+                seg["on_screen_text"] = str(seg.get("title", ""))[:80]
 
     async with AsyncSessionFactory() as session:
         db_scenario = await session.get(Scenario, scenario.id)

@@ -37,6 +37,7 @@ class VisualBeat(BaseModel):
     on_screen_text: str = ""
     diagram_labels: list[DiagramLabel] = Field(default_factory=list)
     duration_hint_s: float | None = None
+    spoken_text: str = ""
 
     @field_validator("visual_type")
     @classmethod
@@ -97,6 +98,17 @@ def effective_min_duration(
     if is_diagram_beat(beat):
         return max(base, diagram_min, hint)
     return max(base, hint) if hint > 0 else base
+
+
+def beat_narration_excerpt(beat: VisualBeat) -> str:
+    """Portion de narration parlée pour le scoring média par beat."""
+    spoken = (beat.spoken_text or "").strip()
+    if spoken:
+        return spoken
+    anchor = (beat.phrase_anchor or "").strip()
+    if anchor:
+        return anchor
+    return (beat.prompt or "").strip()
 
 
 def parse_visual_beats(segment: dict[str, Any]) -> list[VisualBeat]:

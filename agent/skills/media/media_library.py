@@ -116,6 +116,7 @@ async def try_reuse_for_beat(
     if not pool_assets:
         return None, 0
 
+    from agent.core.visual_beats import beat_narration_excerpt
     from agent.skills.media_sources.relevance_scorer import score_media_candidates
 
     candidates = [_asset_to_candidate(a) for a in pool_assets]
@@ -124,7 +125,7 @@ async def try_reuse_for_beat(
         video_subject=video_subject,
         channel_category=channel_category,
         segment_title=segment.get("title", ""),
-        segment_narration=f"{beat.phrase_anchor} — {beat.prompt}",
+        segment_narration=beat_narration_excerpt(beat),
         api_key=api_key,
         cache_dir=output_dir / "scoring",
         validation_brief=validation_brief,

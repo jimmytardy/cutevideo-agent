@@ -294,6 +294,46 @@ async def get_queue_snapshot(
     return snapshot
 
 
+async def prune_orphan_queue_entries() -> int:
+    """Purge les entrées de file dont le projet n'existe plus ou n'est plus
+    en état « queued ».
+
+    Appelée au démarrage du worker et périodiquement (réconciliation) pour
+    réparer la file : une suppression de projet ou un changement d'état hors
+    file peut laisser un membre ZSET + payload orphelins, qui bloque alors la
+    tête de file. Retourne le nombre d'entrées purgées.
+    """
+    await queue.connect()
+    members = await queue.client.zrange(PIPELINE_ZQUEUE, 0, -1)
+    if not members:
+        return 0
+
+    project_ids = [uuid.UUID(member) for member in members]
+    async with AsyncSessionFactory() as session:
+        result = await session.execute(
+            select(Project.id, Project.status).where(Project.id.in_(project_ids))
+        )
+        status_by_id = {row.id: row.status for row in result.all()}
+
+    pruned = 0
+    for member in members:
+        pid = uuid.UUID(member)
+        status = status_by_id.get(pid)
+        if status == "queued":
+            continue
+        await queue.client.zrem(PIPELINE_ZQUEUE, member)
+        await queue.client.delete(_payload_key(member))
+        pruned += 1
+        logger.info(
+            "Entrée orpheline purgée de la file projet=%s status=%s",
+            pid,
+            status,
+        )
+    if pruned:
+        logger.info("Purge file d'attente : %d entrée(s) orpheline(s) retirée(s)", pruned)
+    return pruned
+
+
 async def _load_payload(project_id: str) -> dict[str, Any] | None:
     raw = await queue.client.get(_payload_key(project_id))
     if not raw:
@@ -320,6 +360,22 @@ async def dequeue_next_eligible() -> DequeueResult:
         payload = await _load_payload(project_key)
         if payload is None:
             logger.warning("Payload manquant pour projet %s — ignoré", project_key)
+            continue
+
+        # Entrée orpheline : projet supprimé ou plus en état « queued » → abandon
+        # définitif. Ne JAMAIS ré-enfiler, sinon elle reste en tête de file (plus
+        # petit score) et monopolise toutes les tentatives, bloquant les projets
+        # légitimes derrière elle.
+        async with AsyncSessionFactory() as session:
+            project = await session.get(Project, project_id)
+            project_status = project.status if project else None
+        if project_status != "queued":
+            await queue.client.delete(_payload_key(project_key))
+            logger.warning(
+                "Entrée orpheline retirée de la file projet=%s status=%s",
+                project_id,
+                project_status,
+            )
             continue
 
         channel_id = uuid.UUID(payload["channel_id"])

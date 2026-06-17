@@ -6,6 +6,7 @@ from typing import Any
 
 from agent.core.config import load_agent_config
 from agent.core.json_parse import is_json_parse_failure, parse_gemini_response
+from agent.core.llm_retry import retry_transient_sync
 from agent.core.research_models import ResearchBrief
 
 logger = logging.getLogger(__name__)
@@ -121,15 +122,18 @@ def _reformat_research_json(
 ) -> dict[str, Any]:
     """Dernier recours : modèle léger sans grounding pour corriger la syntaxe JSON."""
     prompt = JSON_REFORMAT_PROMPT.format(raw=broken_raw[:12000])
-    response = client.models.generate_content(
-        model=reformat_model,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            temperature=0,
-            max_output_tokens=8192,
-            response_mime_type="application/json",
-            response_json_schema=RESEARCH_RESPONSE_SCHEMA,
+    response = retry_transient_sync(
+        lambda: client.models.generate_content(
+            model=reformat_model,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=0,
+                max_output_tokens=8192,
+                response_mime_type="application/json",
+                response_json_schema=RESEARCH_RESPONSE_SCHEMA,
+            ),
         ),
+        label=f"research_reformat/{reformat_model}",
     )
     return parse_gemini_response(response, reformat_model)
 
@@ -152,10 +156,13 @@ def _call_research_model(
         config_kwargs["response_mime_type"] = "application/json"
         config_kwargs["response_json_schema"] = RESEARCH_RESPONSE_SCHEMA
 
-    response = client.models.generate_content(
-        model=model_name,
-        contents=prompt,
-        config=types.GenerateContentConfig(**config_kwargs),
+    response = retry_transient_sync(
+        lambda: client.models.generate_content(
+            model=model_name,
+            contents=prompt,
+            config=types.GenerateContentConfig(**config_kwargs),
+        ),
+        label=f"research/{model_name}",
     )
     try:
         return parse_gemini_response(response, model_name)

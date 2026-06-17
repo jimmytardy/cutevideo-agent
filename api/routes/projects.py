@@ -18,7 +18,7 @@ from agent.core.subscription import QuotaExceededError, check_can_create_project
 from agent.skills.media.progress import compute_media_progress
 from agent.skills.pipeline_progress import AgentProgressData, compute_pipeline_progress
 from agent.core.pipeline_launcher import dequeue_pipeline, enqueue_pipeline, request_pipeline_cancel
-from agent.core.pipeline_queue import PipelineAlreadyQueuedError, get_queue_status, is_queued
+from agent.core.pipeline_queue import PipelineAlreadyQueuedError, get_queue_status, is_queued, remove_from_queue
 from agent.core.pipeline_restart import critic_rework_iteration
 from agent.core.pipeline_reset import PIPELINE_STEPS, RUN_FROM_STEPS, cleanup_from_step, delete_project_completely
 from api.authorization import get_user_channel, get_user_project
@@ -32,6 +32,7 @@ from api.models import (
     MediaValidationBriefResponse,
     MontagePlanResponse,
     AgentProgressItem,
+    PipelinePlanResponse,
     PipelineProgressResponse,
     PipelineQueueStatusResponse,
     SegmentMontagePlanResponse,
@@ -277,10 +278,16 @@ async def stream_video(
 async def get_final_preview(
     project_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 ) -> FinalPreviewResponse:
-    from agent.core.final_preview import resolve_preview_video, subtitles_available_for_video
+    from agent.core.final_preview import (
+        build_duration_warnings,
+        resolve_preview_video,
+        subtitles_available_for_video,
+    )
+    from agent.core.channel_config import resolve_channel_config
 
     project_result = await db.execute(select(Project).where(Project.id == project_id))
-    if project_result.scalar_one_or_none() is None:
+    project = project_result.scalar_one_or_none()
+    if project is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Projet introuvable")
 
     video = await resolve_preview_video(db, project_id)
@@ -290,6 +297,17 @@ async def get_final_preview(
             stream_url=None,
             subtitles_available=False,
             subtitles_download_url=None,
+            duration_warnings=[],
+        )
+
+    channel_result = await db.execute(select(Channel).where(Channel.id == project.channel_id))
+    channel = channel_result.scalar_one_or_none()
+    duration_warnings: list[str] = []
+    if channel is not None:
+        channel_config = resolve_channel_config(channel)
+        duration_warnings = build_duration_warnings(
+            video,
+            min_duration_tiktok=channel_config.min_duration_tiktok,
         )
 
     stream_url = f"/api/v1/projects/{project_id}/videos/{video.id}/stream"
@@ -308,6 +326,7 @@ async def get_final_preview(
         subtitles_available=subs_available,
         subtitles_download_url=subs_url,
         subtitles_note=subs_note,
+        duration_warnings=duration_warnings,
     )
 
 
@@ -748,6 +767,32 @@ async def get_project_pipeline_progress(
     )
 
 
+@router.get("/{project_id}/pipeline-plan", response_model=PipelinePlanResponse)
+async def get_project_pipeline_plan(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> PipelinePlanResponse:
+    from agent.core.channel_config import resolve_channel_config
+    from agent.core.pipeline_plan import plan_pipeline
+    from agent.core.subscription import get_user_subscription_limits
+
+    project = await get_user_project(db, project_id, current_user)
+    channel = await get_user_channel(db, project.channel_id, current_user)
+
+    limits = await get_user_subscription_limits(db, current_user.id)
+    channel_config = resolve_channel_config(channel, subscription_limits=limits)
+
+    config = project.config or {}
+    plan = plan_pipeline(
+        channel_config,
+        project_format=config.get("format"),
+        target_duration_seconds=project.target_duration_seconds,
+        max_iterations_override=config.get("max_critic_iterations"),
+    )
+    return PipelinePlanResponse(**plan)
+
+
 @router.get("/{project_id}/media-assets", response_model=list[MediaAssetResponse])
 async def list_project_media_assets(
     project_id: uuid.UUID, db: AsyncSession = Depends(get_db)
@@ -937,6 +982,9 @@ async def delete_project(
     project = await _owned_project(db, project_id, current_user)
     if project.status == "running":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Impossible de supprimer un projet en cours d'exécution")
+    # Retirer le projet de la file Redis avant suppression, sinon son entrée
+    # ZSET + payload deviennent orphelins et bloquent la tête de file.
+    await remove_from_queue(project_id)
     await delete_project_completely(project_id, db)
     await db.delete(project)
     await db.commit()

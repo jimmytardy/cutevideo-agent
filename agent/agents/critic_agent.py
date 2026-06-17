@@ -36,6 +36,8 @@ CONTENU DU SCÉNARIO (résumé) :
 
 {video_analysis_block}
 
+{media_quality_block}
+
 CRITÈRES D'ÉVALUATION (total 100 pts) :
 
 RYTHME (20 pts)
@@ -59,7 +61,12 @@ QUALITÉ VISUELLE (20 pts)
 - Chaque concept verbal (mécanisme, comparaison, POV) a-t-il un visuel dédié (visual_beat) ?
 - Présence de schémas/infographies pour segments explicatifs ?
 - Labels des schémas en langue cohérente avec la narration, sans pseudo-texte illisible dans l'image ?
-- Si images répétitives ou non illustratives : start_from = "media_agent" avec correction ciblée par beat
+- Si images répétitives ou non illustratives : start_from = "media_agent" avec correction ciblée par beat (préciser segment + beat + phrase_anchor)
+
+NOUVEAU PIPELINE (post-TTS) :
+- beat_planner_agent : découpage visual_beats, phrase_anchor, nombre de plans, duration_hint — si beats mal découpés, anchors incohérents ou trop/pas assez de plans
+- media_agent : pertinence image PAR BEAT (phrase_anchor), pas seulement par segment
+- Ne pas renvoyer vers montage_planner si le problème vient du découpage beats ou du mauvais média
 
 ACCROCHE ET STRUCTURE (15 pts)
 - Hook fort les 30 premières secondes ?
@@ -88,13 +95,10 @@ Retourne UNIQUEMENT ce JSON :
   "requested_changes": []
 }}
 
-start_from (étape de reprise, obligatoire si decision = "iterate") :
-- "research_agent" : erreurs factuelles majeures nécessitant une nouvelle recherche
-- "scenario_agent" : l'angle éditorial, le hook ou la structure narrative est fondamentalement à revoir
-- "media_agent"    : les images sont hors-sujet ou non pertinentes, mais la narration est solide
-- "narrator_agent" : durée, rythme, monotonie vocale ou delivery_style à corriger
-- "montage_planner_agent" : rythme visuel, plans trop longs, mauvaise synchro beats/médias
-- "editor_agent"   : problème d'assemblage FFmpeg uniquement, plan de montage OK
+start_from : champ indicatif uniquement. Le point de reprise réel est recalculé
+automatiquement à partir de tes notes les plus basses — concentre-toi sur des notes
+justes et des commentaires précis (segment + beat + phrase_anchor si pertinent).
+Tu peux laisser "media_agent" par défaut.
 
 """
 
@@ -108,6 +112,14 @@ SHORT_APPROVAL_RULES = """RÈGLES D'APPROBATION (SHORT — les deux conditions s
 - structure (Accroche & structure) >= {min_structure_score}/15
 - decision = "approve" uniquement si les deux seuils sont atteints
 - Sinon decision = "iterate" et requested_changes liste les corrections (priorité hook/structure si structure < {min_structure_score})"""
+
+# Plafond de la note visuelle quand aucune vision réelle (Gemini vidéo ou scoring image) n'est dispo.
+MAX_VISUAL_QUALITY_WITHOUT_VISION = 14
+
+MEDIA_QUALITY_BLOCK_TEMPLATE = """ANALYSE MÉDIA (scoring de pertinence par image, mesuré à la sélection) :
+Images/clips sélectionnés : {total} | Pertinence moyenne : {avg:.0f}/100 | Sous le seuil : {low_count}
+{low_examples}
+IMPORTANT : ces scores reflètent une vérification réelle par beat. Tiens-en compte pour la note QUALITÉ VISUELLE."""
 
 VIDEO_ANALYSIS_BLOCK_TEMPLATE = """ANALYSE VIDÉO GEMINI (vision directe de la vidéo finale) :
 Score Gemini : {score}/100
@@ -183,6 +195,20 @@ class CriticAgent(BaseAgent):
                 issues_text=issues_text,
             )
 
+        media_stats = await self._load_media_quality(video.project_id)
+        media_quality_block = ""
+        if media_stats:
+            low_examples = "\n".join(
+                f"  • [{r['visual_type'] or 'média'}] {r['reason']}"
+                for r in media_stats["low_examples"]
+            )
+            media_quality_block = MEDIA_QUALITY_BLOCK_TEMPLATE.format(
+                total=media_stats["total"],
+                avg=media_stats["avg"],
+                low_count=media_stats["low_count"],
+                low_examples=low_examples or "  • (aucune image sous le seuil)",
+            )
+
         from agent.agents.scenario_agent import _format_research_block
         from agent.core.config import load_agent_config
 
@@ -217,6 +243,7 @@ class CriticAgent(BaseAgent):
             research_block=research_block,
             learning_block=learning_block,
             video_analysis_block=video_analysis_block,
+            media_quality_block=media_quality_block,
             min_duration=ctx.channel_config.min_image_duration_s,
             min_diagram_duration=min_diagram,
             min_voice_score=min_voice_score,
@@ -240,9 +267,35 @@ class CriticAgent(BaseAgent):
         feedback = raw_feedback if isinstance(raw_feedback, dict) else {}
         feedback["start_from"] = start_from_value
         feedback = self._normalize_feedback(feedback)
+
+        # C2 — le routage n'est plus dicté par le LLM : on recalcule le point de reprise
+        # à partir de la dimension la plus déficitaire (le start_from LLM reste un repli).
+        derived = self._derive_start_from(feedback, min_voice_score)
+        if derived:
+            start_from_value = derived
+            feedback["start_from"] = start_from_value
         data["feedback"] = feedback
 
         score = data.get("global_score", 0)
+
+        # C1 — sans vision réelle (Gemini vidéo absent ET aucun scoring média), ne pas laisser
+        # le LLM inventer une note visuelle élevée : on plafonne et on répercute sur le global.
+        if video_analysis is None and not media_stats:
+            vq = self._normalize_criterion_value(feedback.get("visual_quality"))
+            if vq is not None and vq > MAX_VISUAL_QUALITY_WITHOUT_VISION:
+                delta = vq - MAX_VISUAL_QUALITY_WITHOUT_VISION
+                feedback["visual_quality"] = MAX_VISUAL_QUALITY_WITHOUT_VISION
+                if isinstance(score, (int, float)) and not isinstance(score, bool):
+                    score = max(0, int(score) - delta)
+                    data["global_score"] = score
+                existing = feedback.get("comments")
+                note = (
+                    "Note visuelle plafonnée : aucune analyse vision disponible "
+                    "(clé Gemini absente, pas de scoring média)."
+                )
+                feedback["comments"] = f"{existing}\n{note}" if isinstance(existing, str) else note
+                data["feedback"] = feedback
+
         structure_score = self._extract_structure_score(feedback)
         max_iterations = ctx.max_iterations_override or ctx.channel_config.max_critic_iterations
         decision = self._resolve_decision(
@@ -440,6 +493,84 @@ class CriticAgent(BaseAgent):
             "rhythm": 0,
             "voice_expressiveness": 0,
             "summary": "",
+        }
+
+    # Dimension de notation → étape de reprise + barème max (pour le ratio de déficit).
+    _DIMENSION_ROUTING: tuple[tuple[str, str, int], ...] = (
+        ("factual_accuracy", "research_agent", 10),
+        ("content_value", "scenario_agent", 25),
+        ("structure", "scenario_agent", 15),
+        ("voice_expressiveness", "narrator_agent", 10),
+        ("visual_quality", "media_agent", 20),
+        ("rhythm", "montage_planner_agent", 20),
+    )
+
+    @classmethod
+    def _derive_start_from(cls, feedback: dict, min_voice_score: int) -> str | None:
+        """Point de reprise = dimension au plus fort déficit relatif (max - note)/max.
+
+        Routage déterministe en code (C2) plutôt que dicté par le LLM.
+        """
+        if not isinstance(feedback, dict):
+            return None
+        # Voix sous le seuil dur : priorité absolue au narrateur.
+        voice = cls._normalize_criterion_value(feedback.get("voice_expressiveness"))
+        if voice is not None and voice < min_voice_score:
+            return "narrator_agent"
+
+        best_step: str | None = None
+        best_deficit = 0.0
+        for key, step, max_score in cls._DIMENSION_ROUTING:
+            value = cls._normalize_criterion_value(feedback.get(key))
+            if value is None:
+                continue
+            deficit = (max_score - value) / max_score
+            if deficit > best_deficit:
+                best_deficit = deficit
+                best_step = step
+        # Déficit négligeable → pas de routage imposé (laisse le repli/overrides décider).
+        if best_deficit < 0.2:
+            return None
+        return best_step
+
+    @staticmethod
+    async def _load_media_quality(project_id) -> dict | None:
+        """Agrège les scores de pertinence (mesurés par Gemini à la sélection média).
+
+        Donne au critique un signal visuel réel sans appel API supplémentaire.
+        """
+        from sqlalchemy import select as sa_select
+        from agent.core.database import MediaAsset
+
+        async with AsyncSessionFactory() as session:
+            result = await session.execute(
+                sa_select(MediaAsset).where(
+                    MediaAsset.project_id == project_id,
+                    MediaAsset.selected == True,  # noqa: E712
+                )
+            )
+            assets = list(result.scalars().all())
+
+        scored = [a for a in assets if isinstance(a.relevance_score, (int, float))]
+        if not scored:
+            return None
+
+        scores = [int(a.relevance_score) for a in scored]
+        avg = sum(scores) / len(scores)
+        low = sorted(scored, key=lambda a: int(a.relevance_score))[:3]
+        low_count = sum(1 for s in scores if s < 60)
+        return {
+            "total": len(assets),
+            "avg": avg,
+            "low_count": low_count,
+            "low_examples": [
+                {
+                    "visual_type": a.visual_type or "",
+                    "reason": (a.relevance_reason or "score faible")[:120],
+                }
+                for a in low
+                if int(a.relevance_score) < 70
+            ],
         }
 
     @staticmethod

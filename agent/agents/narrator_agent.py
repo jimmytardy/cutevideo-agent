@@ -130,10 +130,32 @@ class NarratorAgent(BaseAgent):
 
         order = segment.get("order", 0)
         text = segment.get("narration_text", "")
+        cfg = ctx.channel_config
+        if cfg.tts_oralize and text.strip():
+            from agent.skills.audio.oralize import oralize_text
+
+            text = oralize_text(text)
         output_path = output_dir / f"segment_{order:02d}.wav"
         delivery_style = segment.get("delivery_style") or {}
         mood = str(segment.get("mood") or "")
-        cfg = ctx.channel_config
+        # P6 — Sur un retour critique « voix trop plate », varie réellement la direction
+        # voix (pace/emotion/azure_style) par segment plutôt que de re-synthétiser à l'identique.
+        if ctx.critic_start_from == "narrator_agent":
+            from agent.skills.audio.voice_direction import direct_voice_for_revision
+
+            delivery_style = direct_voice_for_revision(
+                delivery_style,
+                segment_index=int(order),
+                iteration=ctx.iteration,
+                mood=mood,
+            )
+            logger.info(
+                "Direction voix (P6) segment %s → %s/%s/%s",
+                order,
+                delivery_style.get("pace"),
+                delivery_style.get("emotion"),
+                delivery_style.get("azure_style"),
+            )
         from agent.skills.audio.tts import resolve_tts_settings
 
         gemini_ctx = await fetch_api_key(
@@ -169,6 +191,8 @@ class NarratorAgent(BaseAgent):
             tts_rate=cfg.tts_rate,
             tts_pitch=cfg.tts_pitch,
             insert_pauses=cfg.tts_insert_pauses,
+            comma_pauses=cfg.tts_comma_pauses,
+            mastering=cfg.audio_mastering.model_dump(),
             gemini_model=tts_settings.gemini_model,
             gemini_language_code=tts_settings.gemini_language_code,
             gemini_api_key=tts_settings.gemini_api_key,

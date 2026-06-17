@@ -27,9 +27,9 @@ def test_expected_total_visual_beats() -> None:
         {
             "order": 1,
             "visual_beats": [
-                {"order": 1, "visual_type": "photo", "prompt": "a"},
-                {"order": 2, "visual_type": "photo", "prompt": "b"},
-                {"order": 3, "visual_type": "photo", "prompt": "c"},
+                {"order": 1, "phrase_anchor": "a", "visual_type": "documentary_photo", "prompt": "a"},
+                {"order": 2, "phrase_anchor": "b", "visual_type": "documentary_photo", "prompt": "b"},
+                {"order": 3, "phrase_anchor": "c", "visual_type": "documentary_photo", "prompt": "c"},
             ],
         },
         {"order": 2, "title": "Sans beats"},

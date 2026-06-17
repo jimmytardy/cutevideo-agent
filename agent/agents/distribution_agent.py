@@ -440,6 +440,16 @@ class DistributionAgent(BaseAgent):
             project = await session.get(Project, video.project_id)
             if project:
                 description = project.theme
+                # Métadonnées SEO produites par metadata_agent (prioritaires si présentes).
+                meta = (project.config or {}).get("youtube_metadata") if project.config else None
+                if isinstance(meta, dict):
+                    title = str(meta.get("title") or title)
+                    description = str(meta.get("description") or description)
+                    meta_tags = [str(t) for t in (meta.get("tags") or []) if str(t).strip()]
+                    if meta_tags:
+                        tags = meta_tags
+                    cache[video.project_id] = (title, description, tags)
+                    return cache[video.project_id]
             scenario_result = await session.execute(
                 select(Scenario)
                 .where(Scenario.project_id == video.project_id)

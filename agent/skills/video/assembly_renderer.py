@@ -15,6 +15,7 @@ async def render_segment_from_plan(
     output_path: Path,
     *,
     is_vertical: bool = False,
+    grade: str = "",
 ) -> None:
     """Assemble les clips d'un segment via filter_graph_builder (un encode)."""
     await render_segment_from_clips(
@@ -22,4 +23,5 @@ async def render_segment_from_plan(
         audio_path,
         output_path,
         is_vertical=is_vertical,
+        grade=grade,
     )

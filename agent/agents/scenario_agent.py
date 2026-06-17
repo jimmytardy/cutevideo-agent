@@ -9,8 +9,18 @@ from typing import Any
 from agent.core.base_agent import BaseAgent
 from agent.core.database import AsyncSessionFactory, Scenario
 from agent.core.learning_context import LEARNING_CONTEXT_BLOCK
+from agent.core.prompt_safety import (
+    UNTRUSTED_CONTENT_POLICY,
+    sanitize_search_terms,
+    wrap_untrusted,
+)
 
 logger = logging.getLogger(__name__)
+
+MOOD_FIELD_DOC = (
+    "CHAMP mood — choisis parmi : energique | calme | dramatique | mysterieux | "
+    "inspirant | humoristique | tension | revelateur"
+)
 
 AVAILABLE_SOURCES = """Sources médias disponibles (utilise leurs noms exacts dans source_hint) :
 - gallica        : archives BnF, France historique (avant 1950)
@@ -92,7 +102,15 @@ Principes OBLIGATOIRES :
 - Narration naturelle si needs_voice true
 - Total : environ {duration_min} minutes
 
-CHAMP mood — choisis parmi : energique | calme | dramatique | mysterieux | inspirant | humoristique | tension | revelateur
+ÉCRITURE POUR L'ORAL (narration_text, OBLIGATOIRE si needs_voice true) :
+- Phrases courtes : une seule idée par phrase, viser ≤ 20 mots
+- Ponctuation forte (. ! ?) pour rythmer les pauses naturelles à la lecture
+- Nombres, dates et siècles écrits en toutes lettres (ex. « 1789 » → « dix-sept cent quatre-vingt-neuf », « 75 % » → « soixante-quinze pour cent »)
+- Développer les sigles et unités prononçables (ex. « km/h » → « kilomètres heure »)
+- Bannir parenthèses, incises longues, listes à puces et tout markdown dans le texte de narration
+- Style parlé et direct (s'adresser au spectateur), pas de tournure « écrite »
+
+{mood_field_doc}
 CHAMP strip_source_audio — true si la vidéo/image source doit être muette (narration ou musique seule), false si le son ambiant du clip enrichit le contenu (ex: applaudissements, sons de nature, ambiance lieu). Si needs_voice est false, mets strip_source_audio à false par défaut (sauf si tu veux explicitement une vidéo muette + musique seule).
 CHAMP needs_music — true si une musique de fond améliore le segment ; false si voix seule, son ambiant seul, ou silence volontaire.
 
@@ -111,7 +129,7 @@ VOIX ET DELIVERY_STYLE (OBLIGATOIRE si needs_voice true) :
 {visual_beats_rules}
 Pour source_hint : choisis 2-3 sources dans l'ordre de pertinence pour le sujet du segment."""
 
-USER_PROMPT_SHORT = """Crée un scénario pour un SHORT vertical de {duration_s} secondes.
+USER_PROMPT_SHORT = """Crée un scénario pour un SHORT vertical de {min_duration_s} à {max_duration_s} secondes.
 
 CHAÎNE : {channel_name} (catégorie : {theme_category})
 THÈME CHAÎNE : {theme_prompt}
@@ -152,21 +170,27 @@ Retourne UNIQUEMENT ce JSON :
       {visual_beats_example}
     }}
   ],
-  "total_duration_s": {duration_s}
+  "total_duration_s": {target_duration_s}
 }}
 
 RÈGLES SHORT :
-- 1 à 3 segments de 15-30 s chacun
+- 1 à 3 segments ; durée totale indicative entre {min_duration_s} et {max_duration_s} s (durée réelle calibrée post-voix)
+- Minimum TikTok : {min_duration_s} s — ne pas viser une durée fixe si le contenu demande plus
 - needs_voice : true par défaut pour contenu éducatif ; false uniquement si visuel + on_screen_text suffisent
 - needs_music : true seulement si la musique de fond apporte de la valeur ; false pour voix seule ou son ambiant
 - search_keywords ancrés au SUJET (« {theme} ») et au segment — termes précis obligatoires, pas de mots-clés génériques seuls
 - Formats sans voix OK : visuels + on_screen_text, meme-style, musique
 - Rythme rapide, punchlines si ton humoristique
-- Total ~{duration_s} s
+- Total indicatif : {min_duration_s}–{max_duration_s} s (pas de contrainte stricte sur total_duration_s)
 
-CHAMP mood — choisis parmi : energique | calme | dramatique | mysterieux | inspirant | humoristique | tension | revelateur
+{mood_field_doc}
 CHAMP strip_source_audio — false par défaut si needs_voice est false (conserver sons ambiants des clips) ; true uniquement si tu veux une vidéo muette avec musique/texte seuls.
 CHAMP needs_music — false si pas de bed musical pertinent (voix seule, ASMR, son ambiant du clip).
+
+ÉCRITURE POUR L'ORAL (narration_text, si needs_voice true) :
+- Phrases courtes et percutantes (≤ 18 mots), une idée par phrase
+- Nombres/dates/unités en toutes lettres (« 90 % » → « quatre-vingt-dix pour cent », « km/h » → « kilomètres heure »)
+- Aucun markdown ni parenthèse ; style parlé direct
 
 VOIX ET DELIVERY_STYLE (si needs_voice true) :
 - delivery_style variable par segment ; hook rapide (pace fast), emphasis_words 3-5 mots
@@ -180,6 +204,174 @@ VOIX ET DELIVERY_STYLE (si needs_voice true) :
 Pour source_hint : 2-3 sources dans l'ordre de pertinence pour le sujet du segment."""
 
 
+WRITER_SYSTEM_PROMPT_LONG = """Tu es un scénariste expert en vidéos YouTube longues (éducation, divertissement, documentaire).
+Tu reçois une ARCHITECTURE figée (segments, durées, mood, intentions) conçue en amont.
+Ton seul travail : ÉCRIRE le texte (narration vivante, texte à l'écran, direction voix, mots-clés médias).
+Tu RESPECTES le squelette à la lettre : mêmes segments, même ordre, mêmes durées/mood/hook_type.
+Tu produis toujours des JSON valides, sans texte avant ni après."""
+
+WRITER_SYSTEM_PROMPT_SHORT = """Tu es un scénariste expert en formats courts verticaux (Shorts, TikTok, Reels).
+Tu reçois une ARCHITECTURE figée et tu ÉCRIS uniquement le texte (narration percutante, texte à l'écran,
+direction voix, mots-clés médias), en respectant le squelette à la lettre.
+Tu produis toujours des JSON valides, sans texte avant ni après."""
+
+WRITER_PROMPT_LONG = """Écris la narration complète à partir de l'ARCHITECTURE figée ci-dessous.
+
+CHAÎNE : {channel_name} (catégorie : {theme_category})
+TON ÉDITORIAL : {editorial_tone}
+SUJET DE LA VIDÉO : "{theme}"
+
+{research_block}
+
+{learning_block}
+
+ARCHITECTURE FIGÉE (squelette à respecter — n'ajoute/ne supprime aucun segment) :
+{outline_block}
+
+Retourne UNIQUEMENT un JSON valide avec cette structure (un objet par segment du squelette) :
+{{
+  "title": "{outline_title}",
+  "description": "Description YouTube SEO (max 500 caractères)",
+  "segments": [
+    {{
+      "order": 1,
+      "title": "(reprends le titre du squelette)",
+      "duration_s": 150,
+      "needs_voice": true,
+      "needs_music": true,
+      "narration_text": "Texte complet de narration (minimum 300 mots si needs_voice true, sinon vide)",
+      "on_screen_text": "",
+      "search_keywords": ["mot-clé 1 fr", "keyword 1 en", "mot-clé 2 fr", "keyword 2 en"],
+      "source_hint": ["pexels", "wikimedia"],
+      "mood": "inspirant",
+      "strip_source_audio": true,
+      "hook_type": "question | fait_surprenant | anecdote | chiffre | null",
+      "delivery_style": {{
+        "pace": "normal",
+        "emotion": "serious",
+        "azure_style": "narration-professional",
+        "emphasis_words": []
+      }}{visual_beats_comma}
+      {visual_beats_example}
+    }}
+  ],
+  "total_duration_s": 1800
+}}
+
+RÈGLES DE FIDÉLITÉ AU SQUELETTE (impératif) :
+- Reprends EXACTEMENT : order, title, duration_s, needs_voice, needs_music, mood, hook_type, strip_source_audio
+- Écris la narration qui réalise l'`intent` de chaque segment (sans recopier l'`intent`)
+- N'invente AUCUN segment ; ne fusionne/scinde pas le squelette
+
+Principes d'écriture :
+- Exploiter les faits du brief recherche au bon segment (selon les intentions du squelette)
+- Chaque segment : MINIMUM 4 mots-clés (2 FR + 2 EN)
+- Chaque search_keywords ancré au SUJET (« {theme} ») et au contenu du segment — termes précis (nom propre, lieu, concept…), jamais génériques seuls
+
+ÉCRITURE POUR L'ORAL (narration_text, OBLIGATOIRE si needs_voice true) :
+- Phrases courtes : une idée par phrase, viser ≤ 20 mots
+- Ponctuation forte (. ! ?) pour rythmer les pauses
+- Nombres, dates et siècles en toutes lettres ; sigles/unités prononçables développés
+- Aucune parenthèse, incise longue, liste à puces ou markdown
+- Style parlé et direct (s'adresser au spectateur)
+
+VOIX ET DELIVERY_STYLE (OBLIGATOIRE si needs_voice true) :
+- delivery_style DIFFÉRENT pour chaque segment voix (varier pace, emotion, azure_style)
+- Hook : pace "fast", azure_style énergique (excited, cheerful) ; conclusion : pace "slow", posé (calm, empathetic)
+- emphasis_words : 3 à 8 mots par segment voix
+- azure_style valides : narration-professional, cheerful, empathetic, excited, calm, sad, terrified, whispering, newscast-formal
+
+{research_rules_block}
+{critic_feedback_block}
+{fact_check_feedback_block}
+{sources_block}
+{visual_beats_rules}
+Pour source_hint : choisis 2-3 sources dans l'ordre de pertinence pour le sujet du segment."""
+
+WRITER_PROMPT_SHORT = """Écris la narration à partir de l'ARCHITECTURE figée ci-dessous (SHORT vertical).
+
+CHAÎNE : {channel_name} (catégorie : {theme_category})
+TON : {editorial_tone}
+SUJET : "{theme}"
+
+{research_block}
+
+{learning_block}
+
+ARCHITECTURE FIGÉE (squelette à respecter — n'ajoute/ne supprime aucun segment) :
+{outline_block}
+
+Retourne UNIQUEMENT ce JSON (un objet par segment du squelette) :
+{{
+  "title": "{outline_title}",
+  "description": "Description courte",
+  "segments": [
+    {{
+      "order": 1,
+      "title": "(reprends le titre du squelette)",
+      "duration_s": {segment_duration},
+      "needs_voice": true,
+      "needs_music": true,
+      "narration_text": "Texte voix SI needs_voice true, sinon \"\"",
+      "on_screen_text": "Texte à l'écran si pas de voix ou en complément",
+      "search_keywords": ["kw fr", "kw en", "kw2 fr", "kw2 en"],
+      "source_hint": ["pexels", "pixabay"],
+      "mood": "energique",
+      "strip_source_audio": true,
+      "hook_type": "fait_surprenant",
+      "delivery_style": {{
+        "pace": "fast",
+        "emotion": "playful",
+        "azure_style": "cheerful",
+        "emphasis_words": []
+      }}{visual_beats_comma}
+      {visual_beats_example}
+    }}
+  ],
+  "total_duration_s": {target_duration_s}
+}}
+
+RÈGLES DE FIDÉLITÉ AU SQUELETTE (impératif) :
+- Reprends EXACTEMENT : order, title, duration_s, needs_voice, needs_music, mood, hook_type, strip_source_audio
+- Écris la narration qui réalise l'`intent` de chaque segment (sans recopier l'`intent`)
+- N'invente AUCUN segment
+
+RÈGLES SHORT :
+- search_keywords ancrés au SUJET (« {theme} ») — termes précis, pas de mots-clés génériques seuls
+- Rythme rapide, punchlines si ton humoristique
+
+ÉCRITURE POUR L'ORAL (narration_text, si needs_voice true) :
+- Phrases courtes et percutantes (≤ 18 mots), une idée par phrase
+- Nombres/dates/unités en toutes lettres ; aucun markdown ni parenthèse ; style parlé direct
+
+VOIX ET DELIVERY_STYLE (si needs_voice true) :
+- delivery_style variable par segment ; hook rapide (pace fast), emphasis_words 3-5 mots
+- Ne pas répéter le même azure_style sur tous les segments
+
+{research_rules_block}
+{critic_feedback_block}
+{fact_check_feedback_block}
+{sources_block}
+{visual_beats_rules}
+Pour source_hint : 2-3 sources dans l'ordre de pertinence pour le sujet du segment."""
+
+
+def _format_outline_block(outline: dict[str, Any]) -> str:
+    """Sérialise le squelette en texte lisible pour le prompt d'écriture."""
+    lines: list[str] = []
+    for seg in outline.get("segments", []):
+        hook = seg.get("hook_type")
+        hook_txt = f", hook={hook}" if hook else ""
+        music = "musique" if seg.get("needs_music") else "sans musique"
+        voice = "voix" if seg.get("needs_voice", True) else "SANS voix"
+        lines.append(
+            f"- Segment {seg.get('order')} « {seg.get('title')} » "
+            f"({seg.get('duration_s')}s, {voice}, {music}, mood={seg.get('mood')}{hook_txt})\n"
+            f"  Intention : {seg.get('intent') or '(non précisé)'}"
+        )
+    return "\n".join(lines)
+
+
 def _build_visual_beats_prompt_context(
     editorial_tone: str,
     theme_category: str,
@@ -190,9 +382,15 @@ def _build_visual_beats_prompt_context(
     min_diagram_duration_long: float = 6.0,
     min_diagram_duration_short: float = 4.0,
     is_short: bool = False,
+    voice_segments: bool = True,
 ) -> dict[str, str]:
-    from agent.core.visual_beats_prompt import build_visual_beats_prompt_context
+    from agent.core.visual_beats_prompt import (
+        SCENARIO_VOICE_BEATS_CONTEXT,
+        build_visual_beats_prompt_context,
+    )
 
+    if voice_segments:
+        return dict(SCENARIO_VOICE_BEATS_CONTEXT)
     return build_visual_beats_prompt_context(
         editorial_tone,
         theme_category,
@@ -324,6 +522,8 @@ class ScenarioInput:
     content_language: str = "fr"
     min_diagram_duration_s: float = 6.0
     min_diagram_duration_short_s: float = 4.0
+    min_short_duration_s: int = 60
+    max_short_duration_s: int = 120
     content_plan_block: str = ""
     research_block: str = ""
     research_rules_block: str = ""
@@ -337,7 +537,11 @@ class ScenarioAgent(BaseAgent):
 
     name = "scenario_agent"
 
-    async def run(self, ctx: "PipelineContext") -> Scenario:  # type: ignore[override]
+    async def run(self, ctx: "PipelineContext", outline: dict[str, Any] | None = None) -> Scenario:  # type: ignore[override]
+        if outline is None:
+            from agent.agents.outline_agent import load_outline
+
+            outline = await load_outline(ctx.project_id)
         theme_prompt = ctx.channel.theme_prompt or ctx.niche_prompt or ""
         critic_feedback_block = _format_critic_feedback_block(ctx.critic_feedback)
         fact_check_feedback_block = _format_fact_check_feedback_block(ctx.fact_check_feedback)
@@ -355,6 +559,8 @@ class ScenarioAgent(BaseAgent):
             content_language=ctx.channel_config.content_language,
             min_diagram_duration_s=ctx.channel_config.visual_beats.min_diagram_duration_s,
             min_diagram_duration_short_s=ctx.channel_config.visual_beats.min_diagram_duration_short_s,
+            min_short_duration_s=ctx.channel_config.min_short_duration_s,
+            max_short_duration_s=ctx.channel_config.max_short_duration_s,
             content_plan_block=_format_content_plan_block(ctx.content_plan),
             research_block=_format_research_block(ctx.research_brief),
             research_rules_block=_format_research_rules_block(ctx.research_brief),
@@ -364,21 +570,31 @@ class ScenarioAgent(BaseAgent):
         )
         run = await self.start_run(ctx.project_id, input_data)
         try:
-            scenario = await self._generate_scenario(input_data)
+            scenario = await self._generate_scenario(input_data, outline)
             await self.end_run(run, {"scenario_id": str(scenario.id)})
             return scenario
         except Exception as e:
             await self.fail_run(run, e)
             raise
 
-    async def _generate_scenario(self, input_data: ScenarioInput) -> Scenario:
+    async def _generate_scenario(
+        self, input_data: ScenarioInput, outline: dict[str, Any] | None = None
+    ) -> Scenario:
         is_short = input_data.production_mode == "shorts_only" or input_data.target_duration_seconds <= 120
+        # Le contexte d'apprentissage dérive de retours audience/commentaires (non fiables) :
+        # on le balise comme donnée pour qu'il ne soit pas pris pour des instructions (OWASP LLM01).
         learning_block = LEARNING_CONTEXT_BLOCK.format(
-            learning_context_prompt=input_data.learning_context_prompt,
+            learning_context_prompt=wrap_untrusted(
+                input_data.learning_context_prompt, label="audience_feedback"
+            ),
         )
 
         if is_short:
             segment_duration = min(30, max(15, input_data.target_duration_seconds // 2))
+            target_duration = min(
+                input_data.max_short_duration_s,
+                max(input_data.min_short_duration_s, input_data.target_duration_seconds),
+            )
             vb_ctx = _build_visual_beats_prompt_context(
                 input_data.editorial_tone,
                 input_data.theme_category,
@@ -386,27 +602,51 @@ class ScenarioAgent(BaseAgent):
                 min_diagram_duration_long=input_data.min_diagram_duration_s,
                 min_diagram_duration_short=input_data.min_diagram_duration_short_s,
                 is_short=True,
+                voice_segments=True,
             )
-            prompt = USER_PROMPT_SHORT.format(
-                duration_s=input_data.target_duration_seconds,
-                segment_duration=segment_duration,
-                channel_name=input_data.channel_name,
-                theme_category=input_data.theme_category,
-                theme_prompt=input_data.theme_prompt or input_data.niche_prompt,
-                niche_prompt=input_data.niche_prompt or "Contenu court vertical",
-                editorial_tone=input_data.editorial_tone,
-                creative_brief_block=input_data.creative_brief_block,
-                theme=input_data.theme,
-                content_plan_block=input_data.content_plan_block,
-                research_block=input_data.research_block,
-                research_rules_block=input_data.research_rules_block,
-                learning_block=learning_block,
-                critic_feedback_block=input_data.critic_feedback_block,
-                fact_check_feedback_block=input_data.fact_check_feedback_block,
-                sources_block=AVAILABLE_SOURCES,
-                **vb_ctx,
-            )
-            system = SYSTEM_PROMPT_SHORT
+            if outline and outline.get("segments"):
+                prompt = WRITER_PROMPT_SHORT.format(
+                    target_duration_s=target_duration,
+                    segment_duration=segment_duration,
+                    channel_name=input_data.channel_name,
+                    theme_category=input_data.theme_category,
+                    editorial_tone=input_data.editorial_tone,
+                    theme=input_data.theme,
+                    research_block=input_data.research_block,
+                    learning_block=learning_block,
+                    outline_block=_format_outline_block(outline),
+                    outline_title=outline.get("title", ""),
+                    research_rules_block=input_data.research_rules_block,
+                    critic_feedback_block=input_data.critic_feedback_block,
+                    fact_check_feedback_block=input_data.fact_check_feedback_block,
+                    sources_block=AVAILABLE_SOURCES,
+                    **vb_ctx,
+                )
+                system = WRITER_SYSTEM_PROMPT_SHORT
+            else:
+                prompt = USER_PROMPT_SHORT.format(
+                    min_duration_s=input_data.min_short_duration_s,
+                    max_duration_s=input_data.max_short_duration_s,
+                    target_duration_s=target_duration,
+                    segment_duration=segment_duration,
+                    channel_name=input_data.channel_name,
+                    theme_category=input_data.theme_category,
+                    theme_prompt=input_data.theme_prompt or input_data.niche_prompt,
+                    niche_prompt=input_data.niche_prompt or "Contenu court vertical",
+                    editorial_tone=input_data.editorial_tone,
+                    creative_brief_block=input_data.creative_brief_block,
+                    theme=input_data.theme,
+                    content_plan_block=input_data.content_plan_block,
+                    research_block=input_data.research_block,
+                    research_rules_block=input_data.research_rules_block,
+                    learning_block=learning_block,
+                    critic_feedback_block=input_data.critic_feedback_block,
+                    fact_check_feedback_block=input_data.fact_check_feedback_block,
+                    sources_block=AVAILABLE_SOURCES,
+                    mood_field_doc=MOOD_FIELD_DOC,
+                    **vb_ctx,
+                )
+                system = SYSTEM_PROMPT_SHORT
             if "humor" in input_data.editorial_tone.lower() or "humour" in input_data.editorial_tone.lower():
                 system += "\nPriorise l'humour, le second degré et les formats sans voix quand le visuel suffit."
         else:
@@ -419,29 +659,59 @@ class ScenarioAgent(BaseAgent):
                 min_diagram_duration_long=input_data.min_diagram_duration_s,
                 min_diagram_duration_short=input_data.min_diagram_duration_short_s,
                 is_short=False,
+                voice_segments=True,
             )
-            prompt = USER_PROMPT_LONG.format(
-                duration_min=duration_min,
-                channel_name=input_data.channel_name,
-                theme_category=input_data.theme_category,
-                theme_prompt=input_data.theme_prompt or input_data.niche_prompt,
-                niche_prompt=input_data.niche_prompt or "Vidéo éducative française",
-                editorial_tone=input_data.editorial_tone,
-                creative_brief_block=input_data.creative_brief_block,
-                theme=input_data.theme,
-                content_plan_block=input_data.content_plan_block,
-                research_block=input_data.research_block,
-                research_rules_block=input_data.research_rules_block,
-                learning_block=learning_block,
-                critic_feedback_block=input_data.critic_feedback_block,
-                fact_check_feedback_block=input_data.fact_check_feedback_block,
-                sources_block=AVAILABLE_SOURCES,
-                **vb_ctx,
-            )
-            system = SYSTEM_PROMPT_LONG
+            if outline and outline.get("segments"):
+                prompt = WRITER_PROMPT_LONG.format(
+                    channel_name=input_data.channel_name,
+                    theme_category=input_data.theme_category,
+                    editorial_tone=input_data.editorial_tone,
+                    theme=input_data.theme,
+                    research_block=input_data.research_block,
+                    learning_block=learning_block,
+                    outline_block=_format_outline_block(outline),
+                    outline_title=outline.get("title", ""),
+                    research_rules_block=input_data.research_rules_block,
+                    critic_feedback_block=input_data.critic_feedback_block,
+                    fact_check_feedback_block=input_data.fact_check_feedback_block,
+                    sources_block=AVAILABLE_SOURCES,
+                    **vb_ctx,
+                )
+                system = WRITER_SYSTEM_PROMPT_LONG
+            else:
+                prompt = USER_PROMPT_LONG.format(
+                    duration_min=duration_min,
+                    channel_name=input_data.channel_name,
+                    theme_category=input_data.theme_category,
+                    theme_prompt=input_data.theme_prompt or input_data.niche_prompt,
+                    niche_prompt=input_data.niche_prompt or "Vidéo éducative française",
+                    editorial_tone=input_data.editorial_tone,
+                    creative_brief_block=input_data.creative_brief_block,
+                    theme=input_data.theme,
+                    content_plan_block=input_data.content_plan_block,
+                    research_block=input_data.research_block,
+                    research_rules_block=input_data.research_rules_block,
+                    learning_block=learning_block,
+                    critic_feedback_block=input_data.critic_feedback_block,
+                    fact_check_feedback_block=input_data.fact_check_feedback_block,
+                    sources_block=AVAILABLE_SOURCES,
+                    mood_field_doc=MOOD_FIELD_DOC,
+                    **vb_ctx,
+                )
+                system = SYSTEM_PROMPT_LONG
 
+        # Le SUJET (theme) et les retours audience peuvent venir de tiers : politique de
+        # contenu non fiable côté system prompt (OWASP LLM01 / reco Anthropic).
+        system = f"{system}\n\n{UNTRUSTED_CONTENT_POLICY}"
         raw = await self._call_claude(prompt, system=system, max_tokens=8192)
         data = self._parse_json(raw)
+
+        # Nettoie les mots-clés issus du LLM avant qu'ils n'atteignent les requêtes média
+        # externes (anti-injection de requête — un scénario empoisonné ne doit pas pouvoir
+        # forger une requête SRU/Lucene).
+        for seg in data.get("segments", []):
+            if isinstance(seg, dict) and "search_keywords" in seg:
+                seg["search_keywords"] = sanitize_search_terms(seg.get("search_keywords"))
 
         from agent.core.channel_config import VisualBeatsConfig
         from agent.skills.media.segment_beats_media import ensure_visual_beats_on_segments

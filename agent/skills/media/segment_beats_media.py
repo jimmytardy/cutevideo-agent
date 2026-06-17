@@ -5,7 +5,7 @@ import re
 from typing import TYPE_CHECKING, Any
 
 from agent.core.database import AsyncSessionFactory, MediaAsset
-from agent.core.visual_beats import VisualBeat, beats_to_dicts, parse_visual_beats
+from agent.core.visual_beats import VisualBeat, beat_narration_excerpt, beats_to_dicts, parse_visual_beats
 from agent.skills.media.beat_source_routing import resolve_beat_sources
 from agent.skills.media.media_library import (
     LIBRARY_SELECTED,
@@ -35,6 +35,89 @@ _EXPLANATORY_TYPES = frozenset({
     "quote_card",
     "statistic_highlight",
 })
+
+
+async def synthesize_beat_ai_prompt(
+    agent: "MediaAgent",
+    ctx: "PipelineContext",
+    beat: VisualBeat,
+    *,
+    aspect_ratio: str,
+    cache_dir: Any,
+) -> str:
+    """Brief FR du beat → sujet EN (Gemini) → prompt FLUX riche (sujet en tête + style bible).
+
+    Chemin unique de construction de prompt IA, partagé par le rendu par-beat et le
+    fallback segment, pour éviter la « salade de mots-clés ».
+    """
+    subject_en = await synthesize_flux_subject(
+        visual_type=beat.visual_type,
+        prompt_fr=beat.prompt,
+        style_hint=beat.style_hint,
+        phrase_anchor=beat.phrase_anchor,
+        api_key=getattr(agent, "_gemini_api_key", "") or None,
+        cache_dir=cache_dir,
+    )
+    return build_visual_prompt(
+        beat.visual_type,
+        subject_en,
+        style_hint=beat.style_hint,
+        theme_category=ctx.theme_category,
+        editorial_tone=ctx.channel_config.editorial_tone,
+        aspect_ratio=aspect_ratio,
+        style_block=getattr(ctx, "visual_style_block", "") or "",
+    )
+
+
+async def synthesize_segment_ai_prompt(
+    agent: "MediaAgent",
+    ctx: "PipelineContext",
+    segment: dict[str, Any],
+    keywords: list[str],
+    *,
+    aspect_ratio: str,
+    cache_dir: Any,
+) -> tuple[str, VisualBeat | None, str]:
+    """Prompt IA pour un fallback au niveau SEGMENT (pas de beat ciblé).
+
+    Réutilise le premier beat du segment si disponible (prompt riche du beat_planner),
+    sinon construit un brief FR à partir du titre + narration + mots-clés et le synthétise.
+    Retourne (prompt, beat|None, visual_type).
+    """
+    beats = parse_visual_beats(segment)
+    if beats:
+        beat = beats[0]
+        prompt = await synthesize_beat_ai_prompt(
+            agent, ctx, beat, aspect_ratio=aspect_ratio, cache_dir=cache_dir
+        )
+        return prompt, beat, beat.visual_type
+
+    subject_fr = " — ".join(
+        part
+        for part in (
+            str(segment.get("title") or ""),
+            (str(segment.get("narration_text") or ""))[:200],
+            ", ".join(keywords[:4]),
+        )
+        if part
+    )
+    subject_en = await synthesize_flux_subject(
+        visual_type="documentary_photo",
+        prompt_fr=subject_fr,
+        style_hint="",
+        phrase_anchor=str(segment.get("title") or ""),
+        api_key=getattr(agent, "_gemini_api_key", "") or None,
+        cache_dir=cache_dir,
+    )
+    prompt = build_visual_prompt(
+        "documentary_photo",
+        subject_en,
+        theme_category=ctx.theme_category,
+        editorial_tone=ctx.channel_config.editorial_tone,
+        aspect_ratio=aspect_ratio,
+        style_block=getattr(ctx, "visual_style_block", "") or "",
+    )
+    return prompt, None, "documentary_photo"
 
 
 def _beat_video_target(beat: VisualBeat, ms_cfg: Any) -> int:
@@ -152,28 +235,16 @@ async def process_segment_beats(
 
         if not selected and ms_cfg.enable_ai_fallback and ai_cfg.enabled and allows_ai:
             beat_dir = output_dir / f"beat_{beat.order:02d}"
-            subject_en = await synthesize_flux_subject(
-                visual_type=beat.visual_type,
-                prompt_fr=beat.prompt,
-                style_hint=beat.style_hint,
-                phrase_anchor=beat.phrase_anchor,
-                api_key=getattr(agent, "_gemini_api_key", "") or None,
+            ai_prompt = await synthesize_beat_ai_prompt(
+                agent, ctx, beat, aspect_ratio=aspect_ratio,
                 cache_dir=beat_dir / "prompt_cache",
-            )
-            ai_prompt = build_visual_prompt(
-                beat.visual_type,
-                subject_en,
-                style_hint=beat.style_hint,
-                theme_category=ctx.theme_category,
-                editorial_tone=ctx.channel_config.editorial_tone,
-                aspect_ratio=aspect_ratio,
             )
             if await agent._can_generate_ai_image(ctx, ai_cfg):
                 ai_result = await agent._generate_validated_ai_image(
                     ai_prompt,
                     beat_dir,
                     ctx,
-                    {**segment, "narration_text": f"{beat.phrase_anchor} — {beat.prompt}"},
+                    {**segment, "narration_text": beat_narration_excerpt(beat)},
                     min_relevance,
                     ai_cfg,
                     aspect_ratio,
@@ -220,6 +291,8 @@ async def process_segment_beats(
 
 
 def _beat_keywords(beat: VisualBeat, segment_keywords: list[str]) -> list[str]:
+    from agent.core.prompt_safety import sanitize_search_terms
+
     extra = beat.prompt.split()[:4]
     combined = list(segment_keywords[:2]) + extra
     seen: set[str] = set()
@@ -229,7 +302,9 @@ def _beat_keywords(beat: VisualBeat, segment_keywords: list[str]) -> list[str]:
         if k and k.lower() not in seen:
             seen.add(k.lower())
             out.append(k)
-    return out[:6] or segment_keywords[:4]
+    # Chokepoint final avant requête média externe : neutralise la syntaxe de requête
+    # (beat.prompt est aussi du texte LLM, donc non fiable).
+    return sanitize_search_terms(out[:6] or segment_keywords[:4])
 
 
 def ensure_visual_beats_on_segments(
@@ -247,7 +322,11 @@ def ensure_visual_beats_on_segments(
     updated: list[dict[str, Any]] = []
     for seg in segments:
         seg = dict(seg)
-        if not seg.get("needs_voice", True):
+        has_voice = seg.get("needs_voice", True) is not False and bool(
+            (seg.get("narration_text") or "").strip()
+        )
+        if has_voice:
+            seg.pop("visual_beats", None)
             updated.append(seg)
             continue
         errors = validate_beats_against_narration(

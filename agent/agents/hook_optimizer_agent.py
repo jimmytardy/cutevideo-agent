@@ -17,7 +17,6 @@ logger = logging.getLogger(__name__)
 HOOK_OPTIMIZABLE_KEYS: tuple[str, ...] = (
     "narration_text",
     "delivery_style",
-    "visual_beats",
     "on_screen_text",
     "search_keywords",
 )
@@ -37,12 +36,10 @@ CHAMPS HOOK À OPTIMISER :
 Règles impératives :
 - narration_text : storytelling vivant, question rhétorique dans les ~15 premières secondes
 - delivery_style : pace "fast", emotion engageante, emphasis_words sur mots clés
-- visual_beats : 3 à 5 beats denses, duration_hint_s ≤ 6 (sauf diagrammes ≥ {min_diagram}s)
-- Interdit un seul beat photo/vidéo pour tout le hook
-- Chaque phrase_anchor = extrait exact de narration_text
+- search_keywords : termes précis liés au sujet et au hook
 
 Retourne UNIQUEMENT un objet JSON avec ces clés (pas de media_validation, pas de métadonnées) :
-narration_text, delivery_style, visual_beats, on_screen_text, search_keywords."""
+narration_text, delivery_style, on_screen_text, search_keywords."""
 
 HOOK_RETRY_PROMPT = """Ta réponse précédente n'était pas du JSON valide ({error}).
 Régénère UNIQUEMENT l'objet JSON des champs optimisés listés ci-dessous.
@@ -87,14 +84,12 @@ class HookOptimizerAgent(BaseAgent):
         if not hook or not hook.get("needs_voice", True):
             return scenario
 
-        min_diagram = ctx.channel_config.visual_beats.min_diagram_duration_s
         hook_subset = _extract_hook_subset(hook)
         hook_json = json.dumps(hook_subset, ensure_ascii=False, indent=2)
         prompt = HOOK_PROMPT.format(
             theme=ctx.theme,
             language=ctx.channel_config.content_language,
             hook_json=hook_json,
-            min_diagram=min_diagram,
         )
         raw = await self._call_claude(prompt, system=HOOK_SYSTEM, max_tokens=4096)
         try:
@@ -128,7 +123,12 @@ class HookOptimizerAgent(BaseAgent):
             session.add(new_scenario)
             await session.commit()
             await session.refresh(new_scenario)
-        logger.info("Hook optimisé — %d visual_beats", len(new_segments[0].get("visual_beats") or []))
+        hook_seg = new_segments[0]
+        logger.info(
+            "Hook optimisé — narration %d car., delivery_style=%s",
+            len(str(hook_seg.get("narration_text") or "")),
+            (hook_seg.get("delivery_style") or {}).get("pace", "?"),
+        )
         return new_scenario
 
     @staticmethod
@@ -146,4 +146,6 @@ def _merge_hook(segment: dict[str, Any], optimized: dict[str, Any]) -> dict[str,
         if key in optimized:
             merged[key] = optimized[key]
     merged["order"] = 1
+    if segment.get("needs_voice", True) is not False:
+        merged.pop("visual_beats", None)
     return merged

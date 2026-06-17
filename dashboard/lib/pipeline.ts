@@ -67,29 +67,37 @@ function isKickoffAgent(
 
 export const AGENT_LABELS: Record<string, string> = {
   research_agent: 'Chercheur',
+  outline_agent: 'Architecte éditorial',
   scenario_agent: 'Scénariste',
   hook_optimizer_agent: 'Optimiseur accroche',
   revision_agent: 'Agent Révision',
-  media_agent: 'Chercheur Média',
   narrator_agent: 'Narrateur Voix',
+  art_director_agent: 'Directeur artistique',
+  beat_planner_agent: 'Planificateur segment',
+  diagram_specialist_agent: 'Spécialiste diagrammes',
+  media_agent: 'Chercheur Média',
   montage_planner_agent: 'Planificateur montage',
   editor_agent: 'Monteur Vidéo',
   subtitle_agent: 'Sous-titreur',
   critic_agent: 'Critique IA',
+  metadata_agent: 'Métadonnées SEO',
+  thumbnail_agent: 'Miniature',
   clipper_agent: 'Découpeur Shorts',
   short_editor_agent: 'Éditeur Shorts',
 }
 
 export const PREPARATION_AGENT_KEYS = [
   'research_agent',
+  'outline_agent',
   'scenario_agent',
   'hook_optimizer_agent',
 ] as const
 
 export const ITERATION_AGENT_KEYS = [
   'revision_agent',
-  'media_agent',
   'narrator_agent',
+  'beat_planner_agent',
+  'media_agent',
   'montage_planner_agent',
   'editor_agent',
   'subtitle_agent',
@@ -97,8 +105,10 @@ export const ITERATION_AGENT_KEYS = [
 ] as const
 
 export const ITERATION_1_AGENT_KEYS = [
-  'media_agent',
   'narrator_agent',
+  'art_director_agent',
+  'beat_planner_agent',
+  'media_agent',
   'montage_planner_agent',
   'editor_agent',
   'subtitle_agent',
@@ -106,7 +116,8 @@ export const ITERATION_1_AGENT_KEYS = [
 ] as const
 
 export const DELETION_SUMMARY: Record<string, string[]> = {
-  research_agent: ['Brief recherche', 'Scénarios', 'Médias', 'Fichiers audio', 'Vidéos', 'Rapports critiques'],
+  research_agent: ['Brief recherche', 'Plan éditorial', 'Scénarios', 'Médias', 'Fichiers audio', 'Vidéos', 'Rapports critiques'],
+  outline_agent: ['Plan éditorial', 'Scénarios', 'Médias', 'Fichiers audio', 'Vidéos', 'Rapports critiques'],
   scenario_agent: ['Scénarios (visual beats)', 'Médias', 'Fichiers audio', 'Vidéos', 'Rapports critiques'],
   hook_optimizer_agent: [
     'Accroche optimisée (segment 1)',
@@ -117,8 +128,10 @@ export const DELETION_SUMMARY: Record<string, string[]> = {
     'Rapports critiques',
   ],
   revision_agent: ['Scénario révisé (visual beats)', 'Médias', 'Fichiers audio', 'Vidéos', 'Rapports critiques'],
-  media_agent: ['Médias (par beat + bibliothèque)', 'Fichiers audio', 'Vidéos', 'Rapports critiques'],
-  narrator_agent: ['Fichiers audio', 'Plan de montage', 'Vidéos', 'Rapports critiques'],
+  narrator_agent: ['Fichiers audio', 'Visual beats', 'Médias', 'Plan de montage', 'Vidéos', 'Rapports critiques'],
+  art_director_agent: ['Direction visuelle', 'Médias', 'Vidéos', 'Rapports critiques'],
+  beat_planner_agent: ['Visual beats', 'Médias', 'Plan de montage', 'Vidéos', 'Rapports critiques'],
+  media_agent: ['Médias (par beat + bibliothèque)', 'Plan de montage', 'Vidéos', 'Rapports critiques'],
   montage_planner_agent: ['Plan de montage', 'Vidéos', 'Rapports critiques'],
   editor_agent: ['Vidéos', 'Rapports critiques'],
   subtitle_agent: ['Vidéos', 'Rapports critiques'],
@@ -312,6 +325,25 @@ export function deriveResearchStatus(
   return 'pending'
 }
 
+export function deriveOutlineStatus(
+  agentRuns: AgentRun[],
+  redisStatuses: Record<string, string> | undefined,
+  projectStatus: string,
+  kickoff?: PipelineKickoff | null,
+): AgentStatus {
+  const run = getAgentRunForStep(agentRuns, 'outline_agent')
+  if (run?.status === 'failed') return 'failed'
+  if (run?.status === 'stopped') return 'stopped'
+  if (run?.status === 'success') return 'success'
+  if (run?.status === 'running') return 'running'
+  if (isKickoffAgent('outline_agent', kickoff, run)) return 'running'
+  if (shouldCheckRedis(projectStatus, kickoff)) {
+    const redis = resolveRedisStatus(redisStatuses, 'outline_agent')
+    if (redis) return redis
+  }
+  return 'pending'
+}
+
 export function deriveScenarioStatus(
   agentRuns: AgentRun[],
   redisStatuses: Record<string, string> | undefined,
@@ -337,7 +369,9 @@ export function deriveHookOptimizerStatus(
   projectStatus: string,
   scenarioStatus: AgentStatus,
   kickoff?: PipelineKickoff | null,
+  isShort?: boolean,
 ): AgentStatus {
+  if (isShort) return 'planned'
   const run = getAgentRunForStep(agentRuns, 'hook_optimizer_agent')
   if (run?.status === 'failed') return 'failed'
   if (run?.status === 'stopped') return 'stopped'
@@ -408,6 +442,7 @@ export function getResumeStep(
   criticReports: CriticReport[],
   isShort: boolean,
   kickoff?: PipelineKickoff | null,
+  postProductionAgents?: string[],
 ): ResumeTarget | null {
   const effectiveStatus = getEffectiveProjectStatus(projectStatus, kickoff)
   if (effectiveStatus === 'approved' || effectiveStatus === 'running') return null
@@ -420,7 +455,8 @@ export function getResumeStep(
     return { step: 'scenario_agent', label: AGENT_LABELS.scenario_agent }
   }
   if (
-    !isAgentStepComplete(agentRuns, 'hook_optimizer_agent')
+    !isShort
+    && !isAgentStepComplete(agentRuns, 'hook_optimizer_agent')
     && !isAgentStepComplete(agentRuns, 'media_agent', 1)
   ) {
     return { step: 'hook_optimizer_agent', label: AGENT_LABELS.hook_optimizer_agent }
@@ -436,7 +472,8 @@ export function getResumeStep(
   }
 
   if (isCriticLoopApproved(criticReports)) {
-    const postSteps = isShort ? ['short_editor_agent'] : ['clipper_agent', 'short_editor_agent']
+    const postSteps = postProductionAgents
+      ?? (isShort ? ['short_editor_agent'] : ['clipper_agent', 'short_editor_agent'])
     for (const step of postSteps) {
       if (!isAgentStepComplete(agentRuns, step)) {
         return { step, label: AGENT_LABELS[step] ?? step }

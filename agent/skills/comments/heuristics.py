@@ -14,6 +14,27 @@ THANKS_PATTERNS = re.compile(
 )
 REPLY_TEMPLATE = "Merci beaucoup pour ton message, ça fait plaisir !"
 
+# Filtre de sortie sur les réponses générées par LLM avant publication (OWASP LLM01 :
+# action sortante sensible dérivée d'une entrée non fiable). Empêche le bot d'être
+# instrumentalisé pour poster des liens ou répercuter une injection.
+_REPLY_BLOCK_PATTERNS = [
+    re.compile(r"https?://", re.I),
+    re.compile(r"www\.", re.I),
+    re.compile(r"\b(ignore|disregard|forget)\b.{0,30}\b(instruction|prompt|consigne|previous)\b", re.I),
+    re.compile(r"\b(system prompt|prompt système|jailbreak)\b", re.I),
+]
+
+
+def is_reply_safe(text: str | None) -> bool:
+    """True si la réponse peut être postée publiquement sans risque évident."""
+    cleaned = (text or "").strip()
+    if not cleaned or len(cleaned) > 500:
+        return False
+    # Pas de caractères de contrôle (hors espaces usuels).
+    if any(ord(ch) < 32 and ch not in "\t\n\r" for ch in cleaned):
+        return False
+    return not any(pat.search(cleaned) for pat in _REPLY_BLOCK_PATTERNS)
+
 
 @dataclass
 class CommentHeuristicResult:

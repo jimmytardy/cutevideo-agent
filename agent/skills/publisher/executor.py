@@ -59,6 +59,23 @@ async def publish_scheduled(
         await _mark_failed(publication.id, "video_file_missing")
         return None
 
+    if platform == "tiktok":
+        min_tiktok = channel_config.min_duration_tiktok
+        duration = video.duration_s or 0
+        if duration > 0 and duration < min_tiktok:
+            msg = (
+                f"tiktok_min_duration:{duration:.0f}s<{min_tiktok}s "
+                f"(minimum TikTok {min_tiktok}s)"
+            )
+            logger.warning(
+                "Publication TikTok bloquée — vidéo %s trop courte (%.0fs < %ds)",
+                video.id,
+                duration,
+                min_tiktok,
+            )
+            await _mark_failed(publication.id, msg)
+            return None
+
     await _mark_publishing(publication.id)
 
     try:

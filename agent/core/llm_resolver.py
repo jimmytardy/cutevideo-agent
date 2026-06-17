@@ -11,8 +11,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from agent.core.api_keys import resolve_api_key
 from agent.core.database import User
 from agent.core.llm_config import resolve_max_tokens, resolve_model
+from agent.core.llm_retry import retry_transient_async
 
 logger = logging.getLogger(__name__)
+
+# Nombre de relances de continuation lorsqu'une réponse est coupée par max_tokens.
+# Chaque continuation reprend là où le modèle s'est arrêté (prefill Anthropic /
+# tour de continuation Gemini) ; au-delà du cap on renvoie le texte accumulé en
+# best-effort (le filet de réparation JSON côté agent prend le relais).
+MAX_CONTINUATIONS = 4
 
 LlmProvider = Literal["gemini", "anthropic"]
 LlmTier = Literal["free", "paid"]
@@ -43,11 +50,13 @@ CONFIGURABLE_AGENTS: frozenset[str] = frozenset(
 
 # Agents dont la config LLM est héritée d'un autre agent configurable.
 LLM_PREFERENCE_ALIAS: dict[str, str] = {
+    "outline_agent": "scenario_agent",
     "revision_agent": "scenario_agent",
     "fact_checker_agent": "scenario_agent",
     "montage_planner_agent": "scenario_agent",
     "hook_optimizer_agent": "scenario_agent",
     "diagram_specialist_agent": "scenario_agent",
+    "beat_planner_agent": "scenario_agent",
 }
 
 
@@ -248,8 +257,7 @@ async def call_llm(
             kwargs["system"] = [
                 {"type": "text", "text": system.strip(), "cache_control": {"type": "ephemeral"}}
             ]
-        response = await client.messages.create(**kwargs)
-        return response.content[0].text
+        return await _anthropic_complete(client, kwargs, agent_name)
 
     return await _call_gemini_text(
         api_key=cfg.api_key,
@@ -258,7 +266,73 @@ async def call_llm(
         system=system,
         max_tokens=resolved_max,
         cacheable_context=cacheable_context,
+        agent_name=agent_name,
     )
+
+
+def _anthropic_text(response: Any) -> str:
+    """Concatène tous les blocs texte d'une réponse Anthropic."""
+    return "".join(
+        block.text for block in response.content if getattr(block, "type", None) == "text"
+    )
+
+
+async def _anthropic_complete(client: Any, kwargs: dict[str, Any], agent_name: str) -> str:
+    """Appel Anthropic avec continuation automatique si coupé par max_tokens.
+
+    La continuation utilise le *prefill* : on renvoie le texte déjà produit comme
+    dernier tour assistant, et l'API poursuit exactement où elle s'était arrêtée.
+    """
+    base_messages = list(kwargs["messages"])
+    response = await retry_transient_async(
+        lambda: client.messages.create(**kwargs), label=f"{agent_name}/anthropic"
+    )
+    text = _anthropic_text(response)
+
+    continuations = 0
+    while response.stop_reason == "max_tokens" and continuations < MAX_CONTINUATIONS:
+        text = text.rstrip()  # le contenu assistant prefill ne peut finir par un blanc
+        if not text:
+            break
+        continuations += 1
+        logger.warning(
+            "Réponse %s tronquée (max_tokens) — continuation %d/%d",
+            agent_name,
+            continuations,
+            MAX_CONTINUATIONS,
+        )
+        cont_kwargs = {
+            **kwargs,
+            "messages": [*base_messages, {"role": "assistant", "content": text}],
+        }
+        response = await retry_transient_async(
+            lambda: client.messages.create(**cont_kwargs), label=f"{agent_name}/anthropic"
+        )
+        text += _anthropic_text(response)
+
+    if response.stop_reason == "max_tokens":
+        logger.error(
+            "Réponse %s toujours tronquée après %d continuations — texte best-effort renvoyé",
+            agent_name,
+            MAX_CONTINUATIONS,
+        )
+    return text
+
+
+def _gemini_text(response: Any) -> str:
+    text = getattr(response, "text", None) or ""
+    if not text and getattr(response, "candidates", None):
+        parts = response.candidates[0].content.parts  # type: ignore[union-attr]
+        text = "".join(getattr(p, "text", "") or "" for p in parts)
+    return text
+
+
+def _gemini_truncated(response: Any) -> bool:
+    candidates = getattr(response, "candidates", None)
+    if not candidates:
+        return False
+    reason = getattr(candidates[0], "finish_reason", None)
+    return getattr(reason, "name", str(reason)) == "MAX_TOKENS"
 
 
 async def _call_gemini_text(
@@ -269,6 +343,7 @@ async def _call_gemini_text(
     system: str | None,
     max_tokens: int,
     cacheable_context: str | None,
+    agent_name: str = "llm",
 ) -> str:
     from google import genai
     from google.genai import types
@@ -281,16 +356,56 @@ async def _call_gemini_text(
     config_kwargs: dict[str, Any] = {"max_output_tokens": max_tokens}
     if system and system.strip():
         config_kwargs["system_instruction"] = system.strip()
+    config = types.GenerateContentConfig(**config_kwargs)
 
-    response = await client.aio.models.generate_content(
-        model=model,
-        contents=full_prompt,
-        config=types.GenerateContentConfig(**config_kwargs),
+    user_turn = types.Content(role="user", parts=[types.Part(text=full_prompt)])
+    response = await retry_transient_async(
+        lambda: client.aio.models.generate_content(
+            model=model, contents=[user_turn], config=config
+        ),
+        label=f"{agent_name}/gemini",
     )
-    text = getattr(response, "text", None) or ""
-    if not text and response.candidates:
-        parts = response.candidates[0].content.parts  # type: ignore[union-attr]
-        text = "".join(getattr(p, "text", "") or "" for p in parts)
+    text = _gemini_text(response)
+
+    continuations = 0
+    while _gemini_truncated(response) and continuations < MAX_CONTINUATIONS and text.strip():
+        continuations += 1
+        logger.warning(
+            "Réponse %s tronquée (MAX_TOKENS) — continuation %d/%d",
+            agent_name,
+            continuations,
+            MAX_CONTINUATIONS,
+        )
+        contents = [
+            user_turn,
+            types.Content(role="model", parts=[types.Part(text=text)]),
+            types.Content(
+                role="user",
+                parts=[
+                    types.Part(
+                        text=(
+                            "Continue exactement où tu t'es arrêté, sans rien répéter. "
+                            "Ne renvoie que la suite brute (pas de markdown ni de commentaire)."
+                        )
+                    )
+                ],
+            ),
+        ]
+        response = await retry_transient_async(
+            lambda: client.aio.models.generate_content(
+                model=model, contents=contents, config=config
+            ),
+            label=f"{agent_name}/gemini",
+        )
+        text += _gemini_text(response)
+
+    if _gemini_truncated(response):
+        logger.error(
+            "Réponse %s toujours tronquée après %d continuations — texte best-effort renvoyé",
+            agent_name,
+            MAX_CONTINUATIONS,
+        )
+
     if not text.strip():
         raise RuntimeError(f"Réponse Gemini vide ({model})")
     return text.strip()
