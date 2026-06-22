@@ -32,6 +32,7 @@ import {
   AGENT_LABELS,
   DELETION_SUMMARY,
   deriveAgentStatus,
+  deriveFactCheckerStatus,
   deriveHookOptimizerStatus,
   derivePostProdStatus,
   deriveResearchStatus,
@@ -486,6 +487,8 @@ function IterationRow({
   onRestartFromCritic,
   restartingReportId,
   pipelineProgress,
+  iterationFirstAgents,
+  iterationRevisionAgents,
 }: {
   iter: number
   rowState: ReturnType<typeof getIterationRowState>
@@ -505,10 +508,10 @@ function IterationRow({
   onRestartFromCritic?: (reportId: string) => void
   restartingReportId?: string | null
   pipelineProgress?: PipelineProgressResponse
+  iterationFirstAgents: string[]
+  iterationRevisionAgents: string[]
 }) {
-  const steps = iter === 1
-    ? ['narrator_agent', 'beat_planner_agent', 'media_agent', 'montage_planner_agent', 'editor_agent', 'subtitle_agent', 'critic_agent']
-    : ['revision_agent', 'narrator_agent', 'beat_planner_agent', 'media_agent', 'montage_planner_agent', 'editor_agent', 'subtitle_agent', 'critic_agent']
+  const steps = iter === 1 ? iterationFirstAgents : iterationRevisionAgents
 
   return (
     <Box
@@ -557,9 +560,14 @@ interface Props {
   isShort?: boolean
   /** Agents de préparation réellement concernés (selon le type de vidéo). */
   preparationAgents?: string[]
+  /** Agents de la 1re itération critique. */
+  iterationFirstAgents?: string[]
+  /** Agents des itérations de révision. */
+  iterationRevisionAgents?: string[]
   /** Agents de post-production réellement concernés (selon le type de vidéo). */
   postProductionAgents?: string[]
   maxIterations: number
+  maxIterationsUnlimited?: boolean
   projectStatus: string
   agentRuns: AgentRun[]
   criticReports: CriticReport[]
@@ -577,8 +585,11 @@ export default function PipelineVisualizer({
   projectId,
   isShort = false,
   preparationAgents,
+  iterationFirstAgents,
+  iterationRevisionAgents,
   postProductionAgents,
   maxIterations,
+  maxIterationsUnlimited = false,
   projectStatus,
   pipelineKickoff = null,
   agentRuns,
@@ -606,12 +617,19 @@ export default function PipelineVisualizer({
     { refreshInterval: isPipelineInFlight(projectStatus, pipelineKickoff) ? 5000 : 0 },
   )
 
-  const effectiveMax = effectiveMaxIterations(maxIterations, isShort)
+  const baseMax = effectiveMaxIterations(maxIterations, isShort)
   const criticApproved = isCriticLoopApproved(criticReports)
+  const effectiveMax = maxIterationsUnlimited
+    ? Math.max(baseMax, criticReports.length + (criticApproved ? 0 : 1))
+    : baseMax
 
   // Listes d'agents réellement concernés (fournies par le plan ; sinon repli sur isShort).
   const prepAgents = preparationAgents
-    ?? ['research_agent', 'outline_agent', 'scenario_agent', ...(!isShort ? ['hook_optimizer_agent'] : [])]
+    ?? ['research_agent', 'outline_agent', 'scenario_agent', 'fact_checker_agent', ...(!isShort ? ['hook_optimizer_agent'] : [])]
+  const iterFirst = iterationFirstAgents
+    ?? ['narrator_agent', 'art_director_agent', 'beat_planner_agent', 'diagram_specialist_agent', 'media_agent', 'montage_planner_agent', 'editor_agent', 'subtitle_agent', 'critic_agent']
+  const iterRevision = iterationRevisionAgents
+    ?? ['revision_agent', ...iterFirst]
   const postAgents = postProductionAgents
     ?? (isShort ? ['short_editor_agent'] : ['clipper_agent', 'short_editor_agent'])
 
@@ -627,6 +645,13 @@ export default function PipelineVisualizer({
   const researchStatus = deriveResearchStatus(agentRuns, redisStatuses, projectStatus, pipelineKickoff)
   const outlineStatus = deriveOutlineStatus(agentRuns, redisStatuses, projectStatus, pipelineKickoff)
   const scenarioStatus = deriveScenarioStatus(agentRuns, redisStatuses, projectStatus, pipelineKickoff)
+  const factCheckerStatus = deriveFactCheckerStatus(
+    agentRuns,
+    redisStatuses,
+    projectStatus,
+    scenarioStatus,
+    pipelineKickoff,
+  )
   const hookOptimizerStatus = deriveHookOptimizerStatus(
     agentRuns,
     redisStatuses,
@@ -639,6 +664,7 @@ export default function PipelineVisualizer({
     research_agent: researchStatus,
     outline_agent: outlineStatus,
     scenario_agent: scenarioStatus,
+    fact_checker_agent: factCheckerStatus,
     hook_optimizer_agent: hookOptimizerStatus,
   }
 
@@ -701,6 +727,8 @@ export default function PipelineVisualizer({
       onRestartFromCritic={onRestartFromCritic}
       restartingReportId={restartingReportId}
       pipelineProgress={pipelineProgress}
+      iterationFirstAgents={iterFirst}
+      iterationRevisionAgents={iterRevision}
     />
   )
 
@@ -748,7 +776,7 @@ export default function PipelineVisualizer({
             {prepAgents.map((step, idx) => {
               const status = prepStatusFor[step] ?? 'pending'
               const disabled =
-                step === 'hook_optimizer_agent'
+                (step === 'hook_optimizer_agent' || step === 'fact_checker_agent')
                 && scenarioStatus !== 'success'
                 && scenarioStatus !== 'running'
                 && status === 'planned'

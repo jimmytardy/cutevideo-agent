@@ -18,5 +18,7 @@ async def list_pipeline_queue(
     current_user: User = Depends(get_current_user),
 ) -> list[PipelineQueueEntryResponse]:
     """Liste la file d'attente globale (projets de l'utilisateur courant)."""
-    entries = await get_queue_snapshot(limit=limit, user_id=current_user.id)
+    entries = await get_queue_snapshot(
+        limit=limit, user_id=current_user.id, is_admin=current_user.is_admin
+    )
     return [PipelineQueueEntryResponse.model_validate(entry) for entry in entries]

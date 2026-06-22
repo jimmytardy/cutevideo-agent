@@ -17,6 +17,8 @@ from agent.core.subscription import (
     SubscriptionLimits,
     apply_subscription_caps,
     is_unlimited,
+    resolve_display_max_critic_iterations,
+    resolve_effective_max_critic_iterations,
 )
 from agent.core.database import SubscriptionPlan
 
@@ -110,6 +112,46 @@ def test_subscription_apply_caps_ai_fallback_allowed() -> None:
     capped = apply_subscription_caps(cfg, limits)
     assert capped["media_sources"]["enable_ai_fallback"] is True
     assert capped["media_sources"]["ai_fallback"]["enabled"] is False
+
+
+def test_subscription_apply_caps_skips_critic_iterations_for_admin() -> None:
+    limits = SubscriptionLimits(unlimited_critic_iterations=True)
+    cfg = {"pipeline": {"max_critic_iterations": 20}}
+    capped = apply_subscription_caps(cfg, limits)
+    assert capped["pipeline"]["max_critic_iterations"] == 20
+
+
+def test_resolve_effective_max_critic_iterations_admin_unlimited() -> None:
+    limits = SubscriptionLimits(unlimited_critic_iterations=True)
+    assert resolve_effective_max_critic_iterations(
+        project_config={},
+        channel_max=5,
+        limits=limits,
+    ) is None
+    assert resolve_effective_max_critic_iterations(
+        project_config={"max_critic_iterations": 12},
+        channel_max=5,
+        limits=limits,
+    ) == 12
+
+
+def test_resolve_effective_max_critic_iterations_free_user() -> None:
+    limits = SubscriptionLimits(max_critic_iterations=2)
+    assert resolve_effective_max_critic_iterations(
+        project_config={"max_critic_iterations": 10},
+        channel_max=5,
+        limits=limits,
+    ) == 2
+    assert resolve_effective_max_critic_iterations(
+        project_config={},
+        channel_max=5,
+        limits=limits,
+    ) == 2
+
+
+def test_resolve_display_max_critic_iterations_defaults_to_five() -> None:
+    assert resolve_display_max_critic_iterations(None) == 5
+    assert resolve_display_max_critic_iterations(8) == 8
 
 
 def test_admin_plan_unlimited() -> None:

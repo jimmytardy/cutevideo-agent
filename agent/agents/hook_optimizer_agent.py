@@ -21,6 +21,26 @@ HOOK_OPTIMIZABLE_KEYS: tuple[str, ...] = (
     "search_keywords",
 )
 
+HOOK_SYSTEM_SHORT = """Tu optimises le hook (segment order=1) d'un SHORT vertical viral (TikTok, Reels, YouTube Shorts).
+Accroche immédiate : question rhétorique dans les 3 premières secondes de narration.
+Retourne UNIQUEMENT du JSON valide."""
+
+HOOK_PROMPT_SHORT = """Optimise le hook d'un SHORT vertical (max ~60 s total vidéo).
+
+SUJET : {theme}
+LANGUE : {language}
+
+CHAMPS HOOK :
+{hook_json}
+
+Règles impératives SHORT :
+- narration_text : percutant, 1-2 phrases max pour le hook ; question rhétorique dès la première phrase
+- delivery_style : pace "fast", emotion énergique, emphasis_words sur 2-4 mots clés du hook
+- on_screen_text : texte court accrocheur (optionnel, max 40 car.)
+- search_keywords : visuels dynamiques, verticaux si possible
+
+Retourne UNIQUEMENT : narration_text, delivery_style, on_screen_text, search_keywords"""
+
 HOOK_SYSTEM = """Tu optimises uniquement le segment hook (order=1) d'une vidéo éducative.
 Storytelling, rythme rapide, question rhétorique obligatoire dans les 15 premières secondes de narration.
 Retourne UNIQUEMENT du JSON valide (guillemets doubles échappés dans les chaînes, pas de commentaires)."""
@@ -86,18 +106,31 @@ class HookOptimizerAgent(BaseAgent):
 
         hook_subset = _extract_hook_subset(hook)
         hook_json = json.dumps(hook_subset, ensure_ascii=False, indent=2)
-        prompt = HOOK_PROMPT.format(
-            theme=ctx.theme,
-            language=ctx.channel_config.content_language,
-            hook_json=hook_json,
+        is_short = (
+            ctx.is_short_project
+            or ctx.channel_config.production_mode == "shorts_only"
         )
-        raw = await self._call_claude(prompt, system=HOOK_SYSTEM, max_tokens=4096)
+        if is_short:
+            prompt = HOOK_PROMPT_SHORT.format(
+                theme=ctx.theme,
+                language=ctx.channel_config.content_language,
+                hook_json=hook_json,
+            )
+            system = HOOK_SYSTEM_SHORT
+        else:
+            prompt = HOOK_PROMPT.format(
+                theme=ctx.theme,
+                language=ctx.channel_config.content_language,
+                hook_json=hook_json,
+            )
+            system = HOOK_SYSTEM
+        raw = await self._call_claude(prompt, system=system, max_tokens=4096)
         try:
             optimized = self._parse_json(raw)
         except ValueError as exc:
             logger.warning("JSON hook invalide, retry : %s", exc)
             retry_prompt = HOOK_RETRY_PROMPT.format(error=exc, hook_json=hook_json)
-            raw = await self._call_claude(retry_prompt, system=HOOK_SYSTEM, max_tokens=4096)
+            raw = await self._call_claude(retry_prompt, system=system, max_tokens=4096)
             optimized = self._parse_json(raw)
 
         new_segments: list[dict[str, Any]] = []

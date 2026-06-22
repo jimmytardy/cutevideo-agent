@@ -352,7 +352,10 @@ async def check_s3_connectivity() -> tuple[bool, str | None]:
     try:
         def _check() -> None:
             client, c = _make_s3_client()
-            client.head_bucket(Bucket=c.bucket)
+            # Crée le bucket s'il est absent (404), comme le ferait le premier
+            # upload via _ensure_bucket — sinon le health check reste "error"
+            # tant qu'aucune vidéo n'a été uploadée.
+            _ensure_bucket(client, c.bucket, c.region)
 
         await asyncio.get_event_loop().run_in_executor(None, _check)
         return True, None

@@ -13,7 +13,7 @@ from agent.core.database import Channel, Project, User, get_db
 from agent.core.queue import queue
 from agent.core.subscription import QuotaExceededError, check_can_create_channel
 from agent.skills.publisher import composio_client
-from api.authorization import get_user_channel
+from api.authorization import channel_owner_clause, get_user_channel
 from api.deps import get_current_user
 from api.models import (
     ChannelCreate,
@@ -39,7 +39,7 @@ async def list_channels(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[Channel]:
-    query = select(Channel).where(Channel.user_id == current_user.id).order_by(Channel.name)
+    query = select(Channel).where(channel_owner_clause(current_user)).order_by(Channel.name)
     if active_only:
         query = query.where(Channel.is_active.is_(True))
     result = await db.execute(query)
@@ -136,7 +136,7 @@ async def list_channel_projects(
     result = await db.execute(
         select(Project, Channel.name)
         .join(Channel, Channel.id == Project.channel_id)
-        .where(Project.channel_id == channel_id, Channel.user_id == current_user.id)
+        .where(Project.channel_id == channel_id, channel_owner_clause(current_user))
         .order_by(Project.created_at.desc())
     )
     return [

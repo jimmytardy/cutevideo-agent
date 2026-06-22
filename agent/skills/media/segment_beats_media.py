@@ -16,6 +16,7 @@ from agent.skills.media.media_library import (
 )
 from agent.skills.media_sources.ai.prompt_builder import build_visual_prompt
 from agent.skills.media_sources.ai.prompt_synthesizer import synthesize_flux_subject
+from agent.skills.video.montage_profile import is_short_montage, prefer_video_for_beat
 
 if TYPE_CHECKING:
     from agent.agents.media_agent import MediaAgent
@@ -120,8 +121,14 @@ async def synthesize_segment_ai_prompt(
     return prompt, None, "documentary_photo"
 
 
-def _beat_video_target(beat: VisualBeat, ms_cfg: Any) -> int:
+def _beat_video_target(
+    ctx: "PipelineContext",
+    beat: VisualBeat,
+    ms_cfg: Any,
+) -> int:
     """1 clip stock si prefer_video et le beat se prête à de la vidéo documentaire."""
+    if prefer_video_for_beat(ctx, beat.visual_type):
+        return 1
     if not ms_cfg.prefer_video:
         return 0
     from agent.skills.media_sources.ai.prompt_builder import is_diagram_visual_type
@@ -153,11 +160,7 @@ async def process_segment_beats(
     keywords = segment.get("search_keywords", [])
     lib_cfg = ctx.channel_config.media_library
     is_derivation = getattr(ctx, "derivation_short_index", None) is not None
-    aspect_ratio = (
-        "9:16"
-        if ctx.channel_config.production_mode == "shorts_only" or is_derivation
-        else "16:9"
-    )
+    aspect_ratio = "9:16" if is_short_montage(ctx) else "16:9"
     if is_derivation:
         idx = ctx.derivation_short_index or 0
         output_dir = Path(f"./tmp/{ctx.project_id}/shorts/{idx:02d}/media/segment_{order:02d}")
@@ -197,7 +200,7 @@ async def process_segment_beats(
                 logger.info("Pool reuse désactivé (critique visuelle) — beat %d", beat.order)
 
         beat_keywords = agent._anchored_keywords(_beat_keywords(beat, keywords))
-        video_target = _beat_video_target(beat, ms_cfg)
+        video_target = _beat_video_target(ctx, beat, ms_cfg)
         allows_search = not is_derivation or getattr(ctx, "short_derivation_mode", None) != "reuse_pool_only"
         allows_ai = not is_derivation or getattr(ctx, "short_derivation_mode", None) == "full"
         source_plan = resolve_beat_sources(beat, segment, sources)
@@ -232,6 +235,36 @@ async def process_segment_beats(
                 beat=beat,
             )
         selected = agent._select_assets(candidates, video_target, 1)
+
+        runway_cfg = ctx.channel_config.runway
+        is_hero_beat = beat.order == 1 and is_short_montage(ctx)
+        runway_cap = runway_cfg.max_clips_per_video
+        if is_hero_beat:
+            runway_cap = max(runway_cap, runway_cfg.max_clips_per_short)
+        if (
+            is_hero_beat
+            and not any(item.get("asset_type") == "video" for item in selected)
+            and runway_cfg.enabled
+            and agent._runway_clips_used < runway_cap
+            and allows_ai
+        ):
+            beat_dir = output_dir / f"beat_{beat.order:02d}"
+            runway_prompt = f"{ctx.theme} — {beat.prompt[:120]}"
+            runway_item = await agent._generate_runway_clip(
+                runway_prompt, beat_dir, runway_cfg, ctx
+            )
+            if runway_item:
+                validated = await agent._validate_single_asset(
+                    runway_item,
+                    ctx=ctx,
+                    segment=segment,
+                    min_relevance=min_relevance,
+                    output_dir=beat_dir,
+                    validation_brief=validation_brief,
+                )
+                if validated:
+                    selected = [validated]
+                    agent._runway_clips_used += 1
 
         if not selected and ms_cfg.enable_ai_fallback and ai_cfg.enabled and allows_ai:
             beat_dir = output_dir / f"beat_{beat.order:02d}"
@@ -373,6 +406,16 @@ def _fallback_beats_from_narration(
 
     narration = (segment.get("narration_text") or "").strip()
     sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", narration) if s.strip()]
+    if is_short and len(sentences) < min_beats:
+        extra: list[str] = []
+        for sentence in sentences:
+            parts = [p.strip() for p in sentence.split(",") if p.strip()]
+            if len(parts) > 1:
+                extra.extend(parts)
+            else:
+                extra.append(sentence)
+        if len(extra) > len(sentences):
+            sentences = extra
     if not sentences:
         sentences = [narration[:120]] if narration else ["segment"]
     target = min(max_beats, max(min_beats, len(sentences) if is_short else len(sentences)))

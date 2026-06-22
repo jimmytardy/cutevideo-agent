@@ -69,3 +69,15 @@ def test_resolve_decision_max_iterations_forces_approve() -> None:
         min_critic_score=90,
         min_short_structure_score=15,
     ) == "approve"
+
+
+def test_resolve_decision_unlimited_keeps_iterate_at_high_iteration() -> None:
+    assert CriticAgent._resolve_decision(
+        global_score=50,
+        structure_score=5,
+        is_short=False,
+        iteration=12,
+        max_iterations=None,
+        min_critic_score=90,
+        min_short_structure_score=15,
+    ) == "iterate"

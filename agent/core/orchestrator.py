@@ -14,7 +14,11 @@ from agent.core.base_agent import stop_running_agent_runs
 from agent.core.channel_config import ChannelRuntimeConfig, resolve_channel_config
 from agent.core.learning_context import ChannelContextSnapshot, load_channel_context
 from agent.core.concurrency import can_start_pipeline
-from agent.core.subscription import resolve_user_limits
+from agent.core.subscription import (
+    SubscriptionLimits,
+    resolve_effective_max_critic_iterations,
+    resolve_user_limits,
+)
 from agent.core.database import (
     AsyncSessionFactory,
     AudioFile,
@@ -86,7 +90,7 @@ class PipelineContext:
     theme: str
     target_duration_seconds: int
     iteration: int = 1
-    max_iterations_override: int | None = None
+    max_critic_iterations: int | None = None
     learning_context: ChannelContextSnapshot | None = None
     content_plan: dict[str, Any] | None = None
     planned_shorts: list[dict[str, Any]] | None = None
@@ -100,6 +104,8 @@ class PipelineContext:
     research_brief: dict[str, Any] | None = None
     derivation_short_index: int | None = None
     short_derivation_mode: Literal["reuse_pool_only", "free_sources_only", "full"] | None = None
+    pacing_hints: dict[str, Any] | None = None
+    project_format: str | None = None
 
     @property
     def learning_context_prompt(self) -> str:
@@ -109,12 +115,15 @@ class PipelineContext:
 
     @property
     def is_short_project(self) -> bool:
-        project_format = (self.content_plan or {}).get("format")
-        if project_format in ("short_standalone", "short"):
-            return True
-        if self.channel_config.production_mode == "shorts_only":
-            return True
-        return self.target_duration_seconds <= 120
+        from agent.core.pipeline_plan import is_short_video
+
+        plan_format = (self.content_plan or {}).get("format")
+        fmt = self.project_format or (str(plan_format) if plan_format else None)
+        return is_short_video(
+            self.channel_config,
+            fmt,
+            self.target_duration_seconds,
+        )
 
 
 class Orchestrator:
@@ -161,8 +170,17 @@ class Orchestrator:
             project_config = project.config or {}
             async with AsyncSessionFactory() as init_session:
                 user = await init_session.get(User, channel.user_id)
-                limits = await resolve_user_limits(init_session, user) if user else None
+                limits = (
+                    await resolve_user_limits(init_session, user)
+                    if user
+                    else SubscriptionLimits()
+                )
             channel_config = resolve_channel_config(channel, subscription_limits=limits)
+            max_critic_iterations = resolve_effective_max_critic_iterations(
+                project_config=project_config,
+                channel_max=channel_config.max_critic_iterations,
+                limits=limits,
+            )
             ctx = PipelineContext(
                 project_id=project_id,
                 channel_id=channel.id,
@@ -178,7 +196,7 @@ class Orchestrator:
                     if channel_config.production_mode == "shorts_only"
                     else 1800
                 ),
-                max_iterations_override=project_config.get("max_critic_iterations"),
+                max_critic_iterations=max_critic_iterations,
                 learning_context=learning,
                 content_plan=project_config.get("content_plan"),
                 planned_shorts=project_config.get("planned_shorts"),
@@ -187,6 +205,7 @@ class Orchestrator:
                 resume_iteration=resume_iteration,
                 research_brief=project_config.get("research_brief"),
                 visual_style_block=project_config.get("visual_style_block", ""),
+                project_format=project_config.get("format"),
             )
 
         except Exception as e:
@@ -197,11 +216,10 @@ class Orchestrator:
             raise
 
         try:
-            is_short_project = project_config.get("format") in ("short_standalone", "short")
             if start_from in self._SHORTS_STEPS:
                 # Skip creation pipeline — jump straight to shorts
                 await self._run_shorts_pipeline(ctx, start_from=start_from)
-            elif channel_config.production_mode == "shorts_only" or is_short_project:
+            elif ctx.is_short_project:
                 await self._run_shorts_only_pipeline(ctx, start_from=start_from)
                 await self._run_platform_exports(ctx)
             else:
@@ -218,7 +236,7 @@ class Orchestrator:
 
             if start_from not in self._SHORTS_STEPS:
                 await self._run_metadata(ctx)
-                if channel_config.production_mode != "shorts_only":
+                if not ctx.is_short_project:
                     await self._run_thumbnail(ctx)
 
             from agent.core.storage import cleanup_local_videos_for_project, cleanup_temp_ai_images
@@ -245,21 +263,23 @@ class Orchestrator:
     async def _run_creation_pipeline(
         self, ctx: PipelineContext, start_from: str | None = None
     ) -> None:
-        max_iterations = ctx.max_iterations_override or ctx.channel_config.max_critic_iterations
-        await self._run_main_loop(ctx, start_from=start_from, max_iterations=max_iterations)
+        await self._run_main_loop(
+            ctx, start_from=start_from, max_iterations=ctx.max_critic_iterations
+        )
 
     async def _run_shorts_only_pipeline(
         self, ctx: PipelineContext, start_from: str | None = None
     ) -> None:
-        base_max = ctx.max_iterations_override or ctx.channel_config.max_critic_iterations
-        await self._run_main_loop(ctx, start_from=start_from, max_iterations=min(base_max, 2))
+        base_max = ctx.max_critic_iterations
+        short_max = 2 if base_max is None else min(base_max, 2)
+        await self._run_main_loop(ctx, start_from=start_from, max_iterations=short_max)
 
     async def _run_main_loop(
         self,
         ctx: PipelineContext,
         *,
         start_from: str | None,
-        max_iterations: int,
+        max_iterations: int | None,
     ) -> None:
         from agent.agents.research_agent import ResearchAgent
         from agent.agents.scenario_agent import ScenarioAgent
@@ -349,7 +369,8 @@ class Orchestrator:
             if ctx.critic_feedback is not None and ctx.resume_iteration is not None:
                 loop_start_iteration = ctx.resume_iteration
 
-            for iteration in range(loop_start_iteration, max_iterations + 1):
+            iteration = loop_start_iteration
+            while True:
                 await _raise_if_cancelled(ctx.project_id)
                 ctx.iteration = iteration
 
@@ -442,6 +463,14 @@ class Orchestrator:
                     await queue.set_agent_status(pid, current_agent, "running")
                     scenario = await _agent(BeatPlannerAgent, ctx).run(ctx, scenario)
                     await queue.set_agent_status(pid, current_agent, "success")
+                    from agent.skills.video.pacing_director import (
+                        apply_pacing_director,
+                        pacing_hints_to_dict,
+                    )
+
+                    ctx.pacing_hints = pacing_hints_to_dict(
+                        apply_pacing_director(ctx, scenario)
+                    )
 
                     await queue.set_agent_status(pid, "diagram_specialist_agent", "running")
                     scenario = await _agent(DiagramSpecialistAgent, ctx).run(ctx, scenario)
@@ -519,6 +548,9 @@ class Orchestrator:
                 if report.decision == "approve":
                     break
                 await self._apply_critic_changes(ctx, report, scenario)
+                if max_iterations is not None and iteration >= max_iterations:
+                    break
+                iteration += 1
 
             if best_video_id and video and best_video_id != video.id:
                 await self._promote_best_video(best_video_id, video.id)
@@ -665,6 +697,15 @@ class Orchestrator:
                 scenario = await _agent(BeatPlannerAgent, ctx).run(ctx, scenario)
                 await queue.set_agent_status(pid, current_agent, "success")
 
+                from agent.skills.video.pacing_director import (
+                    apply_pacing_director,
+                    pacing_hints_to_dict,
+                )
+
+                ctx.pacing_hints = pacing_hints_to_dict(
+                    apply_pacing_director(ctx, scenario)
+                )
+
                 await queue.set_agent_status(pid, "diagram_specialist_agent", "running")
                 scenario = await _agent(DiagramSpecialistAgent, ctx).run(ctx, scenario)
                 await queue.set_agent_status(pid, "diagram_specialist_agent", "success")
@@ -786,17 +827,9 @@ class Orchestrator:
                 scenario = await _agent(ScenarioAgent, ctx).run(ctx)
                 await queue.set_agent_status(pid, "scenario_agent", "success")
 
-        is_short = (
-            ctx.channel_config.production_mode == "shorts_only"
-            or ctx.is_short_project
-        )
-        if not is_short:
-            await queue.set_agent_status(pid, "hook_optimizer_agent", "running")
-            scenario = await _agent(HookOptimizerAgent, ctx).run(ctx, scenario)
-            await queue.set_agent_status(pid, "hook_optimizer_agent", "success")
-        else:
-            await queue.set_agent_status(pid, "hook_optimizer_agent", "planned")
-            logger.info("hook_optimizer_agent ignoré (shorts_only)")
+        await queue.set_agent_status(pid, "hook_optimizer_agent", "running")
+        scenario = await _agent(HookOptimizerAgent, ctx).run(ctx, scenario)
+        await queue.set_agent_status(pid, "hook_optimizer_agent", "success")
         return scenario
 
     @staticmethod

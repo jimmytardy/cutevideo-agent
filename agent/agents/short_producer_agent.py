@@ -18,6 +18,7 @@ from agent.core.database import AsyncSessionFactory, Scenario
 from agent.core.json_parse import parse_json_text
 from agent.core.learning_context import LEARNING_CONTEXT_BLOCK
 from agent.core.short_derivation import DerivedShortPlan
+from agent.core.short_format import clamp_short_total_duration
 from agent.core.visual_beats_prompt import SCENARIO_VOICE_BEATS_CONTEXT
 from agent.skills.media.segment_beats_media import ensure_visual_beats_on_segments
 
@@ -155,16 +156,6 @@ def postprocess_derivation_segments(
         for seg in no_voice_segments:
             voice_segments.append(enriched_by_order.get(int(seg.get("order", 0)), seg))
     return sorted(voice_segments, key=lambda s: int(s.get("order", 0)))
-
-
-def clamp_short_total_duration(
-    value: int | None,
-    *,
-    min_duration_s: int,
-    max_duration_s: int,
-    fallback: int,
-) -> int:
-    return min(max_duration_s, max(min_duration_s, int(value or fallback)))
 
 
 class ShortProducerAgent(BaseAgent):

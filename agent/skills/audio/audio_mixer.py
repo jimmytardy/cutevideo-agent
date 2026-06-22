@@ -220,9 +220,6 @@ async def _copy_audio(src: Path, dst: Path) -> None:
 
 
 async def _run(cmd: list[str]) -> None:
-    proc = await asyncio.create_subprocess_exec(
-        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-    )
-    _, stderr = await proc.communicate()
-    if proc.returncode != 0:
-        raise RuntimeError(f"Audio mixer FFmpeg error: {stderr.decode()[-500:]}")
+    from agent.skills.video.ffmpeg_runtime import run_ffmpeg
+
+    await run_ffmpeg(cmd, error_prefix="Audio mixer FFmpeg error")

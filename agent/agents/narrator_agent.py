@@ -89,8 +89,10 @@ class NarratorAgent(BaseAgent):
         output_dir = Path(f"./tmp/{ctx.project_id}/audio")
         output_dir.mkdir(parents=True, exist_ok=True)
 
+        from agent.core.concurrency import bounded_gather
+
         tasks = [self._generate_segment_audio(ctx, segment, output_dir) for segment in voice_segments]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        results = await bounded_gather(*tasks, return_exceptions=True)
 
         audio_files: list[AudioFile] = []
         errors: list[Exception] = []
@@ -156,6 +158,7 @@ class NarratorAgent(BaseAgent):
                 delivery_style.get("emotion"),
                 delivery_style.get("azure_style"),
             )
+        from agent.core.channel_config import tts_profile_for_channel
         from agent.skills.audio.tts import resolve_tts_settings
 
         gemini_ctx = await fetch_api_key(
@@ -166,14 +169,17 @@ class NarratorAgent(BaseAgent):
         )
         azure_region = (azure_ctx.metadata or {}).get("region")
 
+        is_short = ctx.is_short_project or ctx.derivation_short_index is not None
+        tts_profile = tts_profile_for_channel(cfg, is_short=is_short)
+
         tts_settings = resolve_tts_settings(
-            default_engine=cfg.tts_engine,
-            default_voice=cfg.tts_voice,
+            default_engine=tts_profile.engine,
+            default_voice=tts_profile.voice,
             gemini_apply_to=cfg.gemini_tts.apply_to,
             gemini_voice=cfg.gemini_tts.voice,
             gemini_model=cfg.gemini_tts.model,
             gemini_language_code=cfg.gemini_tts.language_code,
-            is_short=ctx.is_short_project or ctx.derivation_short_index is not None,
+            is_short=is_short,
             gemini_api_key=gemini_ctx.key,
             azure_speech_key=azure_ctx.key,
             azure_speech_region=azure_region,

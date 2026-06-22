@@ -178,6 +178,10 @@ async def google_callback(
     await db.commit()
     await db.refresh(user)
 
+    from agent.core.subscription import sync_user_admin_flag
+
+    await sync_user_admin_flag(db, user)
+
     jwt_token = create_access_token(user.id)
     extra = payload.get("extra") or {}
     redirect_base = _resolve_login_redirect(extra)
@@ -194,16 +198,17 @@ async def auth_me(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> AuthUserResponse:
-    from agent.core.subscription import get_plan_for_user, is_unlimited
+    from agent.core.subscription import get_plan_for_user, sync_user_admin_flag
 
     plan = await get_plan_for_user(db, user)
+    is_admin = await sync_user_admin_flag(db, user, plan)
     return AuthUserResponse(
         id=user.id,
         email=user.email,
         display_name=user.display_name,
         avatar_url=user.avatar_url,
         plan_slug=plan.slug,
-        is_admin=is_unlimited(plan),
+        is_admin=is_admin,
     )
 
 

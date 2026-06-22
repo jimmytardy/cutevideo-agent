@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 AVAILABLE_SOURCES = [
     "gallica", "europeana", "wikimedia", "internet_archive",
-    "pexels", "pixabay", "unsplash",
+    "pexels", "pixabay", "coverr", "unsplash",
     "nasa", "ai", "runway",
 ]
 
@@ -26,6 +26,7 @@ Sources disponibles :
 - internet_archive : films, docs, médias anciens domaine public
 - pexels         : photos/vidéos stock modernes, lifestyle, nature
 - pixabay        : idem pexels, plus de variété
+- coverr         : vidéos stock B-roll dynamiques (HD/4K), complément vidéo
 - unsplash       : photos artistiques, ambiances, architecture
 - nasa           : espace, astronomie, science (images + vidéos NASA)
 - ai             : génération IA images si aucune source réelle ne convient

@@ -20,6 +20,8 @@ from agent.core.base_agent import BaseAgent
 
 from agent.core.database import AsyncSessionFactory, Video
 
+from agent.core.short_format import effective_short_max_duration_s
+
 from agent.core.video_paths import resolve_video_local_path
 
 from agent.agents.clipper_agent import ClipCandidate
@@ -57,10 +59,14 @@ class ShortEditorAgent(BaseAgent):
     def _active_platforms(self, ctx: "PipelineContext") -> list[tuple[str, int, str]]:
 
         enabled = set(ctx.channel_config.enabled_platforms)
+        effective_max = effective_short_max_duration_s(
+            ctx.target_duration_seconds,
+            ctx.channel_config,
+        )
 
         return [
 
-            (platform, max_d, out_dir)
+            (platform, min(max_d, effective_max), out_dir)
 
             for platform, (max_d, out_dir) in PLATFORM_CONFIG.items()
 
@@ -428,13 +434,13 @@ class ShortEditorAgent(BaseAgent):
 
                 )
 
-                .order_by(Video.created_at.desc())
+                .order_by(Video.iteration.desc(), Video.created_at.desc())
 
                 .limit(1)
 
             )
 
-            source = result.scalar_one_or_none()
+            source = result.scalars().first()
 
             if source:
 
@@ -454,13 +460,47 @@ class ShortEditorAgent(BaseAgent):
 
                 )
 
-                .order_by(Video.created_at.desc())
+                .order_by(Video.iteration.desc(), Video.created_at.desc())
 
                 .limit(1)
 
             )
 
-            return result.scalar_one_or_none()
+            return result.scalars().first()
+
+
+
+    async def _load_source_long_video(self, ctx: "PipelineContext") -> Video | None:
+
+        async with AsyncSessionFactory() as session:
+
+            for video_type in ("long", "short_master"):
+
+                result = await session.execute(
+
+                    select(Video)
+
+                    .where(
+
+                        Video.project_id == ctx.project_id,
+
+                        Video.video_type == video_type,
+
+                    )
+
+                    .order_by(Video.iteration.desc(), Video.created_at.desc())
+
+                    .limit(1)
+
+                )
+
+                video = result.scalars().first()
+
+                if video is not None:
+
+                    return video
+
+        return None
 
 
 
@@ -470,19 +510,7 @@ class ShortEditorAgent(BaseAgent):
 
     ) -> list[Video]:
 
-        async with AsyncSessionFactory() as session:
-
-            result = await session.execute(
-
-                select(Video)
-
-                .where(Video.project_id == ctx.project_id, Video.video_type == "long")
-
-                .order_by(Video.created_at.desc())
-
-            )
-
-            source_video = result.scalar_one_or_none()
+        source_video = await self._load_source_long_video(ctx)
 
 
 
@@ -512,7 +540,9 @@ class ShortEditorAgent(BaseAgent):
 
         ]
 
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        from agent.core.concurrency import bounded_gather
+
+        results = await bounded_gather(*tasks, return_exceptions=True)
 
 
 
@@ -548,6 +578,7 @@ class ShortEditorAgent(BaseAgent):
 
     ) -> list[Video]:
 
+        from agent.skills.video.montage_profile import dynamic_recut_enabled
         from agent.skills.video.shorts import create_short
 
 
@@ -583,6 +614,8 @@ class ShortEditorAgent(BaseAgent):
                 cta_text=clip.cta,
 
                 hook_text=clip.hook,
+
+                dynamic_recut=dynamic_recut_enabled(),
 
             )
 

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from agent.agents.short_producer_agent import (
     DERIVATION_PROMPT,
-    clamp_short_total_duration,
     postprocess_derivation_segments,
 )
+from agent.core.short_format import clamp_short_total_duration
 from agent.core.channel_config import VisualBeatsConfig
 
 

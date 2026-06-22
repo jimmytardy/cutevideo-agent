@@ -36,6 +36,9 @@ import {
   type AudioFile,
   type CriticReport,
   type ResearchBrief,
+  type EditorialOutline,
+  type ProjectMetadata,
+  type ThumbnailCandidate,
   type MontagePlan,
 } from '@/lib/api'
 import {
@@ -615,6 +618,302 @@ function JsonOutputView({ agentRun, isRunning }: { agentRun: AgentRun | undefine
   )
 }
 
+function OutlineView({
+  outline,
+  isRunning,
+}: {
+  outline: EditorialOutline | null | undefined
+  isRunning: boolean
+}) {
+  if (isRunning) return <Running />
+  const segments = [...(outline?.segments ?? [])].sort((a, b) => a.order - b.order)
+  if (segments.length === 0) {
+    return <Empty message="Aucun plan éditorial (squelette narratif) disponible." />
+  }
+  return (
+    <Stack spacing={2}>
+      {outline?.title && (
+        <Box>
+          <Typography variant="subtitle2" gutterBottom>Titre prévu</Typography>
+          <Typography variant="body2">{outline.title}</Typography>
+        </Box>
+      )}
+      {outline?.description && (
+        <Box>
+          <Typography variant="subtitle2" gutterBottom>Description SEO</Typography>
+          <Typography variant="body2" color="text.secondary">{outline.description}</Typography>
+        </Box>
+      )}
+      <Typography variant="body2" color="text.secondary">
+        {segments.length} segment{segments.length > 1 ? 's' : ''}
+        {outline?.total_duration_s ? ` · ${Math.round(outline.total_duration_s / 60)} min cible` : ''}
+      </Typography>
+      {segments.map((seg) => (
+        <Card key={seg.order} variant="outlined">
+          <CardContent>
+            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center', mb: 1 }}>
+              <Typography variant="subtitle2">Segment {seg.order} — {seg.title}</Typography>
+              <Chip size="small" variant="outlined" label={`${seg.duration_s}s`} />
+              <Chip size="small" variant="outlined" label={seg.mood} />
+              {seg.hook_type && <Chip size="small" color="info" variant="outlined" label={seg.hook_type} />}
+            </Box>
+            {seg.intent && (
+              <Typography variant="body2" sx={{ fontStyle: 'italic' }}>{seg.intent}</Typography>
+            )}
+          </CardContent>
+        </Card>
+      ))}
+    </Stack>
+  )
+}
+
+function FactCheckView({
+  agentRun,
+  isRunning,
+}: {
+  agentRun: AgentRun | undefined
+  isRunning: boolean
+}) {
+  if (isRunning) return <Running />
+  const output = agentRun?.output_json as {
+    passed?: boolean
+    errors?: Array<{ segment_order?: number; claim?: string; issue?: string; severity?: string }>
+    warnings?: Array<{ segment_order?: number; claim?: string; issue?: string; severity?: string }>
+  } | undefined
+  if (!output) return <Empty message="Aucun rapport de vérification factuelle." />
+
+  const errors = output.errors ?? []
+  const warnings = output.warnings ?? []
+
+  return (
+    <Stack spacing={2}>
+      <Chip
+        size="small"
+        label={output.passed ? 'Validé' : 'Échec'}
+        color={output.passed ? 'success' : 'error'}
+      />
+      {errors.length > 0 && (
+        <Box>
+          <Typography variant="subtitle2" color="error" gutterBottom>Erreurs ({errors.length})</Typography>
+          <Stack spacing={1}>
+            {errors.map((item, i) => (
+              <Alert key={i} severity="error" icon={false}>
+                {item.segment_order != null && `Seg. ${item.segment_order} — `}
+                {item.claim && <strong>{item.claim}: </strong>}
+                {item.issue}
+              </Alert>
+            ))}
+          </Stack>
+        </Box>
+      )}
+      {warnings.length > 0 && (
+        <Box>
+          <Typography variant="subtitle2" gutterBottom>Avertissements ({warnings.length})</Typography>
+          <Stack spacing={1}>
+            {warnings.map((item, i) => (
+              <Alert key={i} severity="warning" icon={false}>
+                {item.segment_order != null && `Seg. ${item.segment_order} — `}
+                {item.claim && <strong>{item.claim}: </strong>}
+                {item.issue}
+              </Alert>
+            ))}
+          </Stack>
+        </Box>
+      )}
+      {errors.length === 0 && warnings.length === 0 && (
+        <Typography variant="body2" color="text.secondary">Aucune anomalie signalée.</Typography>
+      )}
+    </Stack>
+  )
+}
+
+function ArtDirectorView({
+  agentRun,
+  isRunning,
+}: {
+  agentRun: AgentRun | undefined
+  isRunning: boolean
+}) {
+  if (isRunning) return <Running />
+  const styleBlock = (agentRun?.output_json as { style_block?: string } | undefined)?.style_block
+  if (!styleBlock) return <Empty message="Aucune direction artistique générée." />
+  return (
+    <Card variant="outlined">
+      <CardContent>
+        <Typography variant="subtitle2" gutterBottom>Style block (prompts image)</Typography>
+        <Typography variant="body2" sx={{ fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
+          {styleBlock}
+        </Typography>
+      </CardContent>
+    </Card>
+  )
+}
+
+const DIAGRAM_TYPES = new Set([
+  'diagram',
+  'infographic',
+  'chart',
+  'timeline',
+  'comparison',
+  'map_diagram',
+  'process_flow',
+])
+
+function isDiagramBeat(beat: VisualBeat): boolean {
+  const vt = (beat.visual_type ?? '').toLowerCase()
+  return DIAGRAM_TYPES.has(vt) || vt.includes('diagram') || vt.includes('infographic')
+}
+
+function DiagramSpecialistView({
+  scenario,
+  isRunning,
+}: {
+  scenario: Scenario | null | undefined
+  isRunning: boolean
+}) {
+  if (isRunning) return <Running />
+  const segments = [...(scenario?.segments ?? [])]
+    .map((seg) => ({
+      ...seg,
+      diagramBeats: [...(seg.visual_beats ?? [])].filter(isDiagramBeat).sort((a, b) => a.order - b.order),
+    }))
+    .filter((seg) => seg.diagramBeats.length > 0)
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+
+  if (segments.length === 0) {
+    return <Empty message="Aucun schéma ou diagramme enrichi pour ce projet." />
+  }
+
+  return (
+    <Stack spacing={2}>
+      {segments.map((seg) => (
+        <Card key={seg.order ?? Math.random()} variant="outlined">
+          <CardContent>
+            <Typography variant="subtitle2" sx={{ mb: 1 }}>
+              Segment {seg.order ?? '?'}
+              {seg.title ? ` — ${seg.title}` : ''}
+            </Typography>
+            {seg.diagramBeats.map((beat) => (
+              <Box key={beat.order} sx={{ py: 0.75, borderTop: '1px solid', borderColor: 'divider' }}>
+                <Box sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap', mb: 0.5 }}>
+                  <Chip size="small" label={`Beat ${beat.order}`} />
+                  <Chip size="small" label={beat.visual_type} variant="outlined" />
+                </Box>
+                <Typography variant="body2">{beat.prompt}</Typography>
+                {beat.diagram_labels && beat.diagram_labels.length > 0 && (
+                  <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mt: 0.75 }}>
+                    {beat.diagram_labels.map((label, i) => (
+                      <Chip
+                        key={i}
+                        size="small"
+                        color="secondary"
+                        variant="outlined"
+                        label={label.text ?? JSON.stringify(label)}
+                      />
+                    ))}
+                  </Box>
+                )}
+                {beat.diagram_brief?.layout && (
+                  <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
+                    Layout : {beat.diagram_brief.layout}
+                  </Typography>
+                )}
+              </Box>
+            ))}
+          </CardContent>
+        </Card>
+      ))}
+    </Stack>
+  )
+}
+
+function MetadataView({
+  metadata,
+  isRunning,
+}: {
+  metadata: ProjectMetadata | null | undefined
+  isRunning: boolean
+}) {
+  if (isRunning) return <Running />
+  if (!metadata?.title && !metadata?.description) {
+    return <Empty message="Aucune métadonnée YouTube générée." />
+  }
+  return (
+    <Stack spacing={2}>
+      <Box>
+        <Typography variant="subtitle2" gutterBottom>Titre</Typography>
+        <Typography variant="body2">{metadata.title}</Typography>
+      </Box>
+      <Box>
+        <Typography variant="subtitle2" gutterBottom>Description</Typography>
+        <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>{metadata.description}</Typography>
+      </Box>
+      {metadata.tags?.length > 0 && (
+        <Box>
+          <Typography variant="subtitle2" gutterBottom>Tags</Typography>
+          <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
+            {metadata.tags.map((tag) => (
+              <Chip key={tag} size="small" label={tag} variant="outlined" />
+            ))}
+          </Box>
+        </Box>
+      )}
+      {metadata.chapters?.length > 0 && (
+        <Box>
+          <Typography variant="subtitle2" gutterBottom>Chapitres</Typography>
+          <Stack spacing={0.5}>
+            {metadata.chapters.map((ch, i) => (
+              <Typography key={i} variant="body2" color="text.secondary">
+                {ch.start_s != null ? `${Math.floor(ch.start_s / 60)}:${String(ch.start_s % 60).padStart(2, '0')}` : '?'} — {ch.title}
+              </Typography>
+            ))}
+          </Stack>
+        </Box>
+      )}
+    </Stack>
+  )
+}
+
+function ThumbnailView({
+  candidates,
+  isRunning,
+  agentRun,
+}: {
+  candidates: ThumbnailCandidate[] | undefined
+  isRunning: boolean
+  agentRun?: AgentRun
+}) {
+  if (isRunning) return <Running />
+  const count = (agentRun?.output_json as { candidates?: number } | undefined)?.candidates
+  if (!candidates?.length) {
+    return <Empty message={count === 0 ? 'Aucun concept de miniature généré.' : 'Aucune miniature disponible.'} />
+  }
+  return (
+    <Stack spacing={1.5}>
+      {candidates.map((item, i) => (
+        <Card key={i} variant="outlined">
+          <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
+            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: item.prompt ? 0.5 : 0 }}>
+              <Chip size="small" label={`Concept ${i + 1}`} color={item.primary ? 'primary' : 'default'} />
+              {item.primary && <Chip size="small" label="Principal" color="success" variant="outlined" />}
+            </Box>
+            {item.prompt && (
+              <Typography variant="body2" color="text.secondary">{item.prompt}</Typography>
+            )}
+            {item.attribution && (
+              <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
+                {item.attribution}
+              </Typography>
+            )}
+          </CardContent>
+        </Card>
+      ))}
+    </Stack>
+  )
+}
+
+const SCENARIO_SNAPSHOT_STEPS = new Set(['beat_planner_agent', 'diagram_specialist_agent'])
+
 const VIDEO_STEPS = ['editor_agent', 'subtitle_agent', 'short_editor_agent']
 const MEDIA_AUDIO_STEPS = ['media_agent', 'narrator_agent', 'beat_planner_agent']
 
@@ -664,6 +963,11 @@ export default function AgentOutputPanel({
     fetcher,
     { refreshInterval: 3000 },
   )
+  const { data: outline } = useSWR<EditorialOutline | null>(
+    step === 'outline_agent' ? `/api/v1/projects/${projectId}/outline` : null,
+    fetcher,
+    { refreshInterval: isRunning ? 5000 : 3000 },
+  )
   const { data: scenario } = useSWR<Scenario | null>(
     scenarioUrl,
     fetcher,
@@ -704,10 +1008,29 @@ export default function AgentOutputPanel({
     fetcher,
     { refreshInterval: 3000 },
   )
+  const scenarioSnapshotStep = SCENARIO_SNAPSHOT_STEPS.has(step) ? step : null
+  const scenarioSnapshotUrl = scenarioSnapshotStep && !isRunning
+    ? projectScenarioUrl(projectId, { atAgent: scenarioSnapshotStep, iteration })
+    : null
   const { data: beatPlannerScenario } = useSWR<Scenario | null>(
-    step === 'beat_planner_agent' ? projectScenarioUrl(projectId) : null,
+    step === 'beat_planner_agent' ? (scenarioSnapshotUrl ?? projectScenarioUrl(projectId)) : null,
     fetcher,
     { refreshInterval: isRunning ? 5000 : 3000 },
+  )
+  const { data: diagramScenario } = useSWR<Scenario | null>(
+    step === 'diagram_specialist_agent' ? scenarioSnapshotUrl : null,
+    fetcher,
+    { refreshInterval: isRunning ? 5000 : 3000 },
+  )
+  const { data: projectMetadata } = useSWR<ProjectMetadata | null>(
+    step === 'metadata_agent' ? `/api/v1/projects/${projectId}/metadata` : null,
+    fetcher,
+    { refreshInterval: 3000 },
+  )
+  const { data: thumbnailCandidates } = useSWR<ThumbnailCandidate[]>(
+    step === 'thumbnail_agent' ? `/api/v1/projects/${projectId}/thumbnails` : null,
+    fetcher,
+    { refreshInterval: 3000 },
   )
   const { data: montagePlan } = useSWR<MontagePlan | null>(
     step === 'montage_planner_agent'
@@ -761,6 +1084,9 @@ export default function AgentOutputPanel({
       {step === 'research_agent' && (
         <ResearchView brief={researchBrief} isRunning={isRunning} />
       )}
+      {step === 'outline_agent' && (
+        <OutlineView outline={outline} isRunning={isRunning} />
+      )}
       {step === 'scenario_agent' && (
         <ScenarioView
           scenario={scenario}
@@ -773,6 +1099,9 @@ export default function AgentOutputPanel({
           scenario={scenario}
           isRunning={isRunning}
         />
+      )}
+      {step === 'fact_checker_agent' && (
+        <FactCheckView agentRun={agentRun} isRunning={isRunning} />
       )}
       {step === 'media_agent' && (
         <MediaAssetsView
@@ -787,8 +1116,14 @@ export default function AgentOutputPanel({
       {step === 'narrator_agent' && (
         <AudioFilesView files={audioFiles} isRunning={isRunning} agentRun={agentRun} />
       )}
+      {step === 'art_director_agent' && (
+        <ArtDirectorView agentRun={agentRun} isRunning={isRunning} />
+      )}
       {step === 'beat_planner_agent' && (
         <BeatPlannerView scenario={beatPlannerScenario} isRunning={isRunning} />
+      )}
+      {step === 'diagram_specialist_agent' && (
+        <DiagramSpecialistView scenario={diagramScenario} isRunning={isRunning} />
       )}
       {(step === 'editor_agent' || step === 'subtitle_agent') && (
         <VideoView
@@ -825,6 +1160,16 @@ export default function AgentOutputPanel({
           isRunning={isRunning}
           emptyMessage="Aucun short généré."
           projectId={projectId}
+        />
+      )}
+      {step === 'metadata_agent' && (
+        <MetadataView metadata={projectMetadata} isRunning={isRunning} />
+      )}
+      {step === 'thumbnail_agent' && (
+        <ThumbnailView
+          candidates={thumbnailCandidates}
+          isRunning={isRunning}
+          agentRun={agentRun}
         />
       )}
     </Box>

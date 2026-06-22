@@ -1,0 +1,10 @@
+{
+  "whoosh": {
+    "path": null,
+    "note": "Optional CC0 whoosh WAV — falls back to FFmpeg synth if missing"
+  },
+  "accent": {
+    "path": null,
+    "note": "Optional CC0 pop WAV — falls back to FFmpeg synth if missing"
+  }
+}

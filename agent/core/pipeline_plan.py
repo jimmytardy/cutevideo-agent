@@ -11,11 +11,19 @@ from __future__ import annotations
 from typing import Any
 
 from agent.core.channel_config import ChannelRuntimeConfig
+from agent.core.subscription import resolve_display_max_critic_iterations
 
-PREPARATION_BASE: list[str] = ["research_agent", "outline_agent", "scenario_agent"]
+PREPARATION_BASE: list[str] = [
+    "research_agent",
+    "outline_agent",
+    "scenario_agent",
+    "fact_checker_agent",
+]
 ITERATION_FIRST: list[str] = [
     "narrator_agent",
+    "art_director_agent",
     "beat_planner_agent",
+    "diagram_specialist_agent",
     "media_agent",
     "montage_planner_agent",
     "editor_agent",
@@ -67,23 +75,40 @@ def plan_pipeline(
     *,
     project_format: str | None,
     target_duration_seconds: int | None,
-    max_iterations_override: int | None = None,
+    effective_max: int | None = None,
 ) -> dict[str, Any]:
     is_short = is_short_video(channel_config, project_format, target_duration_seconds)
 
     preparation = list(PREPARATION_BASE)
-    if not is_short:
-        # hook_optimizer_agent est ignoré pour les shorts (cf. _run_pre_media_quality_agents)
-        preparation.append("hook_optimizer_agent")
+    preparation.append("hook_optimizer_agent")
 
-    base_max = max_iterations_override or channel_config.max_critic_iterations
-    max_iterations = min(base_max, 2) if is_short else base_max
+    post_production = plan_post_production_agents(channel_config, is_short)
+    publication: list[str] = ["metadata_agent"]
+    if channel_config.production_mode != "shorts_only":
+        publication.append("thumbnail_agent")
+    post_production = publication + post_production
+
+    if is_short:
+        short_max = 2 if effective_max is None else min(effective_max, 2)
+        return {
+            "is_short": is_short,
+            "preparation": preparation,
+            "iteration_first": list(ITERATION_FIRST),
+            "iteration_revision": list(ITERATION_REVISION),
+            "post_production": post_production,
+            "max_iterations": short_max,
+            "max_iterations_unlimited": False,
+        }
+
+    max_iterations_unlimited = effective_max is None
+    display_max = resolve_display_max_critic_iterations(effective_max)
 
     return {
         "is_short": is_short,
         "preparation": preparation,
         "iteration_first": list(ITERATION_FIRST),
         "iteration_revision": list(ITERATION_REVISION),
-        "post_production": plan_post_production_agents(channel_config, is_short),
-        "max_iterations": max_iterations,
+        "post_production": post_production,
+        "max_iterations": display_max,
+        "max_iterations_unlimited": max_iterations_unlimited,
     }

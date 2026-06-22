@@ -4,6 +4,9 @@ import asyncio
 import logging
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
+
+import httpx
 
 from agent.core.channel_brand import YouTubeBrand
 from agent.core.config import settings
@@ -14,6 +17,8 @@ YOUTUBE_SCOPES = [
     "https://www.googleapis.com/auth/youtube",
     "https://www.googleapis.com/auth/youtube.force-ssl",
 ]
+GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 
 
 def _build_credentials(refresh_token: str | None = None) -> Any:
@@ -32,53 +37,45 @@ def _build_credentials(refresh_token: str | None = None) -> Any:
 
 
 def get_oauth_authorization_url(state: str, redirect_uri: str) -> str:
-    from google_auth_oauthlib.flow import Flow
-
     if not settings.youtube_client_id or not settings.youtube_client_secret:
         raise RuntimeError("YOUTUBE_CLIENT_ID et YOUTUBE_CLIENT_SECRET requis")
 
-    flow = Flow.from_client_config(
-        {
-            "web": {
-                "client_id": settings.youtube_client_id,
-                "client_secret": settings.youtube_client_secret,
-                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                "token_uri": "https://oauth2.googleapis.com/token",
-                "redirect_uris": [redirect_uri],
-            }
-        },
-        scopes=YOUTUBE_SCOPES,
-        redirect_uri=redirect_uri,
-    )
-    auth_url, _ = flow.authorization_url(
-        access_type="offline",
-        include_granted_scopes="true",
-        prompt="consent",
-        state=state,
-    )
-    return auth_url
+    params = {
+        "client_id": settings.youtube_client_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": " ".join(YOUTUBE_SCOPES),
+        "state": state,
+        "access_type": "offline",
+        "include_granted_scopes": "true",
+        "prompt": "consent",
+    }
+    return f"{GOOGLE_AUTH_URL}?{urlencode(params)}"
 
 
 def exchange_oauth_code(code: str, redirect_uri: str) -> str:
-    from google_auth_oauthlib.flow import Flow
+    if not settings.youtube_client_id or not settings.youtube_client_secret:
+        raise RuntimeError("YOUTUBE_CLIENT_ID et YOUTUBE_CLIENT_SECRET requis")
 
-    flow = Flow.from_client_config(
-        {
-            "web": {
+    with httpx.Client() as client:
+        token_resp = client.post(
+            GOOGLE_TOKEN_URL,
+            data={
+                "code": code,
                 "client_id": settings.youtube_client_id,
                 "client_secret": settings.youtube_client_secret,
-                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                "token_uri": "https://oauth2.googleapis.com/token",
-                "redirect_uris": [redirect_uri],
-            }
-        },
-        scopes=YOUTUBE_SCOPES,
-        redirect_uri=redirect_uri,
-    )
-    flow.fetch_token(code=code)
-    if not flow.credentials.refresh_token:
+                "redirect_uri": redirect_uri,
+                "grant_type": "authorization_code",
+            },
+        )
+    if token_resp.status_code != 200:
+        detail = token_resp.text.strip() or f"HTTP {token_resp.status_code}"
+        raise RuntimeError(detail)
+
+    refresh_token = token_resp.json().get("refresh_token")
+    if not refresh_token:
         raise RuntimeError("Pas de refresh_token — révoquez l'accès et réessayez avec prompt=consent")
-    return flow.credentials.refresh_token
+    return refresh_token
 
 
 def _list_sync(refresh_token: str | None) -> list[dict[str, str]]:
@@ -106,26 +103,81 @@ async def list_youtube_channels(refresh_token: str | None = None) -> list[dict[s
     return await loop.run_in_executor(None, _list_sync, refresh_token)
 
 
+def _fetch_channel_branding(youtube: Any, youtube_channel_id: str) -> dict[str, Any]:
+    response = youtube.channels().list(
+        part="brandingSettings,snippet",
+        id=youtube_channel_id,
+    ).execute()
+    items = response.get("items", [])
+    if not items:
+        raise RuntimeError(f"Chaîne YouTube introuvable : {youtube_channel_id}")
+    return items[0]
+
+
+def _merge_branding_settings(
+    existing: dict[str, Any],
+    *,
+    channel: dict[str, Any] | None = None,
+    image: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    branding = dict(existing.get("brandingSettings") or {})
+    if channel is not None:
+        merged_channel = dict(branding.get("channel") or {})
+        merged_channel.update(channel)
+        branding["channel"] = merged_channel
+    if image is not None:
+        merged_image = dict(branding.get("image") or {})
+        merged_image.update(image)
+        branding["image"] = merged_image
+    return branding
+
+
+def _update_branding_settings(
+    youtube: Any,
+    youtube_channel_id: str,
+    existing_channel: dict[str, Any],
+    *,
+    channel: dict[str, Any] | None = None,
+    image: dict[str, Any] | None = None,
+) -> None:
+    branding_settings = _merge_branding_settings(existing_channel, channel=channel, image=image)
+    youtube.channels().update(
+        part="brandingSettings",
+        body={"id": youtube_channel_id, "brandingSettings": branding_settings},
+    ).execute()
+
+
 def _update_sync(youtube_channel_id: str, brand: YouTubeBrand, refresh_token: str | None) -> None:
     from googleapiclient.discovery import build
 
     youtube = build("youtube", "v3", credentials=_build_credentials(refresh_token))
-    body = {
-        "id": youtube_channel_id,
-        "snippet": {
-            "title": brand.title[:100],
-            "description": brand.description[:1000],
-            "defaultLanguage": "fr",
-        },
-        "brandingSettings": {
-            "channel": {
-                "title": brand.title[:100],
-                "description": brand.description[:1000],
-                "keywords": " ".join(brand.keywords)[:500],
-            }
-        },
+    existing = _fetch_channel_branding(youtube, youtube_channel_id)
+    existing_channel_branding = (existing.get("brandingSettings") or {}).get("channel") or {}
+    current_title = existing_channel_branding.get("title") or existing.get("snippet", {}).get("title", "")
+
+    if brand.title[:100] != current_title[:100]:
+        logger.warning(
+            "Titre YouTube non modifiable via l'API (actuel=%r, souhaité=%r) — description/mots-clés mis à jour",
+            current_title,
+            brand.title[:100],
+        )
+
+    channel_updates: dict[str, Any] = {
+        "description": brand.description[:1000],
+        "keywords": " ".join(brand.keywords)[:500],
     }
-    youtube.channels().update(part="snippet,brandingSettings", body=body).execute()
+    if current_title:
+        # L'API exige le titre actuel ou son omission ; l'omettre efface les autres champs channel.
+        channel_updates["title"] = current_title[:100]
+    if not existing_channel_branding.get("defaultLanguage"):
+        channel_updates["defaultLanguage"] = "fr"
+
+    _update_branding_settings(
+        youtube,
+        youtube_channel_id,
+        existing,
+        channel=channel_updates,
+    )
 
 
 async def update_channel_branding(
@@ -154,13 +206,13 @@ def _upload_banner_sync(image_path: Path, youtube_channel_id: str, refresh_token
     if not banner_url:
         raise RuntimeError("Pas d'URL retournée par channelBanners.insert")
 
-    youtube.channels().update(
-        part="brandingSettings",
-        body={
-            "id": youtube_channel_id,
-            "brandingSettings": {"image": {"bannerExternalUrl": banner_url}},
-        },
-    ).execute()
+    existing = _fetch_channel_branding(youtube, youtube_channel_id)
+    _update_branding_settings(
+        youtube,
+        youtube_channel_id,
+        existing,
+        image={"bannerExternalUrl": banner_url},
+    )
 
 
 async def upload_channel_banner(
@@ -178,13 +230,18 @@ def _set_trailer_sync(youtube_channel_id: str, yt_video_id: str, refresh_token: 
     from googleapiclient.discovery import build
 
     youtube = build("youtube", "v3", credentials=_build_credentials(refresh_token))
-    youtube.channels().update(
-        part="brandingSettings",
-        body={
-            "id": youtube_channel_id,
-            "brandingSettings": {"channel": {"unsubscribedTrailer": yt_video_id}},
-        },
-    ).execute()
+    existing = _fetch_channel_branding(youtube, youtube_channel_id)
+    existing_channel_branding = (existing.get("brandingSettings") or {}).get("channel") or {}
+    channel_updates: dict[str, Any] = {"unsubscribedTrailer": yt_video_id}
+    current_title = existing_channel_branding.get("title") or existing.get("snippet", {}).get("title", "")
+    if current_title:
+        channel_updates["title"] = current_title[:100]
+    _update_branding_settings(
+        youtube,
+        youtube_channel_id,
+        existing,
+        channel=channel_updates,
+    )
 
 
 async def set_channel_trailer(

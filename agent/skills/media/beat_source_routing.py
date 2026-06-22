@@ -45,22 +45,26 @@ DEFAULT_PRIORITY_BY_VISUAL_TYPE: dict[str, list[str]] = {
     "museum_interior": ["europeana", "unsplash", "pexels", "wikimedia"],
     "document_closeup": ["gallica", "wikimedia", "europeana", "internet_archive"],
     # Sport
-    "sports_action": ["pexels", "pixabay", "wikimedia", "unsplash"],
-    "stadium_establishing": ["pexels", "unsplash", "pixabay", "wikimedia"],
-    "sports_celebration": ["pexels", "pixabay", "unsplash", "wikimedia"],
-    "athlete_portrait": ["wikimedia", "pexels", "unsplash", "pixabay"],
+    "sports_action": ["pexels", "pixabay", "coverr", "wikimedia", "unsplash"],
+    "stadium_establishing": ["pexels", "unsplash", "pixabay", "coverr", "wikimedia"],
+    "sports_celebration": ["pexels", "pixabay", "coverr", "unsplash", "wikimedia"],
+    "athlete_portrait": ["wikimedia", "pexels", "unsplash", "pixabay", "coverr"],
+    # Entertainment / humour
+    "viral_fail": ["coverr", "pexels", "pixabay", "wikimedia"],
+    "reaction_clip": ["coverr", "pexels", "pixabay", "wikimedia"],
+    "ranking_moment": ["coverr", "pexels", "pixabay", "wikimedia"],
     # Nature moderne
-    "wildlife_action": ["unsplash", "pexels", "pixabay", "wikimedia"],
-    "macro_detail": ["unsplash", "pexels", "wikimedia", "pixabay"],
-    "underwater": ["pexels", "unsplash", "pixabay", "wikimedia"],
-    "weather_phenomenon": ["pexels", "unsplash", "nasa", "wikimedia"],
-    "habitat_wide": ["unsplash", "pexels", "pixabay", "wikimedia"],
-    "aerial": ["unsplash", "pexels", "pixabay", "wikimedia"],
-    "establishing_shot": ["unsplash", "pexels", "wikimedia", "pixabay"],
+    "wildlife_action": ["unsplash", "pexels", "pixabay", "coverr", "wikimedia"],
+    "macro_detail": ["unsplash", "pexels", "wikimedia", "pixabay", "coverr"],
+    "underwater": ["pexels", "unsplash", "pixabay", "coverr", "wikimedia"],
+    "weather_phenomenon": ["pexels", "unsplash", "coverr", "nasa", "wikimedia"],
+    "habitat_wide": ["unsplash", "pexels", "pixabay", "coverr", "wikimedia"],
+    "aerial": ["unsplash", "pexels", "pixabay", "coverr", "wikimedia"],
+    "establishing_shot": ["unsplash", "pexels", "coverr", "wikimedia", "pixabay"],
     # Espace
     "space_photo": ["nasa", "wikimedia", "pexels"],
     "telescope_view": ["nasa", "wikimedia", "pexels", "unsplash"],
-    "laboratory_scene": ["pexels", "unsplash", "wikimedia", "pixabay"],
+    "laboratory_scene": ["pexels", "unsplash", "coverr", "wikimedia", "pixabay"],
     # True crime
     "crime_documentary": ["wikimedia", "pexels", "internet_archive", "pixabay"],
     "courtroom": ["wikimedia", "pexels", "unsplash"],
@@ -88,7 +92,8 @@ _TAG_SOURCE_HINTS: dict[str, list[str]] = {
     "art": ["europeana", "wikimedia", "unsplash"],
     "tech": ["pexels", "unsplash", "pixabay"],
     "cuisine": ["pexels", "unsplash", "pixabay"],
-    "humour": ["pexels", "unsplash"],
+    "humour": ["coverr", "pexels", "pixabay", "wikimedia"],
+    "entertainment": ["coverr", "pexels", "pixabay", "wikimedia"],
 }
 
 

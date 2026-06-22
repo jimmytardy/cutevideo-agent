@@ -12,6 +12,7 @@ from agent.skills.video.montage_decisions import (
     compute_xfade_offset,
     load_transition_config,
 )
+from agent.skills.video.montage_profile import load_ken_burns_config
 
 logger = logging.getLogger(__name__)
 
@@ -40,13 +41,8 @@ def profile_from_config(is_vertical: bool) -> VideoProfile:
     )
 
 
-def _load_ken_burns_config() -> dict[str, float | bool]:
-    cfg = load_agent_config().get("video", {}).get("ken_burns", {})
-    return {
-        "enabled": bool(cfg.get("enabled", True)),
-        "zoom_factor": float(cfg.get("zoom_factor", 0.03)),
-        "pan_enabled": bool(cfg.get("pan_enabled", False)),
-    }
+def _load_ken_burns_config(*, is_short: bool = False) -> dict[str, float | bool]:
+    return load_ken_burns_config(is_short=is_short)
 
 
 def color_grade_from_style_block(style_block: str) -> str:
@@ -98,8 +94,10 @@ def _build_motion_vf(
     duration_s: float,
     profile: VideoProfile,
     motion_style: MotionStyle,
+    *,
+    is_short: bool = False,
 ) -> str:
-    kb = _load_ken_burns_config()
+    kb = _load_ken_burns_config(is_short=is_short)
     zoom_factor = float(kb["zoom_factor"]) if kb["enabled"] else 0.0
     n_frames = max(int(duration_s * profile.fps), 1)
     w, h, fps = profile.width, profile.height, profile.fps
@@ -110,13 +108,13 @@ def _build_motion_vf(
             f"crop={w}:{h},fps={fps}[{output_label}]"
         )
 
-    # Suréchantillonnage léger (1.5x) : le `scale ... eval=frame` ci-dessous
-    # rééchantillonne (Lanczos) CHAQUE frame. Un facteur élevé (ex. 4x → 8K par
-    # frame) sature CPU/RAM et fait freezer la machine. Garder ce facteur bas.
     prescale_w = (w * 3 // 2) // 2 * 2
     prescale_h = (h * 3 // 2) // 2 * 2
 
-    if motion_style == "zoom_out":
+    if motion_style == "punch_zoom":
+        punch_frames = max(1, min(int(0.3 * fps), n_frames))
+        z = f"if(lt(n\\,{punch_frames})\\,1+0.08*n/{punch_frames}\\,1.08)"
+    elif motion_style == "zoom_out":
         z = f"(1+{zoom_factor}*(1-n/{n_frames}))"
     else:
         z = f"(1+{zoom_factor}*n/{n_frames})"
@@ -179,13 +177,31 @@ def _build_drawtext_filter(
     output_label: str,
     text: str,
     vertical: bool,
+    *,
+    visual_type: str = "",
+    clip_duration_s: float = 0.0,
+    beat_index: int = 0,
 ) -> str:
     safe = _escape_drawtext(text[:80])
-    y_expr = "h*0.75" if vertical else "h*0.82"
+    base_y = "h*0.75" if vertical else "h*0.82"
     fontsize = 38 if vertical else 44
+    vt = (visual_type or "").lower()
+    duration = max(clip_duration_s, 0.5)
+
+    if beat_index == 0 and vertical:
+        y_expr = f"if(lt(t\\,0.25)\\,{base_y}+(h-{base_y})*(1-t/0.25)\\,{base_y})"
+        fade = "alpha='if(lt(t,0.2),t/0.2,1)'"
+    elif vt == "statistic_highlight":
+        y_expr = base_y
+        pulse_frames = min(0.15, duration)
+        fade = f"alpha='if(lt(t,{pulse_frames:.2f}),0.5+0.5*sin(PI*t/{pulse_frames:.2f}),1)'"
+    else:
+        y_expr = base_y
+        fade = "alpha='if(lt(t,0.15),t/0.15,1)'"
+
     return (
         f"[{input_label}]drawtext=font='DejaVu Sans':text='{safe}':fontsize={fontsize}:"
-        f"fontcolor=white:box=1:boxcolor=black@0.65:boxborderw=6:borderw=2:bordercolor=black:"
+        f"fontcolor=white:{fade}:box=1:boxcolor=black@0.65:boxborderw=6:borderw=2:bordercolor=black:"
         f"x=(w-text_w)/2:y={y_expr}[{output_label}]"
     )
 
@@ -195,6 +211,7 @@ def build_segment_filter_complex(
     profile: VideoProfile,
     *,
     is_vertical: bool,
+    is_short: bool = False,
     narration_audio_path: str | None = None,
     grade: str = "",
 ) -> tuple[list[str], str, str, str]:
@@ -206,7 +223,7 @@ def build_segment_filter_complex(
     if not clips:
         raise ValueError("Aucun clip dans le segment")
 
-    trans_cfg = load_transition_config()
+    trans_cfg = load_transition_config(is_short=is_short)
     trans_dur = trans_cfg.duration_s if trans_cfg.enabled else 0.0
     durations = [clip_duration_s(c) for c in clips]
 
@@ -251,7 +268,8 @@ def build_segment_filter_complex(
             ])
             filter_parts.append(
                 _build_motion_vf(
-                    f"{input_idx}:v", processed_label, duration, profile, plan.motion_style
+                    f"{input_idx}:v", processed_label, duration, profile, plan.motion_style,
+                    is_short=is_short,
                 )
             )
             input_idx += 1
@@ -264,7 +282,8 @@ def build_segment_filter_complex(
                 input_args.extend(["-i", str(overlay_path)])
                 overlaid = f"v{i}o"
                 filter_parts.append(
-                    f"[{current_label}][{input_idx}:v]overlay=0:0:format=auto[{overlaid}]"
+                    f"[{input_idx}:v]format=rgba,fade=t=in:st=0:d=0.15:alpha=1[ov{i}f];"
+                    f"[{current_label}][ov{i}f]overlay=0:0:format=auto[{overlaid}]"
                 )
                 current_label = overlaid
                 input_idx += 1
@@ -272,7 +291,13 @@ def build_segment_filter_complex(
             draw_label = f"v{i}t"
             filter_parts.append(
                 _build_drawtext_filter(
-                    current_label, draw_label, plan.on_screen_text, is_vertical
+                    current_label,
+                    draw_label,
+                    plan.on_screen_text,
+                    is_vertical,
+                    visual_type=plan.visual_type,
+                    clip_duration_s=duration,
+                    beat_index=i,
                 )
             )
             current_label = draw_label
@@ -354,29 +379,36 @@ async def render_segment_from_clips(
     profile = profile_from_config(is_vertical)
     audio_duration_s = await _probe_audio_duration(audio_path)
     input_args, filter_complex, vout, aout = build_segment_filter_complex(
-        clips, profile, is_vertical=is_vertical, narration_audio_path=audio_path, grade=grade
+        clips,
+        profile,
+        is_vertical=is_vertical,
+        is_short=is_vertical,
+        narration_audio_path=audio_path,
+        grade=grade,
+    )
+
+    from agent.skills.video.ffmpeg_runtime import (
+        ffmpeg_preset,
+        filter_thread_args,
+        run_ffmpeg,
+        thread_args,
     )
 
     cmd = [
         "ffmpeg", "-y",
+        *filter_thread_args(),
         *input_args,
         "-filter_complex", filter_complex,
         "-map", f"[{vout}]",
         "-map", f"[{aout}]",
-        "-c:v", "libx264", "-crf", "22", "-preset", "medium",
+        *thread_args(),
+        "-c:v", "libx264", "-crf", "22", "-preset", ffmpeg_preset(),
         "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
         "-t", f"{audio_duration_s:.3f}",
         str(output_path),
     ]
 
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    _, stderr = await proc.communicate()
-    if proc.returncode != 0:
-        raise RuntimeError(f"FFmpeg segment render error: {stderr.decode()[-2000:]}")
+    await run_ffmpeg(cmd, error_prefix="FFmpeg segment render error")
 
 
 async def _probe_audio_duration(audio_path: str) -> float:

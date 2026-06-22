@@ -26,6 +26,26 @@ def _get_transcribe_semaphore() -> asyncio.Semaphore:
     return _TRANSCRIBE_SEMAPHORE
 
 
+def _whisper_cpu_threads() -> int:
+    """Plafond de threads CPU pour faster-whisper (WHISPER_CPU_THREADS).
+
+    Par défaut faster-whisper (cpu_threads=0) utilise TOUS les cœurs logiques :
+    sur une machine partagée, transcrire avec large-v3 sature le CPU. On
+    réutilise FFMPEG_THREADS comme garde-fou commun, sauf override explicite.
+    """
+    import os
+
+    raw = os.getenv("WHISPER_CPU_THREADS")
+    if raw is None:
+        from agent.skills.video.ffmpeg_runtime import ffmpeg_threads
+
+        return ffmpeg_threads()
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 2
+
+
 def _get_whisper_model(model_name: str, *, device: str = "cpu", compute_type: str = "int8") -> Any:
     from faster_whisper import WhisperModel
 
@@ -35,11 +55,17 @@ def _get_whisper_model(model_name: str, *, device: str = "cpu", compute_type: st
         with _MODEL_LOCK:
             model = _MODEL_CACHE.get(key)
             if model is None:
+                cpu_threads = _whisper_cpu_threads() if device == "cpu" else 0
                 logger.info(
-                    "Chargement du modèle Whisper %s (device=%s, %s)…",
-                    model_name, device, compute_type,
+                    "Chargement du modèle Whisper %s (device=%s, %s, cpu_threads=%d)…",
+                    model_name, device, compute_type, cpu_threads,
                 )
-                model = WhisperModel(model_name, device=device, compute_type=compute_type)
+                model = WhisperModel(
+                    model_name,
+                    device=device,
+                    compute_type=compute_type,
+                    cpu_threads=cpu_threads,
+                )
                 _MODEL_CACHE[key] = model
     return model
 

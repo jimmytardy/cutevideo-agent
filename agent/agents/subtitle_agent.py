@@ -308,7 +308,7 @@ class SubtitleAgent(BaseAgent):
 
             return False
 
-        if ctx.channel_config.production_mode != "shorts_only":
+        if ctx.channel_config.production_mode != "shorts_only" and not ctx.is_short_project:
 
             return False
 

@@ -62,21 +62,24 @@ class RunwayConfig(BaseModel):
     model: str = "gen4_turbo"
     resolution: str = "1280:720"
     max_clips_per_video: int = 3
+    max_clips_per_short: int = 1
 
 
 THEME_SOURCE_PRIORITY: dict[str, list[str]] = {
     "histoire":   ["gallica", "europeana", "wikimedia", "internet_archive", "pexels"],
     "france":     ["gallica", "europeana", "wikimedia", "pexels"],
-    "nature":     ["unsplash", "pexels", "pixabay", "wikimedia", "internet_archive"],
-    "animaux":    ["pexels", "pixabay", "wikimedia", "internet_archive", "unsplash"],
-    "science":    ["nasa", "wikimedia", "pexels", "pixabay"],
+    "nature":     ["unsplash", "pexels", "pixabay", "coverr", "wikimedia", "internet_archive"],
+    "animaux":    ["pexels", "pixabay", "coverr", "wikimedia", "internet_archive", "unsplash"],
+    "science":    ["nasa", "wikimedia", "pexels", "pixabay", "coverr"],
     "art":        ["europeana", "wikimedia", "unsplash"],
-    "finance":    ["pexels", "unsplash", "pixabay", "wikimedia"],
-    "psychologie": ["pexels", "unsplash", "pixabay", "wikimedia"],
-    "true_crime": ["wikimedia", "pexels", "internet_archive", "pixabay"],
-    "sport":    ["pexels", "pixabay", "wikimedia", "unsplash"],
-    "tech":       ["pexels", "unsplash", "pixabay", "wikimedia"],
-    "default":    ["pexels", "unsplash", "pixabay", "wikimedia", "internet_archive"],
+    "finance":    ["pexels", "unsplash", "pixabay", "coverr", "wikimedia"],
+    "psychologie": ["pexels", "unsplash", "pixabay", "coverr", "wikimedia"],
+    "true_crime": ["wikimedia", "pexels", "internet_archive", "pixabay", "coverr"],
+    "sport":      ["pexels", "pixabay", "coverr", "wikimedia", "unsplash"],
+    "tech":       ["pexels", "unsplash", "pixabay", "coverr", "wikimedia"],
+    "entertainment": ["coverr", "pexels", "pixabay", "wikimedia"],
+    "humour":     ["coverr", "pexels", "pixabay", "wikimedia"],
+    "default":    ["pexels", "pixabay", "coverr", "unsplash", "wikimedia", "internet_archive"],
 }
 
 DEFAULT_PLATFORMS = ["youtube", "tiktok", "instagram"]
@@ -91,9 +94,9 @@ class MediaSourcesConfig(BaseModel):
     priority: list[str] = Field(default_factory=list)
     min_candidates_per_segment: int = 4
     enable_ai_fallback: bool = True
-    images_per_segment: int = 4
+    images_per_segment: int = 3
     prefer_video: bool = True
-    video_clips_per_segment: int = 1
+    video_clips_per_segment: int = 2
     min_width_px: int = 1280
     relevance_min_score: int = 60
     max_search_iterations: int = 3
@@ -133,6 +136,16 @@ class GeminiTtsConfig(BaseModel):
     model: str = "gemini-2.5-flash-preview-tts"
     voice: str = "Leda"
     language_code: str = "fr"
+
+
+TtsEngine = Literal["azure", "gemini", "edge-tts"]
+
+
+class TtsFormatProfile(BaseModel):
+    """Moteur et voix TTS pour un format vidéo (short ou long)."""
+
+    engine: TtsEngine = "azure"
+    voice: str = "fr-FR-Vivienne:DragonHDLatestNeural"
 
 
 class AudioMasteringCompressorConfig(BaseModel):
@@ -182,6 +195,9 @@ class SubtitleConfig(BaseModel):
     margin_v: int = 120
     play_res_x: int = 1080
     play_res_y: int = 1920
+    active_word_scale: int = 115
+    uppercase_highlight: bool = True
+    uppercase_word_scale: int = 120
 
 
 class ChannelRuntimeConfig(BaseModel):
@@ -198,6 +214,8 @@ class ChannelRuntimeConfig(BaseModel):
     tts_oralize: bool = True
     audio_mastering: AudioMasteringConfig = Field(default_factory=AudioMasteringConfig)
     gemini_tts: GeminiTtsConfig = Field(default_factory=GeminiTtsConfig)
+    tts_short: TtsFormatProfile = Field(default_factory=TtsFormatProfile)
+    tts_long: TtsFormatProfile = Field(default_factory=TtsFormatProfile)
     default_tags: list[str] = Field(default_factory=list)
     youtube_category_id: str = "27"
     auto_publish: bool = False
@@ -219,7 +237,7 @@ class ChannelRuntimeConfig(BaseModel):
     max_critic_iterations: int = 5
     max_fact_check_iterations: int = 3
     min_image_duration_s: int = 4
-    min_image_duration_short_s: int = 2
+    min_image_duration_short_s: int = 1
     max_static_shot_s: int = 8
     content_language: str = "fr"
     music_theme: str = "default"
@@ -302,6 +320,64 @@ def _resolve_gemini_tts(tts: dict[str, Any]) -> GeminiTtsConfig:
     )
 
 
+def _normalize_tts_engine(raw: str) -> TtsEngine:
+    engine = str(raw or "azure").strip().lower()
+    if engine in ("azure", "gemini", "edge-tts"):
+        return engine  # type: ignore[return-value]
+    return "azure"
+
+
+def _parse_tts_format_profile(raw: dict[str, Any] | None, *, fallback_engine: str, fallback_voice: str) -> TtsFormatProfile:
+    if not isinstance(raw, dict):
+        return TtsFormatProfile(engine=_normalize_tts_engine(fallback_engine), voice=fallback_voice)
+    engine = _normalize_tts_engine(str(raw.get("engine", fallback_engine)))
+    voice = str(raw.get("voice", fallback_voice))
+    return TtsFormatProfile(engine=engine, voice=voice)
+
+
+def _resolve_tts_format_profiles(
+    tts: dict[str, Any],
+    gemini_tts: GeminiTtsConfig,
+) -> tuple[TtsFormatProfile, TtsFormatProfile]:
+    """Profils voix short/long — compat legacy engine/voice + gemini.apply_to."""
+    default_engine = str(tts.get("engine", "azure"))
+    default_voice = str(tts.get("voice", "fr-FR-Vivienne:DragonHDLatestNeural"))
+    gemini_profile = TtsFormatProfile(engine="gemini", voice=gemini_tts.voice)
+    default_profile = TtsFormatProfile(
+        engine=_normalize_tts_engine(default_engine),
+        voice=default_voice,
+    )
+
+    short_raw = tts.get("short")
+    long_raw = tts.get("long")
+    if isinstance(short_raw, dict) or isinstance(long_raw, dict):
+        return (
+            _parse_tts_format_profile(
+                short_raw if isinstance(short_raw, dict) else None,
+                fallback_engine=default_engine,
+                fallback_voice=default_voice,
+            ),
+            _parse_tts_format_profile(
+                long_raw if isinstance(long_raw, dict) else None,
+                fallback_engine=default_engine,
+                fallback_voice=default_voice,
+            ),
+        )
+
+    apply_to = gemini_tts.apply_to
+    if apply_to == "shorts":
+        return gemini_profile, default_profile
+    if apply_to == "long":
+        return default_profile, gemini_profile
+    if apply_to == "both":
+        return gemini_profile, gemini_profile
+    return default_profile, default_profile
+
+
+def tts_profile_for_channel(cfg: ChannelRuntimeConfig, *, is_short: bool) -> TtsFormatProfile:
+    return cfg.tts_short if is_short else cfg.tts_long
+
+
 def _resolve_audio_mastering(
     global_cfg: dict[str, Any], channel_overrides: dict[str, Any]
 ) -> AudioMasteringConfig:
@@ -343,6 +419,9 @@ def _resolve_subtitles(channel_overrides: dict[str, Any]) -> SubtitleConfig:
         margin_v=int(merged.get("margin_v", 120)),
         play_res_x=int(merged.get("play_res_x", 1080)),
         play_res_y=int(merged.get("play_res_y", 1920)),
+        active_word_scale=int(merged.get("active_word_scale", 115)),
+        uppercase_highlight=bool(merged.get("uppercase_highlight", True)),
+        uppercase_word_scale=int(merged.get("uppercase_word_scale", 120)),
     )
 
 
@@ -363,6 +442,7 @@ def _resolve_runway(channel_overrides: dict[str, Any]) -> RunwayConfig:
         model=str(merged.get("model", "gen4_turbo")),
         resolution=str(merged.get("resolution", "1280:720")),
         max_clips_per_video=int(merged.get("max_clips_per_video", 3)),
+        max_clips_per_short=int(merged.get("max_clips_per_short", 1)),
     )
 
 
@@ -512,6 +592,9 @@ def resolve_channel_config(
         forced_best_min_score=int(media_global.get("forced_best_min_score", 40)),
     )
 
+    gemini_tts = _resolve_gemini_tts(tts)
+    tts_short, tts_long = _resolve_tts_format_profiles(tts, gemini_tts)
+
     kit = channel.brand_kit or {}
     return ChannelRuntimeConfig(
         media_source_priority=media_sources.priority,
@@ -526,7 +609,9 @@ def resolve_channel_config(
         tts_comma_pauses=bool(tts.get("comma_pauses", False)),
         tts_oralize=bool(tts.get("oralize", True)),
         audio_mastering=_resolve_audio_mastering(global_cfg, channel_overrides),
-        gemini_tts=_resolve_gemini_tts(tts),
+        gemini_tts=gemini_tts,
+        tts_short=tts_short,
+        tts_long=tts_long,
         default_tags=default_tags,
         youtube_category_id=str(publishing.get("youtube_category_id", "27")),
         auto_publish=bool(publishing.get("auto_publish", False)),
@@ -580,7 +665,7 @@ def resolve_channel_config(
         min_image_duration_short_s=int(
             pipeline.get(
                 "min_image_duration_short_s",
-                global_cfg.get("pipeline", {}).get("min_image_duration_short_s", 2),
+                global_cfg.get("pipeline", {}).get("min_image_duration_short_s", 1.5),
             )
         ),
         max_static_shot_s=int(

@@ -140,3 +140,34 @@ def test_build_azure_ssml_clamps_excessive_pitch() -> None:
     )
     assert "+20Hz" not in ssml
     assert 'pitch="+8Hz"' in ssml
+
+
+def test_build_azure_ssml_aliases_documentary_style() -> None:
+    # "documentary" n'est pas un style Azure valide ; doit mapper sur la narration
+    # documentaire plutôt que retomber silencieusement sur le défaut.
+    ssml = build_azure_ssml(
+        "Test",
+        "fr-FR-HenriNeural",
+        delivery_style={"azure_style": "documentary"},
+    )
+    assert "documentary-narration" in ssml
+
+
+def test_build_azure_ssml_accepts_underscore_style() -> None:
+    ssml = build_azure_ssml(
+        "Test",
+        "fr-FR-HenriNeural",
+        delivery_style={"azure_style": "newscast_formal"},
+    )
+    assert "newscast-formal" in ssml
+
+
+def test_build_azure_ssml_normalizes_medium_pace() -> None:
+    # "medium" / "medium_varied" étaient ignorés (rate jamais ajusté) → normal.
+    for pace in ("medium", "medium_varied"):
+        ssml = build_azure_ssml(
+            "Test",
+            "fr-FR-HenriNeural",
+            delivery_style={"pace": pace},
+        )
+        assert 'rate="+0%"' in ssml

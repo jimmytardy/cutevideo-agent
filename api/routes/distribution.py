@@ -7,7 +7,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.agents.distribution_agent import DistributionAgent
-from agent.core.database import Publication, get_db
+from agent.core.database import Channel, Publication, User, get_db
+from api.authorization import channel_owner_clause
+from api.deps import get_current_user
 from api.models import PublicationResponse
 
 router = APIRouter(prefix="/api/v1/distribution", tags=["distribution"])
@@ -23,10 +25,15 @@ async def run_distribution() -> dict:
 async def list_distribution_queue(
     channel_id: uuid.UUID | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> list[Publication]:
     query = (
         select(Publication)
-        .where(Publication.status.in_(("scheduled", "failed", "publishing")))
+        .join(Channel, Channel.id == Publication.channel_id)
+        .where(
+            Publication.status.in_(("scheduled", "failed", "publishing")),
+            channel_owner_clause(current_user),
+        )
         .order_by(Publication.scheduled_at.asc().nulls_last())
     )
     if channel_id:
@@ -40,9 +47,12 @@ async def list_distribution_queue(
 async def get_scheduled_publication(
     publication_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> Publication:
     result = await db.execute(
-        select(Publication).where(Publication.id == publication_id)
+        select(Publication)
+        .join(Channel, Channel.id == Publication.channel_id)
+        .where(Publication.id == publication_id, channel_owner_clause(current_user))
     )
     pub = result.scalar_one_or_none()
     if not pub:

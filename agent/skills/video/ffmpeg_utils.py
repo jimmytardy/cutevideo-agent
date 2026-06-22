@@ -34,16 +34,9 @@ async def _probe_clip_duration(clip_path: Path) -> float:
 
 
 async def _run_ffmpeg(cmd: list[str]) -> None:
-    import asyncio
+    from agent.skills.video.ffmpeg_runtime import run_ffmpeg
 
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    _, stderr = await proc.communicate()
-    if proc.returncode != 0:
-        raise RuntimeError(f"FFmpeg error: {stderr.decode()[-2000:]}")
+    await run_ffmpeg(cmd)
 
 
 def _assert_audio_stream(video_path: Path) -> None:
@@ -62,6 +55,8 @@ async def assemble_from_montage_plan(
     output_path: Path,
     project_id: uuid.UUID,
     grade: str = "",
+    *,
+    force_vertical: bool = False,
 ) -> float:
     """Assemble une vidéo depuis un MontagePlan (chemin unique du monteur)."""
     if not montage_plan.segments:
@@ -72,7 +67,7 @@ async def assemble_from_montage_plan(
     audio_by_order: dict[int, AudioFile] = {
         (af.segment_order or 0): af for af in audio_files if af.local_path
     }
-    is_vertical = montage_plan.is_vertical
+    is_vertical = montage_plan.is_vertical or force_vertical
     video_segments: list[Path] = []
 
     for seg_plan in sorted(montage_plan.segments, key=lambda s: s.segment_order):
@@ -97,10 +92,13 @@ async def assemble_from_montage_plan(
         "\n".join(f"file '{seg.resolve()}'" for seg in video_segments),
         encoding="utf-8",
     )
+    from agent.skills.video.ffmpeg_runtime import ffmpeg_preset, thread_args
+
     cmd = [
         "ffmpeg", "-y",
         "-f", "concat", "-safe", "0", "-i", str(concat_list),
-        "-c:v", "libx264", "-crf", "22", "-preset", "medium",
+        *thread_args(),
+        "-c:v", "libx264", "-crf", "22", "-preset", ffmpeg_preset(),
         "-c:a", "aac", "-b:a", AUDIO_BITRATE, "-ar", str(AUDIO_SAMPLE_RATE),
         "-movflags", "+faststart",
         str(output_path),
@@ -229,3 +227,32 @@ def build_multi_drawtext_filter(
             f"x='(w*{x_norm})-(text_w/2)':y='(h*{y_norm})-(text_h/2)'"
         )
     return ",".join(filters)
+
+
+async def probe_video_duration(video_path: Path) -> float:
+    probe = ffmpeg.probe(str(video_path))
+    return float(probe["format"]["duration"])
+
+
+async def trim_video_to_duration(
+    source_path: Path,
+    output_path: Path,
+    max_duration_s: float,
+) -> float:
+    """Coupe une vidéo à max_duration_s (re-encode léger si nécessaire)."""
+    from agent.skills.video.ffmpeg_runtime import ffmpeg_preset, thread_args
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", str(source_path),
+        "-t", str(max_duration_s),
+        *thread_args(),
+        "-c:v", "libx264", "-crf", "22", "-preset", ffmpeg_preset(),
+        "-c:a", "aac", "-b:a", AUDIO_BITRATE, "-ar", str(AUDIO_SAMPLE_RATE),
+        "-movflags", "+faststart",
+        str(output_path),
+    ]
+    await _run_ffmpeg(cmd)
+    duration = await probe_video_duration(output_path)
+    logger.info("Vidéo trimmée à %.1f s (max %.1f s) → %s", duration, max_duration_s, output_path)
+    return duration

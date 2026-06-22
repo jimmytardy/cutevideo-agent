@@ -19,12 +19,32 @@ async def create_short(
     platform: str = "youtube",
     cta_text: str = "",
     hook_text: str = "",
+    *,
+    dynamic_recut: bool = False,
 ) -> float:
     """Crée un short 9:16 avec CTA et hook texte depuis une vidéo longue."""
+    if dynamic_recut:
+        from agent.skills.video.dynamic_short_recut import dynamic_recut_short
+
+        base_duration = await dynamic_recut_short(
+            source_path,
+            output_path,
+            start_s=start_s,
+            duration_s=duration_s,
+        )
+        if hook_text or cta_text:
+            return await _apply_hook_cta_overlay(
+                output_path, platform, cta_text, hook_text, base_duration
+            )
+        return base_duration
+
     tmp_crop = output_path.parent / f"{output_path.stem}_crop.mp4"
+
+    from agent.skills.video.ffmpeg_runtime import filter_thread_args, thread_args
 
     crop_cmd = [
         "ffmpeg", "-y",
+        *filter_thread_args(),
         "-ss", str(start_s),
         "-i", str(source_path),
         "-t", str(duration_s),
@@ -33,6 +53,7 @@ async def create_short(
             f"crop={SHORT_WIDTH * 2}:{SHORT_HEIGHT * 2},"
             f"scale={SHORT_WIDTH}:{SHORT_HEIGHT}"
         ),
+        *thread_args(),
         "-c:v", "libx264", "-crf", "22", "-preset", "fast",
         "-c:a", "aac", "-ar", "48000",
         str(tmp_crop),
@@ -46,8 +67,10 @@ async def create_short(
 
     overlay_cmd = [
         "ffmpeg", "-y",
+        *filter_thread_args(),
         "-i", str(tmp_crop),
         "-vf", cta_filter,
+        *thread_args(),
         "-c:v", "libx264", "-crf", "20", "-preset", "medium",
         "-c:a", "copy",
         str(output_path),
@@ -58,6 +81,34 @@ async def create_short(
 
     probe = await _probe_duration(output_path)
     return probe
+
+
+async def _apply_hook_cta_overlay(
+    video_path: Path,
+    platform: str,
+    cta_text: str,
+    hook_text: str,
+    duration_s: float,
+) -> float:
+    from agent.skills.video.ffmpeg_runtime import filter_thread_args, thread_args
+
+    tmp_out = video_path.with_stem(video_path.stem + "_ov")
+    cta_start = max(0.0, duration_s - 8.0)
+    cta_filter = _build_cta_filter(platform, cta_text, hook_text, cta_start, duration_s)
+    cmd = [
+        "ffmpeg", "-y",
+        *filter_thread_args(),
+        "-i", str(video_path),
+        "-vf", cta_filter,
+        *thread_args(),
+        "-c:v", "libx264", "-crf", "20", "-preset", "medium",
+        "-c:a", "copy",
+        str(tmp_out),
+    ]
+    await _run(cmd)
+    video_path.unlink(missing_ok=True)
+    tmp_out.rename(video_path)
+    return await _probe_duration(video_path)
 
 
 def _build_cta_filter(
@@ -96,14 +147,9 @@ def _build_cta_filter(
 
 
 async def _run(cmd: list[str]) -> None:
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    _, stderr = await proc.communicate()
-    if proc.returncode != 0:
-        raise RuntimeError(f"FFmpeg error: {stderr.decode()[-1000:]}")
+    from agent.skills.video.ffmpeg_runtime import run_ffmpeg
+
+    await run_ffmpeg(cmd)
 
 
 async def _probe_duration(path: Path) -> float:

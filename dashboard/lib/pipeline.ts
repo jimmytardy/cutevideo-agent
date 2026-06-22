@@ -69,6 +69,7 @@ export const AGENT_LABELS: Record<string, string> = {
   research_agent: 'Chercheur',
   outline_agent: 'Architecte éditorial',
   scenario_agent: 'Scénariste',
+  fact_checker_agent: 'Vérificateur factuel',
   hook_optimizer_agent: 'Optimiseur accroche',
   revision_agent: 'Agent Révision',
   narrator_agent: 'Narrateur Voix',
@@ -90,6 +91,7 @@ export const PREPARATION_AGENT_KEYS = [
   'research_agent',
   'outline_agent',
   'scenario_agent',
+  'fact_checker_agent',
   'hook_optimizer_agent',
 ] as const
 
@@ -108,6 +110,7 @@ export const ITERATION_1_AGENT_KEYS = [
   'narrator_agent',
   'art_director_agent',
   'beat_planner_agent',
+  'diagram_specialist_agent',
   'media_agent',
   'montage_planner_agent',
   'editor_agent',
@@ -118,6 +121,7 @@ export const ITERATION_1_AGENT_KEYS = [
 export const DELETION_SUMMARY: Record<string, string[]> = {
   research_agent: ['Brief recherche', 'Plan éditorial', 'Scénarios', 'Médias', 'Fichiers audio', 'Vidéos', 'Rapports critiques'],
   outline_agent: ['Plan éditorial', 'Scénarios', 'Médias', 'Fichiers audio', 'Vidéos', 'Rapports critiques'],
+  fact_checker_agent: ['Scénarios', 'Médias', 'Fichiers audio', 'Vidéos', 'Rapports critiques'],
   scenario_agent: ['Scénarios (visual beats)', 'Médias', 'Fichiers audio', 'Vidéos', 'Rapports critiques'],
   hook_optimizer_agent: [
     'Accroche optimisée (segment 1)',
@@ -131,6 +135,7 @@ export const DELETION_SUMMARY: Record<string, string[]> = {
   narrator_agent: ['Fichiers audio', 'Visual beats', 'Médias', 'Plan de montage', 'Vidéos', 'Rapports critiques'],
   art_director_agent: ['Direction visuelle', 'Médias', 'Vidéos', 'Rapports critiques'],
   beat_planner_agent: ['Visual beats', 'Médias', 'Plan de montage', 'Vidéos', 'Rapports critiques'],
+  diagram_specialist_agent: ['Schémas diagramme', 'Médias', 'Plan de montage', 'Vidéos', 'Rapports critiques'],
   media_agent: ['Médias (par beat + bibliothèque)', 'Plan de montage', 'Vidéos', 'Rapports critiques'],
   montage_planner_agent: ['Plan de montage', 'Vidéos', 'Rapports critiques'],
   editor_agent: ['Vidéos', 'Rapports critiques'],
@@ -138,6 +143,8 @@ export const DELETION_SUMMARY: Record<string, string[]> = {
   critic_agent: ['Rapports critiques', 'Vidéos courtes'],
   clipper_agent: ['Vidéos courtes'],
   short_editor_agent: ['Vidéos courtes'],
+  metadata_agent: ['Métadonnées YouTube'],
+  thumbnail_agent: ['Concepts miniature'],
 }
 
 export function effectiveMaxIterations(maxIterations: number, isShort: boolean): number {
@@ -342,6 +349,27 @@ export function deriveOutlineStatus(
     if (redis) return redis
   }
   return 'pending'
+}
+
+export function deriveFactCheckerStatus(
+  agentRuns: AgentRun[],
+  redisStatuses: Record<string, string> | undefined,
+  projectStatus: string,
+  scenarioStatus: AgentStatus,
+  kickoff?: PipelineKickoff | null,
+): AgentStatus {
+  const run = getAgentRunForStep(agentRuns, 'fact_checker_agent')
+  if (run?.status === 'failed') return 'failed'
+  if (run?.status === 'stopped') return 'stopped'
+  if (run?.status === 'success') return 'success'
+  if (run?.status === 'running') return 'running'
+  if (isKickoffAgent('fact_checker_agent', kickoff, run)) return 'running'
+  if (shouldCheckRedis(projectStatus, kickoff) && scenarioStatus === 'success') {
+    const redis = resolveRedisStatus(redisStatuses, 'fact_checker_agent')
+    if (redis) return redis
+  }
+  if (scenarioStatus === 'success' || scenarioStatus === 'running') return 'pending'
+  return 'planned'
 }
 
 export function deriveScenarioStatus(

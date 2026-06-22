@@ -12,12 +12,12 @@
     "min_voice_score": 6,
     "min_short_structure_score": 11,
     "min_image_duration_s": 4,
-    "min_image_duration_short_s": 2,
+    "min_image_duration_short_s": 1.5,
     "max_static_shot_s": 8,
     "images_per_segment": 4,
     "visual_beats": {
       "enabled": true,
-      "min_beats_per_short_segment": 3,
+      "min_beats_per_short_segment": 4,
       "max_beats_per_segment": 8,
       "min_diagram_duration_s": 6.0,
       "min_diagram_duration_short_s": 4.0
@@ -44,6 +44,14 @@
     "insert_pauses": true,
     "comma_pauses": false,
     "oralize": true,
+    "short": {
+      "engine": "azure",
+      "voice": "fr-FR-Vivienne:DragonHDLatestNeural"
+    },
+    "long": {
+      "engine": "gemini",
+      "voice": "Leda"
+    },
     "gemini": {
       "apply_to": "off",
       "model": "gemini-2.5-flash-preview-tts",
@@ -119,6 +127,25 @@
       "max_duration_tiktok": 120,
       "max_duration_instagram": 120,
       "min_duration_tiktok": 60
+    },
+    "short_montage_profile": {
+      "ken_burns": {
+        "zoom_factor": 0.08,
+        "pan_enabled": true
+      },
+      "transitions": {
+        "duration_s": 0.2,
+        "mood_defaults": {
+          "energique": "pixelize",
+          "humoristique": "wipeleft"
+        }
+      },
+      "beat_slot_s": 2.5,
+      "dynamic_recut_enabled": false,
+      "sfx": {
+        "beat_cuts_enabled": true,
+        "max_cues_per_minute": 12
+      }
     }
   },
   "whisper": {
@@ -137,11 +164,15 @@
     "outline_color": "#000000",
     "outline_width": 4,
     "vertical_position": 0.65,
-    "margin_v": 120
+    "margin_v": 120,
+    "active_word_scale": 115,
+    "uppercase_highlight": true,
+    "uppercase_word_scale": 120
   },
   "media_sources": {
     "prefer_video": true,
-    "video_clips_per_segment": 1,
+    "video_clips_per_segment": 2,
+    "images_per_segment": 3,
     "priority_by_theme": {
       "histoire": [
         "gallica",
@@ -156,18 +187,23 @@
       "nature": [
         "unsplash",
         "pexels",
+        "pixabay",
+        "coverr",
         "wikimedia"
       ],
       "animaux": [
         "unsplash",
         "pexels",
+        "pixabay",
+        "coverr",
         "wikimedia"
       ],
       "science": [
         "nasa",
         "wikimedia",
         "pexels",
-        "pixabay"
+        "pixabay",
+        "coverr"
       ],
       "art": [
         "europeana",
@@ -176,30 +212,67 @@
       "sport": [
         "pexels",
         "pixabay",
+        "coverr",
         "wikimedia",
         "unsplash"
       ],
       "true_crime": [
         "wikimedia",
         "pexels",
-        "internet_archive"
+        "internet_archive",
+        "pixabay",
+        "coverr"
+      ],
+      "entertainment": [
+        "coverr",
+        "pexels",
+        "pixabay",
+        "wikimedia"
+      ],
+      "humour": [
+        "coverr",
+        "pexels",
+        "pixabay",
+        "wikimedia"
       ],
       "default": [
+        "pexels",
+        "pixabay",
+        "coverr",
         "wikimedia",
-        "unsplash",
-        "pexels"
+        "unsplash"
       ]
     },
     "priority_by_visual_type": {
       "sports_action": [
         "pexels",
         "pixabay",
+        "coverr",
         "wikimedia",
         "unsplash"
       ],
       "stadium_establishing": [
         "pexels",
         "unsplash",
+        "pixabay",
+        "coverr",
+        "wikimedia"
+      ],
+      "viral_fail": [
+        "coverr",
+        "pexels",
+        "pixabay",
+        "wikimedia"
+      ],
+      "reaction_clip": [
+        "coverr",
+        "pexels",
+        "pixabay",
+        "wikimedia"
+      ],
+      "ranking_moment": [
+        "coverr",
+        "pexels",
         "pixabay",
         "wikimedia"
       ],
@@ -262,7 +335,9 @@
       "nature": 0.1,
       "animaux": 0.15,
       "art": 0.2,
-      "default": 0.25,
+      "entertainment": 0.1,
+      "humour": 0.1,
+      "default": 0.15,
       "custom_high_niche": 0.45
     },
     "ai_fallback": {
@@ -458,7 +533,8 @@
     "default_duration_s": 5,
     "model": "gen4_turbo",
     "resolution": "1280:720",
-    "max_clips_per_video": 3
+    "max_clips_per_video": 3,
+    "max_clips_per_short": 1
   },
   "audio_mix": {
     "music_volume_with_voice": 0.06,

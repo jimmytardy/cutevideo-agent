@@ -20,7 +20,7 @@ class ClipMetadata(BaseModel):
     summary: str = ""
 
 
-MotionStyle = Literal["static", "zoom_in", "zoom_out", "pan_left", "pan_right"]
+MotionStyle = Literal["static", "zoom_in", "zoom_out", "pan_left", "pan_right", "punch_zoom"]
 OverlayMode = Literal["none", "drawtext", "svg_overlay"]
 AssetType = Literal["image", "video", "color"]
 
@@ -80,3 +80,16 @@ class MontagePlanData(BaseModel):
     @classmethod
     def from_db_dict(cls, data: dict[str, Any]) -> MontagePlanData:
         return cls.model_validate(data)
+
+
+def collect_clip_cut_times(plan: MontagePlanData) -> list[float]:
+    """Horodatages absolus des changements visuels intra-segment (après le 1er clip)."""
+    times: list[float] = []
+    segment_offset = 0.0
+    for seg in sorted(plan.segments, key=lambda s: s.segment_order):
+        for idx, clip in enumerate(seg.clips):
+            if idx > 0:
+                times.append(segment_offset + clip.timeline_start_s)
+        if seg.clips:
+            segment_offset += seg.clips[-1].timeline_end_s
+    return sorted({round(t, 3) for t in times if t > 0.05})

@@ -15,6 +15,10 @@ const nextConfig = {
         source: '/health',
         destination: `${api}/health`,
       },
+      {
+        source: '/storage/stats',
+        destination: `${api}/storage/stats`,
+      },
     ]
   },
 }

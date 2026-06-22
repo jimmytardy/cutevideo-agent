@@ -27,8 +27,11 @@ _WHOOSH_GAIN_DB_NO_VOICE = -16.0
 _ACCENT_GAIN_DB_VOICE = -20.0
 _ACCENT_GAIN_DB_NO_VOICE = -14.0
 
+_WHOOSH_GAIN_DB_BEAT_CUT = -26.0
 _WHOOSH_DUR_S = 0.5
 _ACCENT_DUR_S = 0.6
+
+_SFX_MANIFEST_PATH = Path(__file__).resolve().parents[2] / "data" / "sfx" / "manifest.json"
 
 
 @dataclass(frozen=True)
@@ -71,12 +74,68 @@ def build_sfx_cues(
     return cues[:max_cues]
 
 
+def build_beat_cut_cues(
+    clip_starts: list[float],
+    *,
+    max_per_minute: int = 12,
+    video_duration_s: float | None = None,
+) -> list[SfxCue]:
+    """Micro-whoosh discret à chaque cut visuel intra-segment."""
+    if not clip_starts:
+        return []
+
+    deduped: list[float] = []
+    for t in sorted(clip_starts):
+        if deduped and t - deduped[-1] < 0.3:
+            continue
+        deduped.append(t)
+
+    if video_duration_s and video_duration_s > 0:
+        cap = max(1, int(max_per_minute * video_duration_s / 60.0))
+        deduped = deduped[:cap]
+
+    return [
+        SfxCue(time_s=max(t - 0.08, 0.0), kind="whoosh", gain_db=_WHOOSH_GAIN_DB_BEAT_CUT)
+        for t in deduped
+    ]
+
+
+def merge_sfx_cues(*cue_lists: list[SfxCue], max_cues: int = 36) -> list[SfxCue]:
+    merged: list[SfxCue] = []
+    for cues in cue_lists:
+        merged.extend(cues)
+    merged.sort(key=lambda c: c.time_s)
+    out: list[SfxCue] = []
+    for cue in merged:
+        if out and abs(cue.time_s - out[-1].time_s) < 0.25:
+            continue
+        out.append(cue)
+    return out[:max_cues]
+
+
+def _resolve_sfx_file(kind: str) -> Path | None:
+    if not _SFX_MANIFEST_PATH.exists():
+        return None
+    try:
+        import json
+
+        manifest = json.loads(_SFX_MANIFEST_PATH.read_text(encoding="utf-8"))
+        rel = (manifest.get(kind) or {}).get("path")
+        if not rel:
+            return None
+        path = _SFX_MANIFEST_PATH.parent / str(rel)
+        return path if path.exists() else None
+    except (OSError, ValueError, TypeError):
+        return None
+
+
 def _synth_input(kind: str) -> tuple[str, float]:
-    """Source lavfi FFmpeg pour un SFX (sans gain ni délai)."""
+    """Source lavfi FFmpeg ou fichier CC0 pour un SFX."""
+    file_path = _resolve_sfx_file(kind)
+    if file_path is not None:
+        return (str(file_path), _WHOOSH_DUR_S if kind == "whoosh" else _ACCENT_DUR_S)
     if kind == "accent":
-        # Ping clair (cloche douce) — sinus qui décroît rapidement.
         return (f"sine=frequency=784:duration={_ACCENT_DUR_S}:sample_rate=48000", _ACCENT_DUR_S)
-    # whoosh : bruit rose filtré, balayé en fréquence par les fades.
     return (f"anoisesrc=d={_WHOOSH_DUR_S}:c=pink:r=48000:a=0.9", _WHOOSH_DUR_S)
 
 
@@ -103,7 +162,10 @@ def build_sfx_ffmpeg_command(
     cmd: list[str] = ["ffmpeg", "-y", "-i", str(video_path)]
     for cue in cues:
         source, dur = _synth_input(cue.kind)
-        cmd += ["-f", "lavfi", "-t", f"{dur:.3f}", "-i", source]
+        if Path(source).exists():
+            cmd += ["-t", f"{dur:.3f}", "-i", source]
+        else:
+            cmd += ["-f", "lavfi", "-t", f"{dur:.3f}", "-i", source]
 
     filter_parts: list[str] = []
     sfx_labels: list[str] = []
@@ -117,9 +179,12 @@ def build_sfx_ffmpeg_command(
     filter_parts.append(
         f"{mix_inputs}amix=inputs={len(sfx_labels) + 1}:duration=first:normalize=0[aout]"
     )
+    from agent.skills.video.ffmpeg_runtime import thread_args
+
     cmd += [
         "-filter_complex", ";".join(filter_parts),
         "-map", "0:v", "-map", "[aout]",
+        *thread_args(),
         "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
         str(output_path),
     ]
@@ -134,14 +199,12 @@ async def apply_sfx_cues(
     """Mixe les SFX sur la vidéo. Retourne le chemin de sortie ou None si rien à faire/échec."""
     if not cues:
         return None
+    from agent.skills.video.ffmpeg_runtime import run_ffmpeg
+
     cmd = build_sfx_ffmpeg_command(video_path, cues, output_path)
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    _, stderr = await proc.communicate()
-    if proc.returncode != 0:
-        logger.warning("SFX FFmpeg error : %s", stderr.decode()[-500:])
+    try:
+        await run_ffmpeg(cmd, error_prefix="SFX FFmpeg error")
+    except RuntimeError as exc:
+        logger.warning("%s", exc)
         return None
     return output_path

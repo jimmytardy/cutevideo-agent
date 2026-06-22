@@ -282,6 +282,39 @@ class ResearchBriefResponse(BaseModel):
     niche_risk: str = "medium"
 
 
+class OutlineSegmentResponse(BaseModel):
+    order: int
+    title: str = ""
+    duration_s: int = 0
+    needs_voice: bool = True
+    needs_music: bool = True
+    mood: str = "calme"
+    hook_type: str | None = None
+    strip_source_audio: bool = True
+    intent: str = ""
+
+
+class OutlineResponse(BaseModel):
+    title: str = ""
+    description: str = ""
+    segments: list[OutlineSegmentResponse] = Field(default_factory=list)
+    total_duration_s: int = 0
+
+
+class ProjectMetadataResponse(BaseModel):
+    title: str = ""
+    description: str = ""
+    tags: list[str] = Field(default_factory=list)
+    chapters: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ThumbnailCandidateResponse(BaseModel):
+    local_path: str | None = None
+    prompt: str | None = None
+    attribution: str | None = None
+    primary: bool = False
+
+
 class ScenarioResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -473,6 +506,7 @@ class PipelinePlanResponse(BaseModel):
     iteration_revision: list[str]
     post_production: list[str]
     max_iterations: int
+    max_iterations_unlimited: bool = False
 
 
 class AgentRunResponse(BaseModel):

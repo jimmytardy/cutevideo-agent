@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 PHOTOS_API_URL = "https://api.pexels.com/v1/search"
 VIDEOS_API_URL = "https://api.pexels.com/videos/search"
 MediaType = Literal["image", "video"]
+VideoOrientation = Literal["landscape", "portrait"]
 
 
 async def search(
@@ -19,6 +20,7 @@ async def search(
     period: str = "",
     *,
     media_type: MediaType = "image",
+    orientation: VideoOrientation = "landscape",
 ) -> list[dict]:
     """Recherche sur Pexels — photos et/ou vidéos libres."""
     if not settings.pexels_api_key:
@@ -27,16 +29,20 @@ async def search(
 
     query = " ".join(keywords[:3])
     if media_type == "video":
-        return await _search_videos(query)
-    return await _search_photos(query)
+        return await _search_videos(query, orientation=orientation)
+    return await _search_photos(query, orientation=orientation)
 
 
-async def _search_photos(query: str) -> list[dict]:
+async def _search_photos(
+    query: str,
+    *,
+    orientation: VideoOrientation = "landscape",
+) -> list[dict]:
     headers = {"Authorization": settings.pexels_api_key}
     params = {
         "query": query,
         "per_page": "10",
-        "orientation": "landscape",
+        "orientation": orientation,
     }
 
     results: list[dict] = []
@@ -75,12 +81,16 @@ async def _search_photos(query: str) -> list[dict]:
     return results
 
 
-async def _search_videos(query: str) -> list[dict]:
+async def _search_videos(
+    query: str,
+    *,
+    orientation: VideoOrientation = "landscape",
+) -> list[dict]:
     headers = {"Authorization": settings.pexels_api_key}
     params = {
         "query": query,
         "per_page": "10",
-        "orientation": "landscape",
+        "orientation": orientation,
     }
 
     results: list[dict] = []

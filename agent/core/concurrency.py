@@ -1,10 +1,49 @@
 from __future__ import annotations
 
+import asyncio
+import os
 import uuid
+from collections.abc import Awaitable
+from typing import TypeVar
 
 from sqlalchemy import func, select, update
 
 from agent.core.database import AsyncSessionFactory, Channel, Project
+
+_T = TypeVar("_T")
+
+
+def fanout_concurrency() -> int:
+    """Nb max de tâches simultanées dans un fan-out de pipeline.
+
+    Borne les `gather` par segment (narrateur, média) pour éviter qu'une vidéo
+    à N segments lance N tâches d'un coup (N TTS/ffmpeg/téléchargements en
+    parallèle → pic CPU/RAM). Réglable via PIPELINE_FANOUT_CONCURRENCY.
+    """
+    try:
+        return max(1, int(os.getenv("PIPELINE_FANOUT_CONCURRENCY", "3")))
+    except ValueError:
+        return 3
+
+
+async def bounded_gather(
+    *awaitables: Awaitable[_T],
+    limit: int | None = None,
+    return_exceptions: bool = False,
+) -> list[_T]:
+    """Comme `asyncio.gather` mais avec au plus `limit` tâches actives à la fois.
+
+    `limit=None` utilise `fanout_concurrency()`. Préserve l'ordre des résultats.
+    """
+    sem = asyncio.Semaphore(limit if limit is not None else fanout_concurrency())
+
+    async def _run(aw: Awaitable[_T]) -> _T:
+        async with sem:
+            return await aw
+
+    return await asyncio.gather(
+        *(_run(aw) for aw in awaitables), return_exceptions=return_exceptions
+    )
 
 
 async def count_running_pipelines(

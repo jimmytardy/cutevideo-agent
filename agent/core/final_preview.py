@@ -35,7 +35,9 @@ async def resolve_preview_video(session: AsyncSession, project_id: uuid.UUID) ->
     videos = list(result.scalars().all())
     if not videos:
         return None
-    return max(videos, key=_preview_sort_key)
+    short_candidates = [v for v in videos if is_short_preview_video_type(v.video_type)]
+    pool = short_candidates or videos
+    return max(pool, key=_preview_sort_key)
 
 
 def subtitles_available_for_video(video: Video | None, project_id: uuid.UUID) -> bool:

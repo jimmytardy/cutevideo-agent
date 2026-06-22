@@ -84,7 +84,7 @@ def _niche_fallback_rates() -> dict[str, float]:
         "nature": 0.10,
         "animaux": 0.15,
         "art": 0.20,
-        "default": 0.25,
+        "default": 0.15,
     }
     return {**defaults, **{str(k): float(v) for k, v in cfg.items()}}
 

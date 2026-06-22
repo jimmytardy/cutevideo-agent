@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     unsplash_access_key: str = ""
     pexels_api_key: str = ""
     pixabay_api_key: str = ""
+    coverr_api_key: str = ""
     freesound_api_key: str = ""
     europeana_api_key: str = ""
 
@@ -55,6 +56,7 @@ class Settings(BaseSettings):
     instagram_page_id: str = ""
 
     composio_api_key: str = ""
+    composio_tiktok_auth_config_id: str = ""
     runway_api_key: str = ""
     google_gemini_api_key: str = ""
     fal_key: str = ""

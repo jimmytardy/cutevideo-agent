@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from agent.agents.outline_agent import _sanitize_outline
 from agent.agents.scenario_agent import _format_outline_block
+from agent.core.channel_config import ChannelRuntimeConfig
 
 
 def test_sanitize_outline_normalizes_segments_and_fills_defaults() -> None:
@@ -30,6 +31,24 @@ def test_sanitize_outline_skips_non_dict_segments() -> None:
     out = _sanitize_outline({"segments": ["bad", {"title": "ok"}]}, target_duration_s=60)
     assert len(out["segments"]) == 1
     assert out["segments"][0]["title"] == "ok"
+
+
+def test_sanitize_outline_clamps_short_duration() -> None:
+    cfg = ChannelRuntimeConfig(
+        min_short_duration_s=45,
+        max_short_duration_s=120,
+        short_duration_s=60,
+    )
+    raw = {
+        "total_duration_s": 120,
+        "segments": [
+            {"title": "A", "duration_s": 60},
+            {"title": "B", "duration_s": 60},
+        ],
+    }
+    out = _sanitize_outline(raw, target_duration_s=60, channel_config=cfg, is_short=True)
+    assert out["total_duration_s"] == 60
+    assert sum(seg["duration_s"] for seg in out["segments"]) == 60
 
 
 def test_format_outline_block_includes_titles_and_intent() -> None:

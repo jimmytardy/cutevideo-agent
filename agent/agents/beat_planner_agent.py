@@ -15,9 +15,11 @@ from agent.core.visual_beats_prompt import build_visual_beats_prompt_context
 from agent.skills.scenario.beat_timeline_split import (
     beat_slot_seconds,
     compute_target_beat_count,
+    dynamic_max_beats,
     split_narration_into_beats,
     splits_to_visual_beats,
 )
+from agent.skills.video.montage_profile import short_beat_slot_s
 from agent.skills.video.beat_timeline import word_segments_from_json
 
 if TYPE_CHECKING:
@@ -61,10 +63,19 @@ class BeatPlannerAgent(BaseAgent):
         is_short = ctx.is_short_project
         vb = ctx.channel_config.visual_beats
         min_beats = vb.min_beats_per_short_segment if is_short else 3
-        max_beats = vb.max_beats_per_segment
-        slot_s = beat_slot_seconds(
-            min_image_duration_s=float(ctx.channel_config.min_image_duration_short_s if is_short else ctx.channel_config.min_image_duration_s),
-            max_static_shot_s=float(ctx.channel_config.max_static_shot_s),
+        base_max_beats = vb.max_beats_per_segment
+        min_img_s = float(
+            ctx.channel_config.min_image_duration_short_s
+            if is_short
+            else ctx.channel_config.min_image_duration_s
+        )
+        slot_s = (
+            short_beat_slot_s()
+            if is_short
+            else beat_slot_seconds(
+                min_image_duration_s=min_img_s,
+                max_static_shot_s=float(ctx.channel_config.max_static_shot_s),
+            )
         )
 
         total_duration = 0.0
@@ -85,11 +96,16 @@ class BeatPlannerAgent(BaseAgent):
 
             audio_duration = float(audio.duration_s or seg.get("duration_s", 30))
             words = word_segments_from_json(audio.word_timestamps)
+            seg_max_beats = dynamic_max_beats(
+                audio_duration,
+                min_image_duration_s=min_img_s,
+                base_max=base_max_beats,
+            )
             target = compute_target_beat_count(
                 audio_duration,
                 beat_slot_s=slot_s,
                 min_beats=min_beats,
-                max_beats=max_beats,
+                max_beats=seg_max_beats,
             )
             splits = split_narration_into_beats(
                 str(seg.get("narration_text") or ""),
@@ -97,7 +113,7 @@ class BeatPlannerAgent(BaseAgent):
                 audio_duration,
                 target_beats=target,
                 min_beats=min_beats,
-                max_beats=max_beats,
+                max_beats=seg_max_beats,
             )
             enriched = await self._enrich_beats_llm(ctx, seg, splits, is_short=is_short)
             seg["visual_beats"] = splits_to_visual_beats(splits, enriched)

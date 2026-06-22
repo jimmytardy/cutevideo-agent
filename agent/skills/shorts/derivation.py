@@ -40,12 +40,12 @@ async def run_narration_for_short_derivation(
     output_dir = Path(f"./tmp/{ctx.project_id}/shorts/{plan.index:02d}/audio")
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    import asyncio
+    from agent.core.concurrency import bounded_gather
 
     tasks = [
         agent._generate_segment_audio(ctx, segment, output_dir) for segment in voice_segments
     ]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    results = await bounded_gather(*tasks, return_exceptions=True)
 
     audio_files: list[AudioFile] = []
     for result in results:

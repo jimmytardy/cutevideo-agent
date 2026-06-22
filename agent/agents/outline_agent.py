@@ -6,6 +6,8 @@ import uuid
 from typing import Any
 
 from agent.core.base_agent import BaseAgent
+from agent.core.channel_config import ChannelRuntimeConfig
+from agent.core.short_format import clamp_short_scenario_payload
 from agent.core.database import AsyncSessionFactory, Project
 from agent.core.learning_context import LEARNING_CONTEXT_BLOCK
 from agent.agents.scenario_agent import (
@@ -194,7 +196,12 @@ class OutlineAgent(BaseAgent):
 
         raw = await self._call_claude(prompt, system=SYSTEM_PROMPT, max_tokens=2048)
         data = _parse_json(raw)
-        return _sanitize_outline(data, ctx.target_duration_seconds)
+        return _sanitize_outline(
+            data,
+            ctx.target_duration_seconds,
+            cfg,
+            is_short=is_short,
+        )
 
     @staticmethod
     async def _persist(project_id: uuid.UUID, outline: dict[str, Any]) -> None:
@@ -228,7 +235,13 @@ def _parse_json(raw: str) -> dict:
     return json.loads(raw)
 
 
-def _sanitize_outline(data: dict[str, Any], target_duration_s: int) -> dict[str, Any]:
+def _sanitize_outline(
+    data: dict[str, Any],
+    target_duration_s: int,
+    channel_config: ChannelRuntimeConfig | None = None,
+    *,
+    is_short: bool = False,
+) -> dict[str, Any]:
     """Garantit un squelette exploitable (ordres, champs structurels présents)."""
     segments = data.get("segments") or []
     cleaned: list[dict[str, Any]] = []
@@ -248,9 +261,16 @@ def _sanitize_outline(data: dict[str, Any], target_duration_s: int) -> dict[str,
                 "intent": str(seg.get("intent") or "").strip(),
             }
         )
-    return {
+    payload: dict[str, Any] = {
         "title": str(data.get("title") or ""),
         "description": str(data.get("description") or ""),
         "segments": cleaned,
         "total_duration_s": int(data.get("total_duration_s") or target_duration_s),
     }
+    if is_short and channel_config is not None:
+        payload = clamp_short_scenario_payload(
+            payload,
+            target_duration_seconds=target_duration_s,
+            channel_config=channel_config,
+        )
+    return payload

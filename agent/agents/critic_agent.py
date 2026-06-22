@@ -40,12 +40,16 @@ CONTENU DU SCÉNARIO (résumé) :
 
 CRITÈRES D'ÉVALUATION (total 100 pts) :
 
-RYTHME (20 pts)
+RYTHME (10 pts)
 - Durée minimale par image respectée (jamais < {min_duration}s) ?
 - Schémas/infographies affichés assez longtemps pour être lus (>= {min_diagram_duration}s) ?
-- Labels des schémas lisibles et bien positionnés (pas de flash < 3 s) ?
-- Transitions fluides ?
 - Cohérence tempo narration / images ?
+
+DYNAMISME (10 pts)
+- Changement visuel au moins toutes les 4 s (shorts) ?
+- Variété des mouvements (Ken Burns, transitions) — pas de monotonie ?
+- Plans trop longs sans variation (> 4 s) ?
+- Si score dynamisme < 6 : start_from = "montage_planner_agent" ou "beat_planner_agent" si beats espacés
 
 VALEUR DU CONTENU (25 pts)
 - La narration est pertinente et engageante pour le thème de la chaîne ?
@@ -83,7 +87,8 @@ Retourne UNIQUEMENT ce JSON :
   "global_score": 75,
   "start_from": "narrator_agent",
   "feedback": {{
-    "rhythm": 16,
+    "rhythm": 8,
+    "dynamism": 7,
     "content_value": 20,
     "factual_accuracy": 8,
     "visual_quality": 16,
@@ -226,7 +231,6 @@ class CriticAgent(BaseAgent):
             if is_short
             else LONG_APPROVAL_RULES.format(min_score=ctx.channel_config.min_critic_score)
         )
-        is_short = ctx.channel_config.production_mode == "shorts_only"
         min_diagram = (
             ctx.channel_config.visual_beats.min_diagram_duration_short_s
             if is_short
@@ -297,7 +301,7 @@ class CriticAgent(BaseAgent):
                 data["feedback"] = feedback
 
         structure_score = self._extract_structure_score(feedback)
-        max_iterations = ctx.max_iterations_override or ctx.channel_config.max_critic_iterations
+        max_iterations = ctx.max_critic_iterations
         decision = self._resolve_decision(
             global_score=score,
             structure_score=structure_score,
@@ -309,6 +313,14 @@ class CriticAgent(BaseAgent):
         )
         data, decision, start_from_value = self._apply_routing_overrides(
             data, decision, start_from_value, video_analysis, ctx,
+        )
+        decision, start_from_value = self._apply_short_duration_override(
+            ctx,
+            video,
+            is_short=is_short,
+            decision=decision,
+            start_from_value=start_from_value,
+            data=data,
         )
         feedback["start_from"] = start_from_value
         data["feedback"] = feedback
@@ -345,10 +357,60 @@ class CriticAgent(BaseAgent):
 
     @staticmethod
     def _is_short_video(ctx: "PipelineContext", video: Video) -> bool:
-        if ctx.channel_config.production_mode == "shorts_only":
+        if ctx.is_short_project:
             return True
         vtype = video.video_type or ""
         return vtype == "short_master" or vtype.startswith("short_")
+
+    @staticmethod
+    def _apply_short_duration_override(
+        ctx: "PipelineContext",
+        video: Video,
+        *,
+        is_short: bool,
+        decision: str,
+        start_from_value: str,
+        data: dict,
+    ) -> tuple[str, str]:
+        from agent.core.short_format import (
+            effective_short_max_duration_s,
+            exceeds_short_duration_limit,
+        )
+
+        if not is_short or not video.duration_s:
+            return decision, start_from_value
+        if not exceeds_short_duration_limit(
+            float(video.duration_s),
+            target_duration_seconds=ctx.target_duration_seconds,
+            channel_config=ctx.channel_config,
+        ):
+            return decision, start_from_value
+
+        effective_max = effective_short_max_duration_s(
+            ctx.target_duration_seconds,
+            ctx.channel_config,
+        )
+        logger.info(
+            "Short trop long (%.1f s > %d s) — itération requise",
+            video.duration_s,
+            effective_max,
+        )
+        changes = list(data.get("requested_changes") or [])
+        if not any(c.get("agent") == "revision_agent" for c in changes):
+            changes.append({
+                "agent": "revision_agent",
+                "change_description": (
+                    f"Réduire la durée totale à ≤ {effective_max} s "
+                    f"(actuellement {video.duration_s:.0f} s)"
+                ),
+            })
+        data["requested_changes"] = changes
+        feedback = data.get("feedback") if isinstance(data.get("feedback"), dict) else {}
+        existing = feedback.get("comments")
+        note = f"Durée excessive pour un short ({video.duration_s:.0f} s > {effective_max} s)."
+        feedback["comments"] = f"{existing}\n{note}" if isinstance(existing, str) else note
+        data["feedback"] = feedback
+        return "iterate", "revision_agent"
 
     @staticmethod
     def _normalize_criterion_value(raw: object) -> int | None:
@@ -408,11 +470,11 @@ class CriticAgent(BaseAgent):
         structure_score: int,
         is_short: bool,
         iteration: int,
-        max_iterations: int,
+        max_iterations: int | None,
         min_critic_score: int,
         min_short_structure_score: int,
     ) -> str:
-        if iteration >= max_iterations:
+        if max_iterations is not None and iteration >= max_iterations:
             logger.info(
                 "Score %d/100 — itérations max atteintes (%d), approbation forcée",
                 global_score,
@@ -443,6 +505,7 @@ class CriticAgent(BaseAgent):
         max_static = float(ctx.channel_config.max_static_shot_s)
         feedback = data.get("feedback") if isinstance(data.get("feedback"), dict) else {}
         rhythm = CriticAgent._normalize_criterion_value(feedback.get("rhythm")) or 0
+        dynamism = CriticAgent._normalize_criterion_value(feedback.get("dynamism")) or 0
         visual = CriticAgent._normalize_criterion_value(feedback.get("visual_quality")) or 0
 
         static_issue = False
@@ -453,10 +516,10 @@ class CriticAgent(BaseAgent):
                     static_issue = True
                     break
 
-        if static_issue or rhythm < 12 or visual < 12:
+        if static_issue or rhythm < 6 or dynamism < 6 or visual < 12:
             decision = "iterate"
             if start_from in ("editor_agent", "subtitle_agent"):
-                start_from = "montage_planner_agent"
+                start_from = "beat_planner_agent" if dynamism < 6 and rhythm < 6 else "montage_planner_agent"
             changes = list(data.get("requested_changes") or [])
             if not any(c.get("agent") == "montage_planner_agent" for c in changes):
                 changes.append({
@@ -502,7 +565,8 @@ class CriticAgent(BaseAgent):
         ("structure", "scenario_agent", 15),
         ("voice_expressiveness", "narrator_agent", 10),
         ("visual_quality", "media_agent", 20),
-        ("rhythm", "montage_planner_agent", 20),
+        ("rhythm", "montage_planner_agent", 10),
+        ("dynamism", "montage_planner_agent", 10),
     )
 
     @classmethod

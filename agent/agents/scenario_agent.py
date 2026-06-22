@@ -9,6 +9,7 @@ from typing import Any
 from agent.core.base_agent import BaseAgent
 from agent.core.database import AsyncSessionFactory, Scenario
 from agent.core.learning_context import LEARNING_CONTEXT_BLOCK
+from agent.core.short_format import clamp_short_scenario_payload
 from agent.core.prompt_safety import (
     UNTRUSTED_CONTENT_POLICY,
     sanitize_search_terms,
@@ -119,7 +120,8 @@ VOIX ET DELIVERY_STYLE (OBLIGATOIRE si needs_voice true) :
 - Hook (segment 1) : pace "fast", emotion dynamique, azure_style énergique (excited, cheerful)
 - Conclusion : pace "slow", emotion posée (calm, empathetic)
 - emphasis_words : 3 à 8 mots par segment voix (noms propres, chiffres, mots-clés du hook)
-- azure_style valides : narration-professional, cheerful, empathetic, excited, calm, sad, terrified, whispering, newscast-formal
+- pace valides (UNIQUEMENT) : slow, normal, fast — pas de "medium" ni de variante
+- azure_style valides : narration-professional, narration-relaxed, documentary-narration, cheerful, empathetic, excited, calm, sad, terrified, whispering, newscast-formal
 - Ne JAMAIS répéter le même delivery_style sur tous les segments
 
 {research_rules_block}
@@ -181,7 +183,7 @@ RÈGLES SHORT :
 - search_keywords ancrés au SUJET (« {theme} ») et au segment — termes précis obligatoires, pas de mots-clés génériques seuls
 - Formats sans voix OK : visuels + on_screen_text, meme-style, musique
 - Rythme rapide, punchlines si ton humoristique
-- Total indicatif : {min_duration_s}–{max_duration_s} s (pas de contrainte stricte sur total_duration_s)
+- Total indicatif : {min_duration_s}–{max_duration_s} s — total_duration_s DOIT rester ≤ {target_duration_s} s
 
 {mood_field_doc}
 CHAMP strip_source_audio — false par défaut si needs_voice est false (conserver sons ambiants des clips) ; true uniquement si tu veux une vidéo muette avec musique/texte seuls.
@@ -194,6 +196,7 @@ CHAMP needs_music — false si pas de bed musical pertinent (voix seule, ASMR, s
 
 VOIX ET DELIVERY_STYLE (si needs_voice true) :
 - delivery_style variable par segment ; hook rapide (pace fast), emphasis_words 3-5 mots
+- pace valides (UNIQUEMENT) : slow, normal, fast — pas de "medium" ni de variante
 - Ne pas répéter le même azure_style sur tous les segments
 
 {research_rules_block}
@@ -279,7 +282,8 @@ VOIX ET DELIVERY_STYLE (OBLIGATOIRE si needs_voice true) :
 - delivery_style DIFFÉRENT pour chaque segment voix (varier pace, emotion, azure_style)
 - Hook : pace "fast", azure_style énergique (excited, cheerful) ; conclusion : pace "slow", posé (calm, empathetic)
 - emphasis_words : 3 à 8 mots par segment voix
-- azure_style valides : narration-professional, cheerful, empathetic, excited, calm, sad, terrified, whispering, newscast-formal
+- pace valides (UNIQUEMENT) : slow, normal, fast — pas de "medium" ni de variante
+- azure_style valides : narration-professional, narration-relaxed, documentary-narration, cheerful, empathetic, excited, calm, sad, terrified, whispering, newscast-formal
 
 {research_rules_block}
 {critic_feedback_block}
@@ -346,6 +350,7 @@ RÈGLES SHORT :
 
 VOIX ET DELIVERY_STYLE (si needs_voice true) :
 - delivery_style variable par segment ; hook rapide (pace fast), emphasis_words 3-5 mots
+- pace valides (UNIQUEMENT) : slow, normal, fast — pas de "medium" ni de variante
 - Ne pas répéter le même azure_style sur tous les segments
 
 {research_rules_block}
@@ -570,7 +575,9 @@ class ScenarioAgent(BaseAgent):
         )
         run = await self.start_run(ctx.project_id, input_data)
         try:
-            scenario = await self._generate_scenario(input_data, outline)
+            scenario = await self._generate_scenario(
+                input_data, outline, channel_config=ctx.channel_config
+            )
             await self.end_run(run, {"scenario_id": str(scenario.id)})
             return scenario
         except Exception as e:
@@ -578,7 +585,11 @@ class ScenarioAgent(BaseAgent):
             raise
 
     async def _generate_scenario(
-        self, input_data: ScenarioInput, outline: dict[str, Any] | None = None
+        self,
+        input_data: ScenarioInput,
+        outline: dict[str, Any] | None = None,
+        *,
+        channel_config: "ChannelRuntimeConfig | None" = None,
     ) -> Scenario:
         is_short = input_data.production_mode == "shorts_only" or input_data.target_duration_seconds <= 120
         # Le contexte d'apprentissage dérive de retours audience/commentaires (non fiables) :
@@ -745,6 +756,13 @@ class ScenarioAgent(BaseAgent):
             user_id=self._user_id,
         )
         data = apply_brief_to_scenario_data(data, brief)
+
+        if is_short and channel_config is not None:
+            data = clamp_short_scenario_payload(
+                data,
+                target_duration_seconds=input_data.target_duration_seconds,
+                channel_config=channel_config,
+            )
 
         async with AsyncSessionFactory() as session:
             scenario = Scenario(

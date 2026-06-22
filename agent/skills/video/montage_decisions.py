@@ -16,22 +16,10 @@ class TransitionConfig:
     visual_type_defaults: dict[str, str]
 
 
-def load_transition_config() -> TransitionConfig:
-    cfg = load_agent_config().get("video", {}).get("transitions", {})
-    catalog = cfg.get("catalog") or ["fade", "dissolve", "wiperight", "wipeleft"]
-    return TransitionConfig(
-        enabled=bool(cfg.get("enabled", True)),
-        duration_s=float(cfg.get("duration_s", 0.4)),
-        catalog=frozenset(str(t) for t in catalog),
-        mood_defaults={
-            str(k).lower(): str(v)
-            for k, v in (cfg.get("mood_defaults") or {}).items()
-        },
-        visual_type_defaults={
-            str(k).lower(): str(v)
-            for k, v in (cfg.get("visual_type_defaults") or {}).items()
-        },
-    )
+def load_transition_config(*, is_short: bool = False) -> TransitionConfig:
+    from agent.skills.video.montage_profile import load_montage_transition_config
+
+    return load_montage_transition_config(is_short=is_short)
 
 
 def validate_transition(name: str, config: TransitionConfig | None = None) -> str:
@@ -64,13 +52,21 @@ def resolve_transition(
     return validate_transition(default_transition, cfg)
 
 
+# Cycle de mouvement Ken Burns pour les photos : alterner le sens évite l'effet
+# hypnotique répétitif d'un zoom_in systématique sur toute la vidéo.
+_MOTION_CYCLE: tuple[MotionStyle, ...] = ("zoom_in", "zoom_out", "pan_right", "pan_left")
+
+
 def resolve_motion_style(
     visual_type: str,
     asset_type: str,
     motion_hint: str = "",
+    index: int = 0,
+    *,
+    is_short: bool = False,
 ) -> MotionStyle:
-    if motion_hint in ("static", "zoom_in", "zoom_out", "pan_left", "pan_right"):
-        return motion_hint
+    if motion_hint in ("static", "zoom_in", "zoom_out", "pan_left", "pan_right", "punch_zoom"):
+        return motion_hint  # type: ignore[return-value]
     if asset_type == "video":
         vt = (visual_type or "").lower()
         if vt in ("sports_action", "wildlife_action", "archival_footage", "news_broll"):
@@ -78,19 +74,28 @@ def resolve_motion_style(
     vt = (visual_type or "").lower()
     if vt in ("quote_card", "statistic_highlight", "text_card", "headline_overlay"):
         return "static"
+    # Diagrammes : zoom_in léger pour garder les labels lisibles (pas de pan).
     if vt in ("scientific_diagram", "infographic", "map", "timeline"):
         return "zoom_in"
-    return "zoom_in"
+    # Photos : alterner le mouvement selon la position du beat dans le segment.
+    style = _MOTION_CYCLE[index % len(_MOTION_CYCLE)]
+    if is_short and style == "static":
+        return "zoom_in"
+    return style
 
 
-def resolve_overlay_mode(visual_type: str) -> str:
+def resolve_overlay_mode(visual_type: str, on_screen_text: str = "") -> str:
     vt = (visual_type or "").lower()
     if vt in ("quote_card", "statistic_highlight", "text_card", "headline_overlay", "lower_third"):
         return "drawtext"
     from agent.skills.media_sources.ai.prompt_builder import is_diagram_visual_type
 
+    # Les diagrammes gardent l'overlay vectoriel (labels positionnés).
     if is_diagram_visual_type(vt):
         return "svg_overlay"
+    # Appui-texte sur n'importe quel plan (photo, archive…) dès qu'un texte est fourni.
+    if on_screen_text and on_screen_text.strip():
+        return "drawtext"
     return "none"
 
 

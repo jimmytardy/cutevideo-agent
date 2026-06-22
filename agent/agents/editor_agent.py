@@ -52,7 +52,7 @@ class EditorAgent(BaseAgent):
 
     async def _assemble_video(self, ctx: "PipelineContext", scenario: Scenario | None) -> Video:
         from agent.agents.montage_planner_agent import load_latest_montage_plan
-        from agent.skills.video.ffmpeg_utils import assemble_from_montage_plan, assert_audio_has_signal
+        from agent.skills.video.ffmpeg_utils import assemble_from_montage_plan, assert_audio_has_signal, probe_video_duration
         from agent.skills.video.filter_graph_builder import color_grade_from_style_block
 
         montage_plan = await load_latest_montage_plan(ctx.project_id)
@@ -76,7 +76,13 @@ class EditorAgent(BaseAgent):
         if grade:
             logger.info("Étalonnage final (P5) dérivé du style : %s", grade)
         segment_meta = self._build_segment_meta(scenario)
-        is_vertical = montage_plan.is_vertical or ctx.channel_config.production_mode == "shorts_only"
+        from agent.core.short_format import (
+            effective_short_max_duration_s,
+            exceeds_short_duration_limit,
+            requires_vertical_output,
+        )
+
+        is_vertical = montage_plan.is_vertical or requires_vertical_output(ctx)
 
         if is_vertical:
             output_dir = Path("./output/shorts/master")
@@ -93,10 +99,13 @@ class EditorAgent(BaseAgent):
             output_path=output_path,
             project_id=ctx.project_id,
             grade=grade,
+            force_vertical=is_vertical,
         )
 
         output_path = await self._mix_music_by_mood(ctx, output_path, segment_meta, duration_s)
-        output_path = await self._apply_sound_design(ctx, output_path, segment_meta)
+        output_path = await self._apply_sound_design(
+            ctx, output_path, segment_meta, video_duration_s=duration_s
+        )
 
         has_narration = any(m.get("needs_voice") for m in segment_meta.values())
         await assert_audio_has_signal(
@@ -104,6 +113,28 @@ class EditorAgent(BaseAgent):
             min_mean_db=-50.0 if has_narration else -65.0,
             required=_scenario_requires_audio(segment_meta),
         )
+
+        duration_s = float(await probe_video_duration(output_path))
+        if requires_vertical_output(ctx) and exceeds_short_duration_limit(
+            duration_s,
+            target_duration_seconds=ctx.target_duration_seconds,
+            channel_config=ctx.channel_config,
+        ):
+            from agent.skills.video.ffmpeg_utils import trim_video_to_duration
+
+            max_s = effective_short_max_duration_s(
+                ctx.target_duration_seconds,
+                ctx.channel_config,
+            )
+            trimmed_path = output_path.with_name(f"{output_path.stem}_trimmed.mp4")
+            duration_s = await trim_video_to_duration(output_path, trimmed_path, max_s)
+            output_path = trimmed_path
+            logger.info(
+                "Short trimmé à %.1f s (plafond %d s) pour le projet %s",
+                duration_s,
+                max_s,
+                ctx.project_id,
+            )
 
         async with AsyncSessionFactory() as session:
             video = Video(
@@ -252,16 +283,41 @@ class EditorAgent(BaseAgent):
         ctx: "PipelineContext",
         video_path: Path,
         segment_meta: dict[int, dict],
+        *,
+        video_duration_s: float | None = None,
     ) -> Path:
-        """P4 — pose des SFX (whoosh transitions, accent révélations) sur la piste finale."""
+        """P4 — pose des SFX (whoosh transitions, accent révélations, cuts beats) sur la piste finale."""
+        from agent.agents.montage_planner_agent import load_latest_montage_plan
         from agent.core.config import load_agent_config
-        from agent.skills.audio.sound_design import apply_sfx_cues, build_sfx_cues
+        from agent.core.montage_plan import MontagePlanData, collect_clip_cut_times
+        from agent.skills.audio.sound_design import (
+            apply_sfx_cues,
+            build_beat_cut_cues,
+            build_sfx_cues,
+            merge_sfx_cues,
+        )
+        from agent.skills.video.montage_profile import is_short_montage, short_sfx_config
 
         sfx_cfg = load_agent_config().get("sfx", {})
         if not sfx_cfg.get("enabled", True):
             return video_path
 
-        cues = build_sfx_cues(segment_meta)
+        segment_cues = build_sfx_cues(segment_meta)
+        beat_cues: list = []
+        if is_short_montage(ctx):
+            profile_sfx = short_sfx_config()
+            if profile_sfx.get("beat_cuts_enabled", True):
+                montage_row = await load_latest_montage_plan(ctx.project_id)
+                if montage_row and montage_row.plan_data:
+                    plan = MontagePlanData.from_db_dict(montage_row.plan_data)
+                    cut_times = collect_clip_cut_times(plan)
+                    beat_cues = build_beat_cut_cues(
+                        cut_times,
+                        max_per_minute=int(profile_sfx.get("max_cues_per_minute", 12)),
+                        video_duration_s=video_duration_s,
+                    )
+
+        cues = merge_sfx_cues(segment_cues, beat_cues)
         if not cues:
             return video_path
 

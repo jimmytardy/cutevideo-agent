@@ -76,6 +76,23 @@ VALID_AZURE_STYLES: frozenset[str] = frozenset({
     "whispering",
 })
 
+# Déviations fréquentes du modèle (scénario) → style Azure valide le plus proche.
+# Le ScenarioAgent improvise souvent des libellés hors vocabulaire ("documentary",
+# "dramatic"…) qui, sans alias, retombent silencieusement sur le style par défaut.
+STYLE_ALIASES: dict[str, str] = {
+    "documentary": "documentary-narration",
+    "narration": "narration-professional",
+    "professional": "narration-professional",
+    "relaxed": "narration-relaxed",
+    "news": "newscast",
+    "dramatic": "sad",
+    "intense": "serious",
+    "energetic": "excited",
+    "happy": "cheerful",
+    "joyful": "cheerful",
+    "warm": "empathetic",
+}
+
 DEFAULT_STYLE = "narration-relaxed"
 DEFAULT_RATE = "+0%"
 DEFAULT_PITCH = "+0Hz"
@@ -130,7 +147,34 @@ def _sanitize_style(style: str) -> str:
     normalized = style.strip().lower()
     if normalized in VALID_AZURE_STYLES:
         return normalized
+    # Tolère les déviations courantes : underscore vs tiret ("newscast_formal"),
+    # puis synonymes connus ("documentary" → "documentary-narration").
+    hyphen = normalized.replace("_", "-")
+    if hyphen in VALID_AZURE_STYLES:
+        return hyphen
+    if normalized in STYLE_ALIASES:
+        return STYLE_ALIASES[normalized]
     return DEFAULT_STYLE
+
+
+def _normalize_pace(pace: str) -> str:
+    """Ramène un pace libre du scénario vers slow/normal/fast.
+
+    Le ScenarioAgent émet régulièrement "medium" / "medium_varied" / "moderate",
+    absents de PACE_TO_RATE, qui étaient donc ignorés (débit jamais ajusté).
+    """
+    p = pace.strip().lower()
+    if not p:
+        return ""
+    if p in PACE_TO_RATE:
+        return p
+    if "slow" in p or "lent" in p:
+        return "slow"
+    if "fast" in p or "rapide" in p or "quick" in p:
+        return "fast"
+    if any(k in p for k in ("medium", "moderate", "normal", "varied", "moyen")):
+        return "normal"
+    return ""
 
 
 def _resolve_prosody(
@@ -150,7 +194,7 @@ def _resolve_prosody(
     style = _sanitize_style(
         str(ds.get("azure_style") or mood_defaults.get("azure_style") or tone_defaults.get("azure_style", DEFAULT_STYLE))
     )
-    pace = str(ds.get("pace") or "").lower()
+    pace = _normalize_pace(str(ds.get("pace") or ""))
     rate = PACE_TO_RATE.get(pace) or mood_defaults.get("rate") or tone_defaults.get("rate", DEFAULT_RATE)
     emotion = str(ds.get("emotion") or "").lower()
     pitch = (

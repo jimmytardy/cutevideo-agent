@@ -112,22 +112,21 @@ async def _run_ken_burns(
             pan_enabled=pan_enabled,
             pan_direction=pan_direction,
         )
+    from agent.skills.video.ffmpeg_runtime import filter_thread_args, run_ffmpeg, thread_args
+
     cmd = [
         "ffmpeg", "-y",
+        *filter_thread_args(),
         "-loop", "1",
         "-i", str(image_path),
         "-vf", vf,
         "-t", str(duration_s),
+        *thread_args(),
         "-c:v", "libx264", "-crf", "22", "-preset", "fast",
         "-pix_fmt", "yuv420p",
         str(output_path),
     ]
-    proc = await asyncio.create_subprocess_exec(
-        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-    )
-    _, stderr = await proc.communicate()
-    if proc.returncode != 0:
-        raise RuntimeError(f"Ken Burns FFmpeg error: {stderr.decode()[-1000:]}")
+    await run_ffmpeg(cmd, error_prefix="Ken Burns FFmpeg error")
 
 
 async def apply_ken_burns_vertical(

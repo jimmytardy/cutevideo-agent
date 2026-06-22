@@ -10,9 +10,17 @@ networks:
 services:
   app:
     container_name: cutevideo
+    # Stack prod — ne démarre PAS en local (on utilise app-dev / worker-dev).
+    # Sur le VPS : `docker compose --profile prod up -d`.
+    profiles: ["prod"]
     image: cutevideo:local
     build: .
     env_file: .env
+    environment:
+      # Surcharge le .env (qui vise localhost:5433/6380 pour le run host) :
+      # dans Docker on joint les services par leur nom DNS sur local-network.
+      DATABASE_URL: postgresql+asyncpg://cutevideo:cutevideo@shared-postgres:5432/cutevideo
+      REDIS_URL: redis://redis:6379
     ports:
       - "${APP_HOST:-127.0.0.1}:${PORT:-3000}:3000"
     volumes:
@@ -24,12 +32,16 @@ services:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
     depends_on:
+      shared-postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
 
   worker:
+    # Stack prod — ne démarre PAS en local (on utilise worker-dev). VPS : `--profile prod`.
     # Pour plusieurs workers : retirer container_name puis `docker compose up -d --scale worker=3`
     # Volumes app_tmp / app_output partagés — dimensionner le disque en conséquence.
+    profiles: ["prod"]
     image: cutevideo:local
     build: .
     env_file: .env

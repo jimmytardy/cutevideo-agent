@@ -8,6 +8,10 @@ from sqlalchemy import update
 
 from agent.agents.scenario_agent import _format_research_block
 from agent.core.base_agent import BaseAgent
+from agent.core.short_format import (
+    clamp_short_total_duration,
+    effective_short_max_duration_s,
+)
 from agent.core.database import AsyncSessionFactory, Project, Scenario
 from agent.core.scenario_integrity import validate_segment_count_preserved
 
@@ -97,8 +101,8 @@ _DURATION_HEADER_SHORT = (
 _DURATION_HEADER_LONG = "DURÉE CIBLE : {target_duration_s}s"
 
 _DURATION_RULE_SHORT = """2. Pour une correction de durée sur un short :
-   → Condense ou étends narration_text pour viser la plage {min_short_duration_s}–{max_short_duration_s} s
-   → total_duration_s indicatif (durée réelle fixée après synthèse vocale) — pas de valeur exacte imposée"""
+   → Condense narration_text pour respecter le plafond {effective_max_s} s
+   → total_duration_s DOIT être ≤ {effective_max_s} s (durée réelle calibrée post-voix)"""
 
 _DURATION_RULE_LONG = """2. Pour une correction de durée totale (ex : "réduire de 240s à 60s") :
    → Réduis proportionnellement duration_s de chaque segment
@@ -184,16 +188,19 @@ class RevisionAgent(BaseAgent):
 
         min_short = ctx.channel_config.min_short_duration_s
         max_short = ctx.channel_config.max_short_duration_s
+        effective_max = effective_short_max_duration_s(
+            ctx.target_duration_seconds,
+            ctx.channel_config,
+        )
         if is_short:
             duration_header = _DURATION_HEADER_SHORT.format(
                 min_short_duration_s=min_short,
-                max_short_duration_s=max_short,
+                max_short_duration_s=effective_max,
             )
             duration_rule_2 = _DURATION_RULE_SHORT.format(
-                min_short_duration_s=min_short,
-                max_short_duration_s=max_short,
+                effective_max_s=effective_max,
             )
-            total_duration_hint = f"indicatif entre {min_short} et {max_short}"
+            total_duration_hint = str(effective_max)
         else:
             duration_header = _DURATION_HEADER_LONG.format(
                 target_duration_s=ctx.target_duration_seconds,
@@ -223,6 +230,19 @@ class RevisionAgent(BaseAgent):
 
         new_segments = data.get("segments", segments)
         new_duration = data.get("total_duration_s", ctx.target_duration_seconds)
+        if is_short:
+            new_duration = clamp_short_total_duration(
+                new_duration,
+                min_duration_s=min_short,
+                max_duration_s=effective_max,
+                fallback=effective_max,
+            )
+            from agent.core.short_format import rescale_segment_durations
+
+            new_segments = rescale_segment_durations(
+                list(new_segments),
+                max_total_s=new_duration,
+            )
 
         validate_segment_count_preserved(
             segments,

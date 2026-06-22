@@ -10,6 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from agent.core.database import Channel, MarketAnalysis, Project, SubscriptionPlan, User, Video
 
 
+DEFAULT_DISPLAY_CRITIC_ITERATIONS = 5
+
+
 class SubscriptionLimits(BaseModel):
     max_channels: int = 1
     max_market_analyses_per_month: int = 2
@@ -21,6 +24,7 @@ class SubscriptionLimits(BaseModel):
     production_modes: list[str] = Field(default_factory=lambda: ["mixed", "shorts_only"])
     auto_publish_allowed: bool = False
     max_critic_iterations: int = 2
+    unlimited_critic_iterations: bool = False
     tts_allowed_engines: list[str] = Field(default_factory=lambda: ["edge"])
     whisper_model: str = "base"
     enable_ai_fallback: bool = False
@@ -49,6 +53,27 @@ def is_unlimited(plan: SubscriptionPlan) -> bool:
     return bool(plan.is_unlimited)
 
 
+async def sync_user_admin_flag(
+    session: AsyncSession,
+    user: User,
+    plan: SubscriptionPlan | None = None,
+) -> bool:
+    """Aligne `user.is_admin` sur le plan d'abonnement et persiste si besoin.
+
+    Appelée à chaque résolution de plan (login, /me) : tout porteur d'un plan
+    illimité est automatiquement promu admin en BDD, et rétrogradé si son plan
+    redevient limité.
+    """
+    if plan is None:
+        plan = await get_plan_for_user(session, user)
+    desired = is_unlimited(plan)
+    if user.is_admin != desired:
+        user.is_admin = desired
+        await session.commit()
+        await session.refresh(user)
+    return user.is_admin
+
+
 async def resolve_user_limits(session: AsyncSession, user: User) -> SubscriptionLimits:
     plan = await get_plan_for_user(session, user)
     if is_unlimited(plan):
@@ -62,7 +87,7 @@ async def resolve_user_limits(session: AsyncSession, user: User) -> Subscription
             max_short_duration_s=180,
             production_modes=["mixed", "long_only", "shorts_only"],
             auto_publish_allowed=True,
-            max_critic_iterations=10,
+            unlimited_critic_iterations=True,
             tts_allowed_engines=["edge", "azure", "gemini"],
             whisper_model="large-v3",
             enable_ai_fallback=True,
@@ -113,12 +138,13 @@ def apply_subscription_caps(
     )
     out["production"] = production
 
-    pipeline = dict(out.get("pipeline") or {})
-    pipeline["max_critic_iterations"] = min(
-        int(pipeline.get("max_critic_iterations", limits.max_critic_iterations)),
-        limits.max_critic_iterations,
-    )
-    out["pipeline"] = pipeline
+    if not limits.unlimited_critic_iterations:
+        pipeline = dict(out.get("pipeline") or {})
+        pipeline["max_critic_iterations"] = min(
+            int(pipeline.get("max_critic_iterations", limits.max_critic_iterations)),
+            limits.max_critic_iterations,
+        )
+        out["pipeline"] = pipeline
 
     content_planning = dict(out.get("content_planning") or {})
     content_planning["default_long_duration_seconds"] = min(
@@ -150,6 +176,36 @@ def apply_subscription_caps(
     out["media_sources"] = media_sources
 
     return out
+
+
+def resolve_effective_max_critic_iterations(
+    *,
+    project_config: dict,
+    channel_max: int,
+    limits: SubscriptionLimits,
+) -> int | None:
+    """Max effectif pour la boucle critique.
+
+    None = illimité (admin sans plafond explicite dans project.config).
+    """
+    override = project_config.get("max_critic_iterations")
+    if limits.unlimited_critic_iterations:
+        return int(override) if override is not None else None
+    capped = min(int(override), limits.max_critic_iterations) if override is not None else None
+    return capped or min(channel_max, limits.max_critic_iterations)
+
+
+def resolve_display_max_critic_iterations(
+    effective_max: int | None,
+    *,
+    configured_override: int | None = None,
+) -> int:
+    """Nombre de lignes planifiées à afficher (défaut 5 si illimité)."""
+    if effective_max is not None:
+        return effective_max
+    if configured_override is not None:
+        return configured_override
+    return DEFAULT_DISPLAY_CRITIC_ITERATIONS
 
 
 async def count_user_channels(session: AsyncSession, user_id: uuid.UUID) -> int:

@@ -298,6 +298,7 @@ export interface PipelinePlanResponse {
   iteration_revision: string[]
   post_production: string[]
   max_iterations: number
+  max_iterations_unlimited?: boolean
 }
 
 export interface BeatValidationResolved {
@@ -360,6 +361,8 @@ export interface VisualBeat {
   style_hint?: string
   on_screen_text?: string
   duration_hint_s?: number | null
+  diagram_labels?: Array<{ text?: string; position?: string }>
+  diagram_brief?: { layout?: string; key_elements?: string[]; fallback_visual_type?: string }
 }
 
 export interface ScenarioSegment {
@@ -391,6 +394,39 @@ export interface ResearchBrief {
   narrative_angles: string[]
   confidence: number
   niche_risk: string
+}
+
+export interface OutlineSegment {
+  order: number
+  title: string
+  duration_s: number
+  needs_voice: boolean
+  needs_music: boolean
+  mood: string
+  hook_type?: string | null
+  strip_source_audio: boolean
+  intent: string
+}
+
+export interface EditorialOutline {
+  title: string
+  description: string
+  segments: OutlineSegment[]
+  total_duration_s: number
+}
+
+export interface ProjectMetadata {
+  title: string
+  description: string
+  tags: string[]
+  chapters: Array<{ start_s?: number; title?: string }>
+}
+
+export interface ThumbnailCandidate {
+  local_path: string | null
+  prompt: string | null
+  attribution: string | null
+  primary: boolean
 }
 
 export interface Scenario {
@@ -605,11 +641,17 @@ export async function createProject(
   channelId: string,
   theme: string,
   target_duration_seconds: number,
+  config?: Record<string, unknown>,
 ): Promise<Project> {
   return apiJson<Project>(`${BASE}/projects`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ channel_id: channelId, theme, target_duration_seconds }),
+    body: JSON.stringify({
+      channel_id: channelId,
+      theme,
+      target_duration_seconds,
+      config,
+    }),
   })
 }
 
@@ -662,6 +704,14 @@ export async function updateProjectMaxIterations(projectId: string, maxIteration
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ max_critic_iterations: maxIterations }),
+  })
+}
+
+export async function clearProjectMaxIterations(projectId: string): Promise<Project> {
+  return apiJson<Project>(`${BASE}/projects/${projectId}/config`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ max_critic_iterations: null }),
   })
 }
 
@@ -724,6 +774,10 @@ export async function listYoutubeChannels(channelId?: string): Promise<YouTubeCh
   return apiJson<YouTubeChannelItem[]>(`${BASE}/channels/youtube/list${q}`)
 }
 
+export async function disconnectYoutubeOAuth(channelId: string): Promise<void> {
+  await apiJson<{ status: string }>(`${BASE}/channels/${channelId}/youtube/oauth`, { method: 'DELETE' })
+}
+
 export async function patchOnboardingYoutube(
   channelId: string,
   data: { youtube_channel_id: string; youtube_channel_url?: string },
@@ -737,6 +791,13 @@ export async function patchOnboardingYoutube(
 
 export async function applyYoutubeBranding(channelId: string): Promise<void> {
   await apiJson<unknown>(`${BASE}/channels/${channelId}/apply-youtube-branding`, { method: 'POST' })
+}
+
+export async function skipOnboardingStep(
+  channelId: string,
+  step: 'youtube' | 'tiktok' | 'instagram',
+): Promise<Channel> {
+  return apiJson<Channel>(`${BASE}/channels/${channelId}/onboarding/skip/${step}`, { method: 'POST' })
 }
 
 export async function patchOnboardingTiktok(
@@ -785,12 +846,13 @@ export async function publishProject(projectId: string, platform: string): Promi
 
 export function projectScenarioUrl(
   projectId: string,
-  opts?: { scenarioId?: string; atAgent?: string },
+  opts?: { scenarioId?: string; atAgent?: string; iteration?: number },
 ): string {
   const base = `${BASE}/projects/${projectId}/scenario`
   const params = new URLSearchParams()
   if (opts?.scenarioId) params.set('scenario_id', opts.scenarioId)
   if (opts?.atAgent) params.set('at_agent', opts.atAgent)
+  if (opts?.iteration != null) params.set('iteration', String(opts.iteration))
   const qs = params.toString()
   return qs ? `${base}?${qs}` : base
 }

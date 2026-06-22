@@ -62,6 +62,7 @@ COHÉRENCE AUDIO-VISUELLE :
 - Synchronisation narration / changements d'images
 - Les transitions entre segments sont-elles fluides ?
 - Le rythme des changements d'images est-il adapté au discours ?
+- Changement visuel au moins toutes les 4 secondes (shorts) ?
 
 EXPRESSIVITÉ VOCALE :
 - La voix est-elle monotone sur toute la vidéo ?
@@ -90,7 +91,7 @@ Retourne UNIQUEMENT ce JSON valide (sans markdown, sans ```json) :
 Règles :
 - Si aucun problème détecté : issues = []
 - severity ∈ ["low", "medium", "high"]
-- type ∈ ["subtitle", "visual", "audio", "structure", "coherence"]
+- type ∈ ["subtitle", "visual", "audio", "structure", "coherence", "dynamism"]
 - timestamp_s : secondes approximatives dans la vidéo (0 si non applicable)
 - score entre 0 et 100 (qualité globale observée)
 - visual_coherence, subtitle_quality, rhythm : chacun entre 0 et 25

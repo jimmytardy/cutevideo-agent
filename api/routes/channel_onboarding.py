@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Any
+from typing import Any, Literal
+
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import RedirectResponse
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -38,12 +41,44 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/channels", tags=["channel-onboarding"])
 
+YOUTUBE_OAUTH_DONE_PATH = "/oauth/youtube/done"
+
+
+def _youtube_oauth_done_url(*, channel_id: str | None = None, error: str | None = None) -> str:
+    base = settings.api_base_url.rstrip("/")
+    params: dict[str, str] = {}
+    if channel_id:
+        params["channel_id"] = channel_id
+    if error:
+        params["error"] = error
+    else:
+        params["status"] = "ok"
+    return f"{base}{YOUTUBE_OAUTH_DONE_PATH}?{urlencode(params)}"
+
 
 def _config_from_brand_kit(brand_kit: dict[str, Any]) -> dict[str, Any]:
     return {
         "publishing": {"default_tags": brand_kit.get("default_tags", [])},
         "media_source_priority": brand_kit.get("media_source_priority"),
     }
+
+
+ONBOARDING_SKIP_NEXT: dict[str, str] = {
+    "youtube": "tiktok",
+    "tiktok": "instagram",
+    "instagram": "complete",
+}
+
+
+def _disable_platform_in_config(channel: Channel, platform: str) -> None:
+    cfg = dict(channel.config or {})
+    pub = dict(cfg.get("publishing") or {})
+    enabled = list(pub.get("enabled_platforms") or ["youtube", "tiktok", "instagram"])
+    pub["enabled_platforms"] = [p for p in enabled if p != platform]
+    cfg["publishing"] = pub
+    channel.config = cfg
+    if platform == "tiktok":
+        channel.tiktok_enabled = False
 
 
 @router.post("/onboarding/market-analysis", response_model=MarketAnalysisResponse)
@@ -177,11 +212,16 @@ async def youtube_oauth_callback(
     code: str = Query(...),
     state: str = Query(...),
     db: AsyncSession = Depends(get_db),
-) -> dict[str, str]:
+) -> RedirectResponse:
     try:
         payload = decode_oauth_state(state, expected_purpose="youtube_connect")
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return RedirectResponse(
+            url=_youtube_oauth_done_url(error=str(exc)),
+            status_code=status.HTTP_302_FOUND,
+        )
+
+    channel_id_str = payload.get("channel_id")
 
     try:
         refresh_token = youtube_branding.exchange_oauth_code(
@@ -190,9 +230,11 @@ async def youtube_oauth_callback(
         )
     except Exception as e:
         logger.error("OAuth YouTube échoué : %s", e)
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from e
+        return RedirectResponse(
+            url=_youtube_oauth_done_url(channel_id=channel_id_str, error=str(e)),
+            status_code=status.HTTP_302_FOUND,
+        )
 
-    channel_id_str = payload.get("channel_id")
     if channel_id_str:
         await db.execute(
             update(Channel)
@@ -201,7 +243,10 @@ async def youtube_oauth_callback(
         )
         await db.commit()
 
-    return {"status": "ok", "refresh_token_stored": bool(channel_id_str)}
+    return RedirectResponse(
+        url=_youtube_oauth_done_url(channel_id=channel_id_str),
+        status_code=status.HTTP_302_FOUND,
+    )
 
 
 @router.get("/youtube/list", response_model=list[YouTubeChannelItem])
@@ -222,6 +267,18 @@ async def list_youtube_channels(
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e)) from e
 
     return [YouTubeChannelItem(**item) for item in items]
+
+
+@router.delete("/{channel_id}/youtube/oauth")
+async def disconnect_youtube_oauth(
+    channel_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict[str, str]:
+    channel = await _get_channel_for_user(db, channel_id, current_user)
+    channel.youtube_refresh_token = None
+    await db.commit()
+    return {"status": "ok"}
 
 
 @router.patch("/{channel_id}/onboarding/youtube", response_model=ChannelResponse)
@@ -272,6 +329,24 @@ async def apply_youtube_branding(
     _asyncio.create_task(generate_and_upload_banner(channel))
 
     return {"status": "applied", "youtube_channel_id": channel.youtube_channel_id}
+
+
+@router.post("/{channel_id}/onboarding/skip/{step}", response_model=ChannelResponse)
+async def skip_onboarding_step(
+    channel_id: uuid.UUID,
+    step: Literal["youtube", "tiktok", "instagram"],
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Channel:
+    channel = await _get_channel_for_user(db, channel_id, current_user)
+    next_step = ONBOARDING_SKIP_NEXT.get(step)
+    if not next_step:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Étape invalide")
+    _disable_platform_in_config(channel, step)
+    channel.onboarding_step = next_step
+    await db.commit()
+    await db.refresh(channel)
+    return channel
 
 
 @router.patch("/{channel_id}/onboarding/tiktok", response_model=ChannelResponse)

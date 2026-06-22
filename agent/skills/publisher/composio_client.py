@@ -30,26 +30,48 @@ def tiktok_is_connected(channel: Channel) -> bool:
     return bool(channel.tiktok_enabled and channel.composio_tiktok_account_id)
 
 
+def _connection_request_payload(connection_request: Any) -> dict[str, str]:
+    redirect_url = getattr(connection_request, "redirect_url", None)
+    connection_id = getattr(connection_request, "id", None)
+    if not redirect_url or not connection_id:
+        raise RuntimeError("Réponse Composio OAuth TikTok incomplète")
+    return {"redirect_url": str(redirect_url), "connection_id": str(connection_id)}
+
+
 async def initiate_tiktok_oauth(channel: Channel) -> dict[str, str]:
     """Démarre le flux OAuth Composio pour lier un compte TikTok à la chaîne."""
 
     def _initiate() -> dict[str, str]:
         composio = _get_composio()
-        if hasattr(composio, "connected_accounts") and hasattr(composio.connected_accounts, "initiate"):
-            connection_request = composio.connected_accounts.initiate(
+
+        # SDK Composio >= 1.0 : toolkit slug + auth_config_id (plus de param toolkit= sur initiate).
+        if hasattr(composio, "toolkits") and hasattr(composio.toolkits, "authorize"):
+            connection_request = composio.toolkits.authorize(
                 user_id=channel.composio_user_id,
                 toolkit="tiktok",
             )
-            return {
-                "redirect_url": connection_request.redirect_url,
-                "connection_id": connection_request.id,
-            }
+            return _connection_request_payload(connection_request)
+
+        auth_config_id = settings.composio_tiktok_auth_config_id or None
+        if auth_config_id and hasattr(composio.connected_accounts, "link"):
+            connection_request = composio.connected_accounts.link(
+                user_id=channel.composio_user_id,
+                auth_config_id=auth_config_id,
+                allow_multiple=True,
+            )
+            return _connection_request_payload(connection_request)
+
+        if auth_config_id and hasattr(composio.connected_accounts, "initiate"):
+            connection_request = composio.connected_accounts.initiate(
+                user_id=channel.composio_user_id,
+                auth_config_id=auth_config_id,
+                allow_multiple=True,
+            )
+            return _connection_request_payload(connection_request)
+
         session = composio.create(user_id=channel.composio_user_id, toolkits=["tiktok"])
         auth = session.authorize("tiktok")
-        return {
-            "redirect_url": auth.redirect_url,
-            "connection_id": auth.id,
-        }
+        return _connection_request_payload(auth)
 
     return await _run_sync(_initiate)
 
@@ -59,11 +81,11 @@ async def wait_for_tiktok_connection(connection_id: str, channel: Channel) -> st
 
     def _wait() -> str:
         composio = _get_composio()
-        if hasattr(composio, "connected_accounts") and hasattr(
-            composio.connected_accounts, "wait_for_connection"
-        ):
-            connection_request = composio.connected_accounts.wait_for_connection(connection_id)
-            return connection_request.id
+        if hasattr(composio.connected_accounts, "wait_for_connection"):
+            connected_account = composio.connected_accounts.wait_for_connection(connection_id)
+            account_id = getattr(connected_account, "id", None)
+            if account_id:
+                return str(account_id)
 
         accounts = composio.connected_accounts.list(
             user_ids=[channel.composio_user_id],
@@ -72,7 +94,7 @@ async def wait_for_tiktok_connection(connection_id: str, channel: Channel) -> st
         )
         items = accounts.items if hasattr(accounts, "items") else accounts
         if items:
-            return items[0].id
+            return str(items[0].id)
         raise RuntimeError("Aucun compte TikTok connecté après OAuth")
 
     return await _run_sync(_wait)

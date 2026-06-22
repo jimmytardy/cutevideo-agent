@@ -253,6 +253,7 @@ async def get_queue_snapshot(
     *,
     limit: int = 50,
     user_id: uuid.UUID | None = None,
+    is_admin: bool = False,
 ) -> list[dict[str, Any]]:
     await queue.connect()
     entries = await queue.client.zrange(PIPELINE_ZQUEUE, 0, limit - 1, withscores=True)
@@ -275,7 +276,7 @@ async def get_queue_snapshot(
         if project_channel is None:
             continue
         project, channel = project_channel
-        if user_id is not None and channel.user_id != user_id:
+        if not is_admin and user_id is not None and channel.user_id != user_id:
             continue
         config = project.config or {}
         snapshot.append(

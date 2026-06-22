@@ -11,6 +11,11 @@ logger = logging.getLogger(__name__)
 
 API_URL = "https://pixabay.com/api/"
 MediaType = Literal["image", "video"]
+VideoOrientation = Literal["landscape", "portrait"]
+
+
+def _pixabay_orientation(orientation: VideoOrientation) -> str:
+    return "vertical" if orientation == "portrait" else "horizontal"
 
 
 async def search(
@@ -18,6 +23,7 @@ async def search(
     period: str = "",
     *,
     media_type: MediaType = "image",
+    orientation: VideoOrientation = "landscape",
 ) -> list[dict]:
     """Recherche sur Pixabay — photos ou vidéos libres de droits."""
     if not settings.pixabay_api_key:
@@ -26,16 +32,20 @@ async def search(
 
     query = " ".join(keywords[:3])
     if media_type == "video":
-        return await _search_videos(query)
-    return await _search_photos(query)
+        return await _search_videos(query, orientation=orientation)
+    return await _search_photos(query, orientation=orientation)
 
 
-async def _search_photos(query: str) -> list[dict]:
+async def _search_photos(
+    query: str,
+    *,
+    orientation: VideoOrientation = "landscape",
+) -> list[dict]:
     params = {
         "key": settings.pixabay_api_key,
         "q": query,
         "image_type": "photo",
-        "orientation": "horizontal",
+        "orientation": _pixabay_orientation(orientation),
         "per_page": 10,
         "safesearch": "true",
     }
@@ -71,12 +81,16 @@ async def _search_photos(query: str) -> list[dict]:
     return results
 
 
-async def _search_videos(query: str) -> list[dict]:
+async def _search_videos(
+    query: str,
+    *,
+    orientation: VideoOrientation = "landscape",
+) -> list[dict]:
     params = {
         "key": settings.pixabay_api_key,
         "q": query,
         "video_type": "film",
-        "orientation": "horizontal",
+        "orientation": _pixabay_orientation(orientation),
         "per_page": 10,
         "safesearch": "true",
     }

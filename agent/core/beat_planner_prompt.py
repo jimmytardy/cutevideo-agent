@@ -49,6 +49,11 @@ RÈGLES :
 - 1 beat = 1 idée visuelle unique
 - Diagrammes : diagram_labels obligatoires (1-6 entrées)
 - duration_hint_s >= valeur fournie dans le beat d'entrée
+- APPUIS-TEXTE (on_screen_text) : incrustation courte affichée à l'écran sur le plan.
+  Le remplir UNIQUEMENT sur les beats à information forte — une date clé ("1889"),
+  un chiffre marquant ("18 038 pièces"), un nom propre, ou un mot-choc du hook.
+  Maximum 1 à 4 mots, sans phrase ni ponctuation finale. Cadence : au plus ~1 beat
+  sur 3 ; laisser "" sur tous les autres (un texte permanent tue l'effet).
 """
 
 SCENARIO_NO_BEATS_NOTE = """

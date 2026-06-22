@@ -17,6 +17,23 @@ logger = logging.getLogger(__name__)
 METADATA_SYSTEM = """Tu es expert SEO YouTube. Tu écris des titres à fort taux de clic et des
 descriptions optimisées pour le référencement, fidèles au contenu. Tu réponds UNIQUEMENT en JSON valide."""
 
+METADATA_PROMPT_SHORT = """Rédige les métadonnées de publication de ce SHORT vertical (9:16).
+
+CHAÎNE : {channel_name} ({theme_category})
+SUJET : {theme}
+LANGUE : {language}
+FORMAT : YouTube Short / TikTok / Reels
+{research_block}
+STRUCTURE (segments) :
+{scenario_summary}
+
+Retourne UNIQUEMENT :
+{{
+  "title": "Titre accrocheur pour short, max 70 caractères",
+  "description": "Description courte 1-2 phrases avec #Shorts si pertinent",
+  "tags": ["shorts", "tag2", "..."]
+}}"""
+
 METADATA_PROMPT = """Rédige les métadonnées de publication de cette vidéo.
 
 CHAÎNE : {channel_name} ({theme_category})
@@ -97,7 +114,8 @@ class MetadataAgent(BaseAgent):
         scenario_summary = "\n".join(
             f"- {s.get('title', '')} ({int(s.get('duration_s') or 0)}s)" for s in segments[:12]
         )
-        prompt = METADATA_PROMPT.format(
+        prompt_template = METADATA_PROMPT_SHORT if ctx.is_short_project else METADATA_PROMPT
+        prompt = prompt_template.format(
             channel_name=ctx.channel.name,
             theme_category=ctx.theme_category,
             theme=ctx.theme,
@@ -108,6 +126,8 @@ class MetadataAgent(BaseAgent):
         title = (segments[0].get("title") if segments else None) or ctx.theme
         description = ctx.theme
         tags = list(ctx.channel_config.default_tags or [])
+        if ctx.is_short_project and "shorts" not in [t.lower() for t in tags]:
+            tags = ["shorts", *tags]
         try:
             raw = await self._call_claude(prompt, system=METADATA_SYSTEM, max_tokens=2048)
             data = self._parse_json(raw)

@@ -42,6 +42,7 @@ class PublisherAgent(BaseAgent):
                     select(Scenario)
                     .where(Scenario.project_id == ctx.project_id)
                     .order_by(Scenario.created_at.desc())
+                    .limit(1)
                 )
                 scenario = scenario_result.scalar_one_or_none()
 

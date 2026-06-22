@@ -55,6 +55,9 @@ class MediaAgent(BaseAgent):
             output: dict[str, Any] = {
                 "assets_count": len(assets),
                 "relevance_scores": self._relevance_log,
+                **self._build_media_run_stats(
+                    assets, ai_images_used=self._ai_images_used
+                ),
             }
             if self._media_gaps:
                 output["media_gaps"] = [g.to_dict() for g in self._media_gaps]
@@ -93,15 +96,51 @@ class MediaAgent(BaseAgent):
         self._segment_media_gaps = set()
         try:
             assets = await run_media_for_short_derivation(self, ctx, plan)
-            await self.end_run(run, {"assets_count": len(assets)})
+            await self.end_run(
+                run,
+                {
+                    "assets_count": len(assets),
+                    **self._build_media_run_stats(
+                        assets, ai_images_used=self._ai_images_used
+                    ),
+                },
+            )
             return assets
         except Exception as e:
             await self.fail_run(run, e)
             raise
 
     @staticmethod
+    def _requires_vertical(ctx: "PipelineContext") -> bool:
+        from agent.core.short_format import requires_vertical_output
+
+        return requires_vertical_output(ctx)
+
+    @staticmethod
     def _is_derivation(ctx: "PipelineContext") -> bool:
         return ctx.derivation_short_index is not None
+
+    @staticmethod
+    def _resolve_search_orientation(ctx: "PipelineContext") -> str:
+        if MediaAgent._is_derivation(ctx) or MediaAgent._requires_vertical(ctx):
+            return "portrait"
+        return "landscape"
+
+    @staticmethod
+    def _build_media_run_stats(
+        assets: list[MediaAsset],
+        *,
+        ai_images_used: int = 0,
+    ) -> dict[str, int]:
+        return {
+            "video_assets_count": sum(1 for a in assets if a.asset_type == "video"),
+            "image_assets_count": sum(
+                1 for a in assets if a.asset_type != "video" and a.source != "ai_image"
+            ),
+            "ai_generated_count": sum(1 for a in assets if a.source == "ai_image"),
+            "ai_images_used": ai_images_used,
+            "coverr_hits": sum(1 for a in assets if a.source == "coverr"),
+        }
 
     @staticmethod
     def _derivation_media_dir(ctx: "PipelineContext", order: int) -> Path:
@@ -243,6 +282,7 @@ class MediaAgent(BaseAgent):
         self._runway_clips_used = 0
         self._validation_brief = validation_brief
         self._search_anchor = await self._resolve_search_anchor(ctx, validation_brief)
+        self._search_orientation = self._resolve_search_orientation(ctx)
 
         pool_assets: list[MediaAsset] = []
         if ctx.channel_config.media_library.enabled:
@@ -315,6 +355,7 @@ class MediaAgent(BaseAgent):
         self._runway_clips_used = 0
         self._validation_brief = validation_brief
         self._search_anchor = await self._resolve_search_anchor(ctx, validation_brief)
+        self._search_orientation = self._resolve_search_orientation(ctx)
 
         lib_cfg = ctx.channel_config.media_library
         if lib_cfg.enabled:
@@ -1014,11 +1055,7 @@ class MediaAgent(BaseAgent):
             missing = max(image_target - selected_images, 0)
             if niche_early_ai and missing == 0:
                 missing = max(1, image_target)
-            aspect_ratio = (
-                "9:16"
-                if ctx.channel_config.production_mode == "shorts_only" or self._is_derivation(ctx)
-                else "16:9"
-            )
+            aspect_ratio = "9:16" if self._requires_vertical(ctx) else "16:9"
             from agent.skills.media.segment_beats_media import synthesize_segment_ai_prompt
 
             ai_prompt, ai_beat, ai_visual_type = await synthesize_segment_ai_prompt(
@@ -1054,13 +1091,18 @@ class MediaAgent(BaseAgent):
                 )
 
         runway_cfg = ctx.channel_config.runway
+        from agent.skills.video.montage_profile import is_short_montage
+
         missing_videos = video_target - sum(
             1 for item in selected if item.get("asset_type") == "video"
         )
+        runway_limit = runway_cfg.max_clips_per_video
+        if is_short_montage(ctx):
+            runway_limit = max(runway_limit, runway_cfg.max_clips_per_short)
         if (
             missing_videos > 0
             and runway_cfg.enabled
-            and self._runway_clips_used < runway_cfg.max_clips_per_video
+            and self._runway_clips_used < runway_limit
             and (not self._is_derivation(ctx) or self._derivation_allows_ai(ctx))
         ):
             runway_prompt = (
@@ -1068,7 +1110,7 @@ class MediaAgent(BaseAgent):
                 f"{validation_brief.subject_entity} — {' '.join(keywords[:4])}"
             )
             for _ in range(missing_videos):
-                if self._runway_clips_used >= runway_cfg.max_clips_per_video:
+                if self._runway_clips_used >= runway_limit:
                     break
                 runway_item = await self._generate_runway_clip(
                     runway_prompt, output_dir, runway_cfg, ctx
@@ -1093,11 +1135,7 @@ class MediaAgent(BaseAgent):
             and (not self._is_derivation(ctx) or self._derivation_allows_ai(ctx))
         ):
             remaining = assets_needed - len(selected)
-            aspect_ratio = (
-                "9:16"
-                if ctx.channel_config.production_mode == "shorts_only" or self._is_derivation(ctx)
-                else "16:9"
-            )
+            aspect_ratio = "9:16" if self._requires_vertical(ctx) else "16:9"
             from agent.skills.media.segment_beats_media import synthesize_segment_ai_prompt
 
             ai_prompt, ai_beat, ai_visual_type = await synthesize_segment_ai_prompt(
@@ -1407,6 +1445,7 @@ class MediaAgent(BaseAgent):
         media_type: str = "image",
     ) -> list[dict]:
         from agent.skills.media_sources import (
+            coverr,
             europeana,
             gallica,
             internet_archive,
@@ -1424,12 +1463,18 @@ class MediaAgent(BaseAgent):
             "unsplash": unsplash.search,
             "pexels": pexels.search,
             "pixabay": pixabay.search,
+            "coverr": coverr.search,
             "internet_archive": internet_archive.search,
             "nasa": nasa.search,
         }
         fn = source_map.get(source)
         if fn is None:
             return []
+        orientation = getattr(self, "_search_orientation", "landscape")
+        if source in ("pexels", "pixabay", "coverr"):
+            return await fn(
+                keywords, period, media_type=media_type, orientation=orientation  # type: ignore[arg-type]
+            )
         return await fn(keywords, period, media_type=media_type)
 
     async def _can_generate_ai_image(self, ctx: "PipelineContext", ai_cfg: Any) -> bool:
@@ -1639,6 +1684,12 @@ class MediaAgent(BaseAgent):
                 async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
                     if resp.status == 200:
                         dest.write_bytes(await resp.read())
+                        if item.get("source") == "coverr":
+                            video_id = item.get("coverr_video_id")
+                            if video_id:
+                                from agent.skills.media_sources.coverr import record_download
+
+                                await record_download(str(video_id))
                         return dest
         except Exception as e:
             logger.warning("Téléchargement échoué %s : %s", url, e)

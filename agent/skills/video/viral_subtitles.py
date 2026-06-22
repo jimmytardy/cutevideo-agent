@@ -33,6 +33,9 @@ class SubtitleStyleConfig:
     margin_v: int = 120
     play_res_x: int = 1080
     play_res_y: int = 1920
+    active_word_scale: int = 115
+    uppercase_highlight: bool = True
+    uppercase_word_scale: int = 120
 
 
 def group_words_into_lines(
@@ -90,7 +93,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     for line in lines:
         start = _seconds_to_ass_time(line.start)
         end = _seconds_to_ass_time(line.end)
-        karaoke_text = _build_karaoke_text(line.words)
+        karaoke_text = _build_karaoke_text(line.words, style)
         if karaoke_text:
             events.append(
                 f"Dialogue: 0,{start},{end},Viral,,0,0,0,,{karaoke_text}"
@@ -128,14 +131,21 @@ async def burn_ass_subtitles(
     output_path: Path,
 ) -> None:
     """Incruste les sous-titres ASS dans une vidéo via FFmpeg."""
+    from agent.skills.video.ffmpeg_runtime import (
+        ffmpeg_preset,
+        filter_thread_args,
+        thread_args,
+    )
     from agent.skills.video.ffmpeg_utils import _run_ffmpeg
 
     ass_escaped = str(ass_path.resolve()).replace("\\", "/").replace(":", "\\:")
     cmd = [
         "ffmpeg", "-y",
+        *filter_thread_args(),
         "-i", str(video_path),
         "-vf", f"ass={ass_escaped}",
-        "-c:v", "libx264", "-crf", "20", "-preset", "medium",
+        *thread_args(),
+        "-c:v", "libx264", "-crf", "20", "-preset", ffmpeg_preset(),
         "-c:a", "copy",
         "-movflags", "+faststart",
         str(output_path),
@@ -163,16 +173,27 @@ def style_from_config(subtitles_cfg: object) -> SubtitleStyleConfig:
         margin_v=int(data.get("margin_v", 120)),
         play_res_x=int(data.get("play_res_x", 1080)),
         play_res_y=int(data.get("play_res_y", 1920)),
+        active_word_scale=int(data.get("active_word_scale", 115)),
+        uppercase_highlight=bool(data.get("uppercase_highlight", True)),
+        uppercase_word_scale=int(data.get("uppercase_word_scale", 120)),
     )
 
 
-def _build_karaoke_text(words: list[WordSegment]) -> str:
+def _build_karaoke_text(words: list[WordSegment], style: SubtitleStyleConfig) -> str:
+    highlight = _hex_to_ass_color(style.highlight_color)
     parts: list[str] = []
     for w in words:
         duration_cs = max(1, int((w.end - w.start) * 100))
         safe = w.word.replace("{", "").replace("}", "").strip()
-        if safe:
-            parts.append(f"{{\\k{duration_cs}}}{safe}")
+        if not safe:
+            continue
+        scale = style.uppercase_word_scale if (
+            style.uppercase_highlight and safe.isupper() and len(safe) > 1
+        ) else style.active_word_scale
+        parts.append(
+            f"{{\\k{duration_cs}\\fscx{scale}\\fscy{scale}\\c{highlight}}}{safe}"
+            f"{{\\r\\fscx100\\fscy100}}"
+        )
     return " ".join(parts)
 
 

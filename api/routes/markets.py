@@ -18,11 +18,10 @@ async def list_market_analyses(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[MarketAnalysis]:
-    result = await db.execute(
-        select(MarketAnalysis)
-        .where(MarketAnalysis.user_id == current_user.id)
-        .order_by(MarketAnalysis.created_at.desc())
-    )
+    query = select(MarketAnalysis).order_by(MarketAnalysis.created_at.desc())
+    if not current_user.is_admin:
+        query = query.where(MarketAnalysis.user_id == current_user.id)
+    result = await db.execute(query)
     return list(result.scalars().all())
 
 
@@ -32,12 +31,10 @@ async def get_market_analysis(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> MarketAnalysis:
-    result = await db.execute(
-        select(MarketAnalysis).where(
-            MarketAnalysis.id == analysis_id,
-            MarketAnalysis.user_id == current_user.id,
-        )
-    )
+    query = select(MarketAnalysis).where(MarketAnalysis.id == analysis_id)
+    if not current_user.is_admin:
+        query = query.where(MarketAnalysis.user_id == current_user.id)
+    result = await db.execute(query)
     analysis = result.scalar_one_or_none()
     if not analysis:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analyse introuvable")

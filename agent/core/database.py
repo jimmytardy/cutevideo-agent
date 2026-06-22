@@ -73,6 +73,9 @@ class User(Base):
     )
     subscription_expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    is_admin: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
     agent_llm_preferences: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     stripe_customer_id: Mapped[str | None] = mapped_column(String, nullable=True)
     stripe_subscription_id: Mapped[str | None] = mapped_column(String, nullable=True)

@@ -138,6 +138,25 @@ def compute_target_beat_count(
     return max(min_beats, min(max_beats, raw))
 
 
+def dynamic_max_beats(
+    audio_duration_s: float,
+    *,
+    min_image_duration_s: float,
+    base_max: int,
+    hard_ceiling: int = 20,
+) -> int:
+    """Plafond de beats adapté à la durée du segment.
+
+    Un cap fixe (base_max) tronque les segments longs : un bloc de 68 s plafonné
+    à 8 beats force des plans de 8,5 s+, au-delà de max_static_shot_s, d'où des
+    images statiques interminables. On élargit le plafond jusqu'au nombre de plans
+    que la durée peut soutenir sans descendre sous min_image_duration_s, borné par
+    hard_ceiling (garde-fou coût/CPU). Les segments courts gardent base_max.
+    """
+    sustainable = int(audio_duration_s // max(min_image_duration_s, 0.5))
+    return max(base_max, min(sustainable, hard_ceiling))
+
+
 def beat_slot_seconds(
     *,
     min_image_duration_s: float,

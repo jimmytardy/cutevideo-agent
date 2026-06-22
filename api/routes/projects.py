@@ -21,7 +21,7 @@ from agent.core.pipeline_launcher import dequeue_pipeline, enqueue_pipeline, req
 from agent.core.pipeline_queue import PipelineAlreadyQueuedError, get_queue_status, is_queued, remove_from_queue
 from agent.core.pipeline_restart import critic_rework_iteration
 from agent.core.pipeline_reset import PIPELINE_STEPS, RUN_FROM_STEPS, cleanup_from_step, delete_project_completely
-from api.authorization import get_user_channel, get_user_project
+from api.authorization import channel_owner_clause, get_user_channel, get_user_project
 from api.deps import get_current_user
 from api.models import (
     AudioFileResponse,
@@ -40,8 +40,11 @@ from api.models import (
     ProjectCreate,
     ProjectResponse,
     PublishRequest,
+    OutlineResponse,
+    ProjectMetadataResponse,
     ResearchBriefResponse,
     ScenarioResponse,
+    ThumbnailCandidateResponse,
     VideoResponse,
 )
 
@@ -118,7 +121,7 @@ async def list_projects(
     query = (
         select(Project, Channel.name)
         .join(Channel, Channel.id == Project.channel_id)
-        .where(Channel.user_id == current_user.id)
+        .where(channel_owner_clause(current_user))
         .order_by(Project.created_at.desc())
         .limit(limit)
     )
@@ -146,11 +149,18 @@ async def create_project(
     if not channel.is_active:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Chaîne inactive")
 
+    project_config = dict(body.config or {})
+    if (
+        body.target_duration_seconds <= 120
+        and project_config.get("format") not in ("short_standalone", "short", "long")
+    ):
+        project_config["format"] = "short_standalone"
+
     project = Project(
         channel_id=body.channel_id,
         theme=body.theme,
         target_duration_seconds=body.target_duration_seconds,
-        config=body.config,
+        config=project_config or None,
         status="pending",
     )
     db.add(project)
@@ -562,22 +572,38 @@ async def run_from_step(
 
 @router.patch("/{project_id}/config", response_model=ProjectResponse)
 async def update_project_config(
-    project_id: uuid.UUID, body: ProjectConfigUpdate, db: AsyncSession = Depends(get_db)
+    project_id: uuid.UUID,
+    body: ProjectConfigUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> ProjectResponse:
+    from agent.core.subscription import get_user_subscription_limits
+
+    project = await get_user_project(db, project_id, current_user)
     result = await db.execute(
-        select(Project, Channel.name)
-        .join(Channel, Channel.id == Project.channel_id)
-        .where(Project.id == project_id)
+        select(Channel.name).where(Channel.id == project.channel_id)
     )
-    row = result.one_or_none()
-    if not row:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Projet introuvable")
-    project, channel_name = row
+    channel_name = result.scalar_one()
+    limits = await get_user_subscription_limits(db, current_user.id)
     config = dict(project.config or {})
-    if body.max_critic_iterations is not None:
-        if body.max_critic_iterations < 1:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="max_critic_iterations doit être ≥ 1")
-        config["max_critic_iterations"] = body.max_critic_iterations
+    if "max_critic_iterations" in body.model_fields_set:
+        if body.max_critic_iterations is None:
+            if not limits.unlimited_critic_iterations:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Seuls les comptes admin peuvent retirer le plafond d'itérations",
+                )
+            config.pop("max_critic_iterations", None)
+        else:
+            if body.max_critic_iterations < 1:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="max_critic_iterations doit être ≥ 1",
+                )
+            capped = body.max_critic_iterations
+            if not limits.unlimited_critic_iterations:
+                capped = min(capped, limits.max_critic_iterations)
+            config["max_critic_iterations"] = capped
     project.config = config
     await db.commit()
     await db.refresh(project)
@@ -589,21 +615,25 @@ async def get_project_scenario(
     project_id: uuid.UUID,
     scenario_id: uuid.UUID | None = Query(default=None),
     at_agent: str | None = Query(default=None),
+    iteration: int | None = Query(default=None, ge=1),
     db: AsyncSession = Depends(get_db),
 ) -> ScenarioResponse | None:
     from agent.core.scenario_snapshot import resolve_scenario_id_for_agent_run
 
     resolved_id = scenario_id
     if resolved_id is None and at_agent:
-        run_result = await db.execute(
+        run_query = (
             select(AgentRun)
             .where(
                 AgentRun.project_id == project_id,
                 AgentRun.agent_name == at_agent,
                 AgentRun.status == "success",
             )
-            .order_by(AgentRun.ended_at.desc())
-            .limit(1)
+        )
+        if iteration is not None:
+            run_query = run_query.where(AgentRun.iteration == iteration)
+        run_result = await db.execute(
+            run_query.order_by(AgentRun.ended_at.desc()).limit(1)
         )
         run = run_result.scalar_one_or_none()
         resolved_id = await resolve_scenario_id_for_agent_run(run, project_id, db)
@@ -635,6 +665,45 @@ async def get_project_research(
     if not brief or not isinstance(brief, dict):
         return None
     return ResearchBriefResponse.model_validate(brief)
+
+
+@router.get("/{project_id}/outline", response_model=OutlineResponse | None)
+async def get_project_outline(
+    project_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+) -> OutlineResponse | None:
+    project = await db.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Projet introuvable")
+    outline = (project.config or {}).get("scenario_outline")
+    if not outline or not isinstance(outline, dict) or not outline.get("segments"):
+        return None
+    return OutlineResponse.model_validate(outline)
+
+
+@router.get("/{project_id}/metadata", response_model=ProjectMetadataResponse | None)
+async def get_project_metadata(
+    project_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+) -> ProjectMetadataResponse | None:
+    project = await db.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Projet introuvable")
+    metadata = (project.config or {}).get("youtube_metadata")
+    if not metadata or not isinstance(metadata, dict):
+        return None
+    return ProjectMetadataResponse.model_validate(metadata)
+
+
+@router.get("/{project_id}/thumbnails", response_model=list[ThumbnailCandidateResponse])
+async def get_project_thumbnails(
+    project_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+) -> list[ThumbnailCandidateResponse]:
+    project = await db.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Projet introuvable")
+    raw = (project.config or {}).get("thumbnail_candidates")
+    if not isinstance(raw, list):
+        return []
+    return [ThumbnailCandidateResponse.model_validate(item) for item in raw if isinstance(item, dict)]
 
 
 def _brief_to_response(
@@ -775,7 +844,10 @@ async def get_project_pipeline_plan(
 ) -> PipelinePlanResponse:
     from agent.core.channel_config import resolve_channel_config
     from agent.core.pipeline_plan import plan_pipeline
-    from agent.core.subscription import get_user_subscription_limits
+    from agent.core.subscription import (
+        get_user_subscription_limits,
+        resolve_effective_max_critic_iterations,
+    )
 
     project = await get_user_project(db, project_id, current_user)
     channel = await get_user_channel(db, project.channel_id, current_user)
@@ -784,11 +856,16 @@ async def get_project_pipeline_plan(
     channel_config = resolve_channel_config(channel, subscription_limits=limits)
 
     config = project.config or {}
+    effective_max = resolve_effective_max_critic_iterations(
+        project_config=config,
+        channel_max=channel_config.max_critic_iterations,
+        limits=limits,
+    )
     plan = plan_pipeline(
         channel_config,
         project_format=config.get("format"),
         target_duration_seconds=project.target_duration_seconds,
-        max_iterations_override=config.get("max_critic_iterations"),
+        effective_max=effective_max,
     )
     return PipelinePlanResponse(**plan)
 
