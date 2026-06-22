@@ -16,18 +16,15 @@ const sharedShape = {
   borderRadius: 10,
 }
 
-function componentOverrides(mode: 'light' | 'dark'): Theme['components'] {
-  const cardBorder = mode === 'light' ? '1px solid #E2E8F0' : '1px solid rgba(255,255,255,0.08)'
-  const cardShadow =
-    mode === 'light'
-      ? '0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04)'
-      : 'none'
-
+function componentOverrides(): Theme['components'] {
   return {
     MuiCssBaseline: {
       styleOverrides: {
         body: {
-          scrollbarColor: mode === 'light' ? '#CBD5E1 transparent' : '#334155 transparent',
+          scrollbarColor: '#CBD5E1 transparent',
+          'html[data-color-scheme="dark"] &': {
+            scrollbarColor: '#334155 transparent',
+          },
         },
       },
     },
@@ -35,8 +32,12 @@ function componentOverrides(mode: 'light' | 'dark'): Theme['components'] {
       styleOverrides: {
         root: {
           backgroundImage: 'none',
-          border: cardBorder,
-          boxShadow: cardShadow,
+          border: '1px solid',
+          borderColor: 'divider',
+          boxShadow: 'none',
+          'html[data-color-scheme="light"] &, html:not([data-color-scheme]) &': {
+            boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04)',
+          },
         },
       },
     },
@@ -67,7 +68,12 @@ function componentOverrides(mode: 'light' | 'dark'): Theme['components'] {
         root: {
           '& .MuiTableCell-head': {
             fontWeight: 600,
-            bgcolor: mode === 'light' ? '#F1F5F9' : 'rgba(255,255,255,0.04)',
+          },
+          'html[data-color-scheme="light"] &, html:not([data-color-scheme]) & .MuiTableCell-head': {
+            backgroundColor: '#F1F5F9',
+          },
+          'html[data-color-scheme="dark"] & .MuiTableCell-head': {
+            backgroundColor: 'rgba(255,255,255,0.04)',
           },
         },
       },
@@ -93,27 +99,14 @@ export function createAppTheme(): Theme {
     colorSchemes: {
       light: {
         palette: lightPalette,
-        components: componentOverrides('light'),
       },
       dark: {
         palette: darkPalette,
-        components: componentOverrides('dark'),
       },
     },
     typography: sharedTypography,
     shape: sharedShape,
-    components: {
-      MuiChip: {
-        styleOverrides: {
-          root: { fontWeight: 600 },
-        },
-      },
-      MuiButton: {
-        styleOverrides: {
-          root: { fontWeight: 600, textTransform: 'none', borderRadius: 8 },
-        },
-      },
-    },
+    components: componentOverrides(),
   })
 }
 
