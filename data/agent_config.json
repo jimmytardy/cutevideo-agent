@@ -191,12 +191,40 @@
       ]
     },
     "priority_by_visual_type": {
-      "sports_action": ["pexels", "pixabay", "wikimedia", "unsplash"],
-      "stadium_establishing": ["pexels", "unsplash", "pixabay", "wikimedia"],
-      "space_photo": ["nasa", "wikimedia", "pexels"],
-      "archival_footage": ["gallica", "europeana", "wikimedia", "internet_archive"],
-      "crime_documentary": ["wikimedia", "pexels", "internet_archive", "pixabay"],
-      "artwork": ["europeana", "wikimedia", "unsplash"]
+      "sports_action": [
+        "pexels",
+        "pixabay",
+        "wikimedia",
+        "unsplash"
+      ],
+      "stadium_establishing": [
+        "pexels",
+        "unsplash",
+        "pixabay",
+        "wikimedia"
+      ],
+      "space_photo": [
+        "nasa",
+        "wikimedia",
+        "pexels"
+      ],
+      "archival_footage": [
+        "gallica",
+        "europeana",
+        "wikimedia",
+        "internet_archive"
+      ],
+      "crime_documentary": [
+        "wikimedia",
+        "pexels",
+        "internet_archive",
+        "pixabay"
+      ],
+      "artwork": [
+        "europeana",
+        "wikimedia",
+        "unsplash"
+      ]
     },
     "ai_only_visual_types": [
       "scientific_diagram",
@@ -268,7 +296,8 @@
         "fast_model": "imagen-3.0-fast-generate-001"
       },
       "license": "synthetic-ai-generated"
-    }
+    },
+    "forced_best_min_score": 40
   },
   "editorial_calendar": {
     "publication_lead_days": 1
@@ -434,7 +463,7 @@
   "audio_mix": {
     "music_volume_with_voice": 0.06,
     "music_volume_ambient_only": 0.04,
-    "music_volume_no_voice": 0.10,
+    "music_volume_no_voice": 0.1,
     "ducking_enabled": true
   },
   "sfx": {
@@ -453,8 +482,16 @@
       "makeup_db": 2
     },
     "eq": [
-      { "f": 200, "g": -2, "w": 1 },
-      { "f": 3000, "g": 2, "w": 2 }
+      {
+        "f": 200,
+        "g": -2,
+        "w": 1
+      },
+      {
+        "f": 3000,
+        "g": 2,
+        "w": 2
+      }
     ]
   }
 }

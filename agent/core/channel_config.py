@@ -101,6 +101,9 @@ class MediaSourcesConfig(BaseModel):
     relevance_min_score_high_precision: int = 75
     niche_threshold_candidates: int = 2
     enable_post_selection_audit: bool = True
+    # Plancher de qualité : on n'expédie jamais un visuel (stock ou IA) dont le
+    # meilleur score de pertinence est sous ce seuil — il devient un media gap.
+    forced_best_min_score: int = 40
 
 
 class VisualBeatsConfig(BaseModel):
@@ -506,6 +509,7 @@ def resolve_channel_config(
         enable_post_selection_audit=bool(
             media_global.get("enable_post_selection_audit", True)
         ),
+        forced_best_min_score=int(media_global.get("forced_best_min_score", 40)),
     )
 
     kit = channel.brand_kit or {}

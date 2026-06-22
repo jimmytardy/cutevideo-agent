@@ -40,7 +40,12 @@ Retourne UNIQUEMENT :
 
 RÈGLES :
 - Un objet par beat fourni (même order, même phrase_anchor, même spoken_text)
-- Varier visual_type — pas de documentary_photo sur tous les beats
+- PERTINENCE AVANT VARIÉTÉ : si le beat a un référent concret photographiable (lieu, monument, statue,
+  espèce, personne, objet, paysage, œuvre), choisis un type PHOTO RÉELLE (documentary_photo,
+  establishing_shot, aerial, archival_footage, artwork…). N'emploie un type diagramme/IA
+  (scientific_diagram, cross_section, infographic, timeline, map) QUE pour une notion abstraite/invisible
+  sans référent photographiable. Un visuel hors-sujet "varié" est pire qu'une photo réelle du sujet.
+- Varier les ANGLES/plans d'un même sujet réel plutôt que d'introduire un diagramme hors-sujet pour varier
 - 1 beat = 1 idée visuelle unique
 - Diagrammes : diagram_labels obligatoires (1-6 entrées)
 - duration_hint_s >= valeur fournie dans le beat d'entrée

@@ -196,7 +196,7 @@ async def process_segment_beats(
             else:
                 logger.info("Pool reuse désactivé (critique visuelle) — beat %d", beat.order)
 
-        beat_keywords = _beat_keywords(beat, keywords)
+        beat_keywords = agent._anchored_keywords(_beat_keywords(beat, keywords))
         video_target = _beat_video_target(beat, ms_cfg)
         allows_search = not is_derivation or getattr(ctx, "short_derivation_mode", None) != "reuse_pool_only"
         allows_ai = not is_derivation or getattr(ctx, "short_derivation_mode", None) == "full"

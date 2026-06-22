@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from agent.core.api_keys import fetch_api_key, parse_gcp_credentials
 from agent.core.base_agent import BaseAgent
+from agent.core.concurrency import bounded_gather
 from agent.core.config import get_storage_settings
 from agent.core.database import AsyncSessionFactory, MediaAsset, Project, Scenario
 from agent.core.media_validation import MediaValidationBrief, resolve_validation_brief
@@ -26,6 +27,7 @@ from agent.skills.media.scenario_media_gap import (
 
 if TYPE_CHECKING:
     from agent.core.visual_beats import VisualBeat
+    from agent.skills.media_sources.ai.prompt_synthesizer import SearchAnchor
 
 logger = logging.getLogger(__name__)
 
@@ -162,6 +164,51 @@ class MediaAgent(BaseAgent):
         gcp_ctx = await fetch_api_key(ctx.user_id, "gcp", purpose="ai_image", tier="paid")
         self._gcp_credentials = parse_gcp_credentials(gcp_ctx)
 
+    async def _resolve_search_anchor(
+        self, ctx: "PipelineContext", validation_brief: MediaValidationBrief
+    ) -> "SearchAnchor":
+        """Traduit l'entité concrète du sujet en ancre de recherche stock anglaise.
+
+        Un seul appel Gemini (gratuit, caché) par vidéo : l'entité est stable.
+        """
+        from agent.skills.media_sources.ai.prompt_synthesizer import (
+            SearchAnchor,
+            translate_search_anchor,
+        )
+
+        if not validation_brief.subject_entity.strip():
+            return SearchAnchor()
+        cache_dir = Path(f"./tmp/{ctx.project_id}/search_anchor_cache")
+        return await translate_search_anchor(
+            subject_entity=validation_brief.subject_entity,
+            must_include=validation_brief.must_include,
+            api_key=getattr(self, "_gemini_api_key", "") or None,
+            cache_dir=cache_dir,
+        )
+
+    def _anchor_subject(self, ctx: "PipelineContext") -> str:
+        """Sujet d'ancrage pour la recherche stock : entité EN traduite sinon thème."""
+        anchor = getattr(self, "_search_anchor", None)
+        if anchor is not None and anchor.is_usable:
+            return anchor.anchor_en
+        return ctx.theme
+
+    def _anchored_keywords(self, keywords: list[str]) -> list[str]:
+        """Préfixe les mots-clés de segment avec les termes EN de l'ancre (priorité EN)."""
+        anchor = getattr(self, "_search_anchor", None)
+        if anchor is None or not anchor.is_usable:
+            return list(keywords)
+        lead = list(anchor.terms_en)
+        if anchor.anchor_en and anchor.anchor_en not in lead:
+            lead.insert(0, anchor.anchor_en)
+        seen = {k.lower() for k in lead}
+        merged = list(lead)
+        for kw in keywords:
+            if kw and kw.lower() not in seen:
+                seen.add(kw.lower())
+                merged.append(kw)
+        return merged
+
     async def _search_all_segments_derivation(
         self, ctx: "PipelineContext", scenario: Scenario
     ) -> list[MediaAsset]:
@@ -195,6 +242,7 @@ class MediaAgent(BaseAgent):
         self._ai_images_used = 0
         self._runway_clips_used = 0
         self._validation_brief = validation_brief
+        self._search_anchor = await self._resolve_search_anchor(ctx, validation_brief)
 
         pool_assets: list[MediaAsset] = []
         if ctx.channel_config.media_library.enabled:
@@ -208,7 +256,7 @@ class MediaAgent(BaseAgent):
             )
             for segment in segments
         ]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        results = await bounded_gather(*tasks, return_exceptions=True)
 
         for result in results:
             if isinstance(result, MediaRelevanceScoringError):
@@ -266,6 +314,7 @@ class MediaAgent(BaseAgent):
         self._ai_images_used = 0
         self._runway_clips_used = 0
         self._validation_brief = validation_brief
+        self._search_anchor = await self._resolve_search_anchor(ctx, validation_brief)
 
         lib_cfg = ctx.channel_config.media_library
         if lib_cfg.enabled:
@@ -285,7 +334,7 @@ class MediaAgent(BaseAgent):
             )
             for segment in segments
         ]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        results = await bounded_gather(*tasks, return_exceptions=True)
 
         for result in results:
             if isinstance(result, MediaRelevanceScoringError):
@@ -541,6 +590,16 @@ class MediaAgent(BaseAgent):
                     )
                     await self._cleanup_ai_candidates(candidates, winner_item=best_item)
                     return AiImageResult(outcome="api_failed")
+            floor = ctx.channel_config.media_sources.forced_best_min_score
+            if best_score < floor:
+                # Plancher qualité : on n'expédie pas un visuel hors-sujet (ex. score 5).
+                # On échoue le segment → media gap → adaptation scénario.
+                logger.warning(
+                    "Segment %d : forced_best refusé (score %d < plancher %d) — gap",
+                    order, best_score, floor,
+                )
+                await self._cleanup_ai_candidates(candidates, winner_item=best_item)
+                return AiImageResult(outcome="api_failed")
             best_item["_relevance_validated"] = False
             best_item["_relevance_forced_fallback"] = True
             best_item["_relevance_score"] = best_score
@@ -692,10 +751,24 @@ class MediaAgent(BaseAgent):
         assets_needed: int,
         video_target: int,
     ) -> list[dict]:
+        floor = ctx.channel_config.media_sources.forced_best_min_score
         audited: list[dict] = []
         for item in selected:
             if item.get("_relevance_validated"):
                 audited.append(item)
+                continue
+            if item.get("_relevance_forced_fallback"):
+                # Déjà scoré à la génération : on applique le plancher qualité
+                # (et non le seuil strict) sans re-scorer. Sous le plancher → écarté
+                # (deviendra un media gap plutôt qu'un visuel hors-sujet à l'écran).
+                score = int(item.get("_relevance_score") or 0)
+                if score >= floor:
+                    audited.append(item)
+                else:
+                    logger.warning(
+                        "Audit : visuel forced_best écarté (score %d < plancher %d)",
+                        score, floor,
+                    )
                 continue
             validated = await self._validate_single_asset(
                 item,
@@ -757,7 +830,7 @@ class MediaAgent(BaseAgent):
                     period,
                     segment,
                     min_candidates,
-                    video_subject=ctx.theme,
+                    video_subject=self._anchor_subject(ctx),
                     media_type="video",
                     exclude_urls=rejected_urls,
                 )
@@ -771,7 +844,7 @@ class MediaAgent(BaseAgent):
                 period,
                 segment,
                 max(min_candidates, assets_needed),
-                video_subject=ctx.theme,
+                video_subject=self._anchor_subject(ctx),
                 media_type="image",
                 exclude_urls=rejected_urls,
             )
@@ -871,7 +944,7 @@ class MediaAgent(BaseAgent):
                 segment.get("order"),
             )
 
-        keywords = segment.get("search_keywords", [])
+        keywords = self._anchored_keywords(segment.get("search_keywords", []))
         period = segment.get("historical_period", "")
         order = segment.get("order", 0)
         assets_needed = ms_cfg.images_per_segment
@@ -1110,17 +1183,25 @@ class MediaAgent(BaseAgent):
         )
         if not assets:
             title = segment.get("title", "")
-            if order in self._segment_media_gaps:
-                logger.warning(
-                    "Segment %d (« %s ») : aucun média visuel — gap IA, scénario adapté",
-                    order, title,
+            if order not in self._segment_media_gaps:
+                # Aucun média retenu et l'IA n'a pas déjà posé de gap (ex. : stock
+                # sous le seuil sans relais IA). On dégrade en media gap plutôt que
+                # de faire échouer tout le pipeline : adapt_scenario_for_media_gaps
+                # réécrira le segment. Cohérent avec le filet « api_failed ».
+                self._media_gaps.append(
+                    MediaGap(
+                        segment_order=order,
+                        reason="no_media_above_threshold",
+                        attempts=0,
+                        prompt=(segment.get("narration_text") or title or "")[:500],
+                    )
                 )
-                return assets
-            raise RuntimeError(
-                f"Segment {order} (« {title} ») : aucun média retenu "
-                f"(seuil de pertinence ≥ {min_relevance}). "
-                "Vérifiez les mots-clés, les sources média ou abaissez relevance_min_score."
+                self._segment_media_gaps.add(order)
+            logger.warning(
+                "Segment %d (« %s ») : aucun média retenu (seuil ≥ %d) — gap, scénario adapté",
+                order, title, min_relevance,
             )
+            return assets
         return assets
 
     @staticmethod

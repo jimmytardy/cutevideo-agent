@@ -29,6 +29,7 @@ FREE_GEMINI_PURPOSES: frozenset[str] = frozenset(
         "llm_agent",
         "gemini_research",
         "gemini_tts",
+        "search_anchor_translation",
     }
 )
 

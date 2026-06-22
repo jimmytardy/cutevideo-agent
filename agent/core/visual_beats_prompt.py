@@ -1,6 +1,18 @@
 from __future__ import annotations
 
 VISUAL_BEATS_RULES = """
+RÈGLE PRIORITAIRE — PERTINENCE AVANT VARIÉTÉ :
+- Si le beat a un référent CONCRET PHOTOGRAPHIABLE (lieu, monument, statue, espèce animale/végétale,
+  personne réelle, objet, paysage, œuvre d'art, événement réel), choisis un type PHOTO RÉELLE :
+  documentary_photo, establishing_shot, aerial, archival_footage, press_photo, wildlife_action,
+  habitat_wide, portrait_historical, historical_artifact, artwork, museum_interior… selon le sujet.
+  Ces sujets existent en banque d'images (Unsplash/Pexels/Wikimedia/Gallica) : on veut la VRAIE image.
+- N'utilise les types DIAGRAMME/IA (scientific_diagram, cross_section, infographic, data_chart,
+  timeline, map, battle_map) QUE pour des notions ABSTRAITES/quantitatives/invisibles SANS référent
+  photographiable (un mécanisme interne, une statistique, une chronologie, un trajet sur carte).
+- Un visuel "varié" mais hors-sujet est PIRE qu'une photo réelle pertinente du sujet. La variété ne
+  doit jamais sacrifier la pertinence : mieux vaut deux angles photo réels du sujet qu'un diagramme inventé.
+
 VISUAL_BEATS (OBLIGATOIRE si needs_voice true) :
 - Chaque segment avec voix DOIT inclure visual_beats : liste ordonnée de plans visuels synchronisés à la narration
 - Short : {min_beats_short} à {max_beats} beats par segment | Long : 5 à {max_beats} beats pour segments explicatifs
@@ -13,14 +25,17 @@ VISUAL_BEATS (OBLIGATOIRE si needs_voice true) :
   - duration_hint_s OBLIGATOIRE : {min_diagram_duration_short} s (short) / {min_diagram_duration_long} s (long), plus si schéma dense
   - Max 1–2 diagrammes par segment explicatif
 - on_screen_text : rétrocompat (1 seul label court) si diagram_labels absent
-- Varier les visual_type — ne pas répéter documentary_photo sur tous les beats
+- Varier les visual_type SANS sacrifier la pertinence — varier les ANGLES/plans d'un même sujet réel
+  (gros plan, plan large, plan aérien, détail) plutôt que d'introduire un diagramme hors-sujet pour "varier"
 - 1 visual_beat = 1 idée visuelle UNIQUE — interdit 2 beats sur le même concept
-- Max 1 documentary_photo CONSÉCUTIF ; alterner photo / schéma / vidéo / carte
+- Pour un sujet photographiable, plusieurs documentary_photo (angles différents) sont ACCEPTÉS ; n'alterne
+  vers schéma/carte que si le beat porte réellement sur une notion abstraite
 - duration_hint_s par beat : défaut ≤ 6 s (sauf diagrammes ≥ min diagramme)
 - Segment 1 (hook) : question rhétorique obligatoire dans les ~15 premières secondes de narration
 - Structure narrative longue : arc tension → révélation → payoff explicite dans les titres de segments
 - Exploiter les 3 faits surprenants du brief recherche dans le hook ou segment 2
-- Segment explicatif (science, mécanisme) : au moins 1 scientific_diagram, infographic ou comparison
+- Segment explicatif (science, mécanisme INVISIBLE/abstrait) : au moins 1 scientific_diagram, infographic
+  ou comparison — MAIS si le sujet expliqué est un objet/lieu/être réel, garde la photo réelle du sujet
 - Chaîne sport : privilégier sports_action, stadium_establishing, sports_celebration, athlete_portrait
 - Chaîne true_crime : privilégier crime_documentary, courtroom, evidence_detail, document_closeup
 - Chaîne science/espace : privilégier space_photo, telescope_view, laboratory_scene, scientific_diagram
