@@ -42,9 +42,10 @@ WORKDIR /app
 RUN mkdir -p tmp output/long output/shorts/master output/shorts/platforms
 
 COPY scripts/docker-entrypoint.sh ./scripts/docker-entrypoint.sh
+COPY scripts/docker-entrypoint.worker.sh ./scripts/docker-entrypoint.worker.sh
 COPY scripts/docker-entrypoint.worker.dev.sh ./scripts/docker-entrypoint.worker.dev.sh
 COPY scripts/pipeline_worker.py ./scripts/pipeline_worker.py
-RUN chmod +x ./scripts/docker-entrypoint.sh ./scripts/docker-entrypoint.worker.dev.sh
+RUN chmod +x ./scripts/docker-entrypoint.sh ./scripts/docker-entrypoint.worker.sh ./scripts/docker-entrypoint.worker.dev.sh
 
 ENV PYTHONUNBUFFERED=1 \
     INTERNAL_API_URL=http://127.0.0.1:8000

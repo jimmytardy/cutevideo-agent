@@ -55,7 +55,7 @@ services:
       - local-network
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    entrypoint: ["./scripts/docker-entrypoint.worker.dev.sh"]
+    entrypoint: ["./scripts/docker-entrypoint.worker.sh"]
     restart: unless-stopped
     depends_on:
       shared-postgres:
