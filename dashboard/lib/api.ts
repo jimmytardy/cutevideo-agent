@@ -933,11 +933,14 @@ export interface HealthStatus {
 export interface SchedulerJob {
   id: string
   name: string
-  next_run_time: string | null
+  description?: string
+  schedule?: string
+  next_run_at: string | null
   last_run: {
     status: string
     started_at: string | null
     ended_at: string | null
+    duration_s?: number | null
     error: string | null
   } | null
 }
@@ -959,6 +962,10 @@ export async function fetchStorageStats(): Promise<StorageStats> {
 
 export async function fetchSchedulerJobs(): Promise<SchedulerJob[]> {
   return fetcher(`${BASE}/scheduler/jobs`)
+}
+
+export async function fetchUpcomingJobs(): Promise<SchedulerJob[]> {
+  return fetcher(`${BASE}/scheduler/upcoming`)
 }
 
 export async function fetchProjectsByStatus(status: string, limit = 20): Promise<Project[]> {

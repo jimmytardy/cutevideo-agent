@@ -146,48 +146,66 @@ function formatNextRun(iso: string | null): string {
   return `dans ${Math.round(diffH / 24)}j`
 }
 
+function lastRunGlyph(status: string): { label: string; color: 'success' | 'error' | 'default' } {
+  if (status === 'success' || status === 'completed') return { label: '✓', color: 'success' }
+  if (status === 'failed') return { label: '✗', color: 'error' }
+  return { label: '…', color: 'default' }
+}
+
 function CronSchedule() {
-  const { data, isLoading } = useSWR<SchedulerJob[]>(`${BASE}/scheduler/jobs`, fetcher, { refreshInterval: 60000 })
+  // Endpoint en lecture seule : visible par tous les utilisateurs (pas seulement admin),
+  // sans bouton de lancement. Le déclenchement reste réservé à la page Scheduler (admin).
+  const { data, isLoading } = useSWR<SchedulerJob[]>(`${BASE}/scheduler/upcoming`, fetcher, {
+    refreshInterval: 60000,
+  })
 
   return (
     <Card>
       <CardContent>
         <Typography variant="subtitle1" fontWeight={700} gutterBottom>
-          Prochaines actions des crons
+          Prochaines tâches planifiées
         </Typography>
         {isLoading && <Skeleton variant="rounded" height={80} />}
         {data && data.length === 0 && (
           <Typography variant="body2" color="text.secondary">
-            Scheduler non démarré.
+            Aucune tâche planifiée.
           </Typography>
         )}
-        {data?.map((job) => (
-          <Box
-            key={job.id}
-            sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', py: 0.75 }}
-          >
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              {job.last_run && (
-                <Chip
-                  size="small"
-                  label={job.last_run.status === 'completed' ? '✓' : job.last_run.status === 'failed' ? '✗' : '…'}
-                  color={
-                    job.last_run.status === 'completed'
-                      ? 'success'
-                      : job.last_run.status === 'failed'
-                        ? 'error'
-                        : 'default'
-                  }
-                  sx={{ minWidth: 28, fontWeight: 700 }}
-                />
+        {data?.map((job, i) => {
+          const glyph = job.last_run ? lastRunGlyph(job.last_run.status) : null
+          return (
+            <Box key={job.id}>
+              {i > 0 && <Divider sx={{ my: 0.75 }} />}
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                {glyph && (
+                  <Chip size="small" label={glyph.label} color={glyph.color} sx={{ minWidth: 28, fontWeight: 700 }} />
+                )}
+                <Typography variant="body2" fontWeight={600}>
+                  {job.name ?? job.id}
+                </Typography>
+                <Box sx={{ ml: 'auto', textAlign: 'right' }}>
+                  <Typography
+                    variant="caption"
+                    display="block"
+                    color={job.next_run_at ? 'text.secondary' : 'text.disabled'}
+                  >
+                    {formatNextRun(job.next_run_at)}
+                  </Typography>
+                  {job.schedule && (
+                    <Typography variant="caption" color="text.disabled" display="block">
+                      {job.schedule}
+                    </Typography>
+                  )}
+                </Box>
+              </Box>
+              {job.description && (
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.25 }}>
+                  {job.description}
+                </Typography>
               )}
-              <Typography variant="body2">{job.name ?? job.id}</Typography>
             </Box>
-            <Typography variant="caption" color={job.next_run_time ? 'text.secondary' : 'text.disabled'}>
-              {formatNextRun(job.next_run_time)}
-            </Typography>
-          </Box>
-        ))}
+          )
+        })}
       </CardContent>
     </Card>
   )

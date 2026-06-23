@@ -2,7 +2,7 @@
 
 
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 
 import useSWR from 'swr'
 
@@ -34,9 +34,18 @@ import Tabs from '@mui/material/Tabs'
 
 import Tab from '@mui/material/Tab'
 
-import { PageContainer, PageHeader, LoadingState } from '@/components/layout'
+import { PageContainer, PageHeader, LoadingState, useConfirmDialog } from '@/components/layout'
 
 import { fetcher, fetchRunwayStatus, type Channel, type RunwayStatus } from '@/lib/api'
+
+import {
+  buildChannelUpdatePayload,
+  channelSettingsFormsEqual,
+  channelToFormState,
+  type ChannelSettingsForm,
+} from '@/lib/channelSettingsForm'
+
+import { useUnsavedChangesWarning } from '@/lib/useUnsavedChangesWarning'
 
 
 
@@ -130,33 +139,6 @@ const TTS_ENGINES = [
   { value: 'edge-tts', label: 'Edge TTS (gratuit)' },
 ]
 
-function resolveTtsProfiles(tts: Record<string, unknown>) {
-  const gemini = (tts.gemini as Record<string, unknown>) || {}
-  const defaultEngine = String(tts.engine || 'azure')
-  const defaultVoice = String(tts.voice || 'fr-FR-Vivienne:DragonHDLatestNeural')
-  const shortRaw = tts.short as Record<string, unknown> | undefined
-  const longRaw = tts.long as Record<string, unknown> | undefined
-
-  let shortEngine = String(shortRaw?.engine || defaultEngine)
-  let shortVoice = String(shortRaw?.voice || defaultVoice)
-  let longEngine = String(longRaw?.engine || defaultEngine)
-  let longVoice = String(longRaw?.voice || defaultVoice)
-
-  if (!shortRaw && !longRaw && gemini.apply_to && gemini.apply_to !== 'off') {
-    const geminiVoice = String(gemini.voice || 'Leda')
-    if (gemini.apply_to === 'shorts' || gemini.apply_to === 'both') {
-      shortEngine = 'gemini'
-      shortVoice = geminiVoice
-    }
-    if (gemini.apply_to === 'long' || gemini.apply_to === 'both') {
-      longEngine = 'gemini'
-      longVoice = geminiVoice
-    }
-  }
-
-  return { shortEngine, shortVoice, longEngine, longVoice }
-}
-
 function voiceOptionsForEngine(
   engine: string,
   azureVoices: { id: string; label: string }[] | undefined,
@@ -234,11 +216,24 @@ export default function ChannelSettingsPage({ params }: Props) {
 
   const [saved, setSaved] = useState(false)
 
-  const [form, setForm] = useState<Record<string, unknown> | null>(null)
+  const [saveError, setSaveError] = useState<string | null>(null)
+
+  const [form, setForm] = useState<ChannelSettingsForm | null>(null)
+
+  const [savedForm, setSavedForm] = useState<ChannelSettingsForm | null>(null)
 
   const [costEstimate, setCostEstimate] = useState<CostEstimate | null>(null)
 
   const [tab, setTab] = useState(0)
+
+  const { confirm, dialog: leaveConfirmDialog } = useConfirmDialog()
+
+  const isDirty = useMemo(
+    () => Boolean(form && savedForm && !channelSettingsFormsEqual(form, savedForm)),
+    [form, savedForm],
+  )
+
+  useUnsavedChangesWarning(isDirty, confirm)
 
 
 
@@ -296,91 +291,11 @@ export default function ChannelSettingsPage({ params }: Props) {
 
     if (!channel || form) return
 
-    const cfg = channel.config || {}
+    const initialForm = channelToFormState(channel)
 
-    const pub = (cfg.publishing as Record<string, unknown>) || {}
+    setForm(initialForm)
 
-    const prod = (cfg.production as Record<string, unknown>) || {}
-
-    const editorial = (cfg.editorial as Record<string, unknown>) || {}
-
-    const tts = (cfg.tts as Record<string, unknown>) || {}
-
-    const ttsProfiles = resolveTtsProfiles(tts)
-
-    const media = (cfg.media_sources as Record<string, unknown>) || {}
-
-    const mediaValidation = (cfg.media_validation as Record<string, unknown>) || {}
-
-    const ai = (media.ai_fallback as Record<string, unknown>) || {}
-
-    const runway = (cfg.runway as Record<string, unknown>) || {}
-
-    setForm({
-
-      theme_category: channel.theme_category || '',
-
-      theme_prompt: channel.theme_prompt || '',
-
-      niche_prompt: channel.niche_prompt || '',
-
-      creative_brief: channel.creative_brief || '',
-
-      media_validation_template: mediaValidation.media_validation_template || '',
-
-      default_min_relevance_score: mediaValidation.default_min_relevance_score ?? '',
-
-      youtube_category_id: String((pub.youtube_category_id as string) || '27'),
-
-      tone: editorial.tone || '',
-
-      target_audience: editorial.target_audience || '',
-
-      differentiator: editorial.differentiator || '',
-
-      production_mode: prod.mode || 'mixed',
-
-      short_duration_s: prod.short_duration_s || 60,
-
-      min_short_duration_s: prod.min_short_duration_s || 60,
-
-      max_short_duration_s: prod.max_short_duration_s || 120,
-
-      long_quota: (pub.daily_quotas as Record<string, number>)?.long ?? 1,
-
-      short_quota: (pub.daily_quotas as Record<string, number>)?.short ?? 3,
-
-      enabled_platforms: (pub.enabled_platforms as string[]) || ['youtube', 'tiktok', 'instagram'],
-
-      tts_style: tts.style || 'narration-relaxed',
-
-      tts_short_engine: ttsProfiles.shortEngine,
-
-      tts_short_voice: ttsProfiles.shortVoice,
-
-      tts_long_engine: ttsProfiles.longEngine,
-
-      tts_long_voice: ttsProfiles.longVoice,
-
-      ai_plan: ai.plan || 'flux_pro',
-
-      ai_fallback_chain: ((ai.fallback_chain as string[]) || ['imagen3'])[0] || 'imagen3',
-
-      max_images_per_segment: ai.max_images_per_segment ?? 2,
-
-      max_ai_images_per_video: ai.max_ai_images_per_video ?? 10,
-
-      max_ai_images_per_week: ai.max_ai_images_per_week ?? '',
-
-      fallback_rate_override: ai.fallback_rate_override ?? '',
-
-      runway_enabled: runway.enabled ?? false,
-
-      runway_monthly_budget_usd: runway.monthly_budget_usd ?? 20,
-
-      runway_max_clips_per_video: runway.max_clips_per_video ?? 3,
-
-    })
+    setSavedForm(initialForm)
 
   }, [channel, form])
 
@@ -404,157 +319,71 @@ export default function ChannelSettingsPage({ params }: Props) {
 
     setSaving(true)
 
-    const config = {
+    setSaveError(null)
 
-      editorial: {
+    const payload = buildChannelUpdatePayload(form, channel)
 
-        tone: form.tone,
+    try {
 
-        target_audience: form.target_audience,
+      const resp = await fetch(`/api/v1/channels/${id}`, {
 
-        differentiator: form.differentiator,
+        method: 'PATCH',
 
-      },
+        headers: { 'Content-Type': 'application/json' },
 
-      production: {
+        body: JSON.stringify(payload),
 
-        mode: form.production_mode,
+      })
 
-        short_duration_s: Number(form.short_duration_s),
+      if (!resp.ok) {
 
-        min_short_duration_s: Number(form.min_short_duration_s),
+        let detail = `Erreur ${resp.status}`
 
-        max_short_duration_s: Number(form.max_short_duration_s),
+        try {
 
-      },
+          const err = await resp.json()
 
-      publishing: {
+          if (err.detail) {
 
-        ...(channel.config?.publishing || {}),
+            detail = typeof err.detail === 'string' ? err.detail : JSON.stringify(err.detail)
 
-        daily_quotas: { long: Number(form.long_quota), short: Number(form.short_quota) },
+          }
 
-        enabled_platforms: form.enabled_platforms,
+        } catch {
 
-        youtube_category_id: form.youtube_category_id,
+          /* réponse non-JSON */
 
-      },
+        }
 
-      tts: {
+        setSaveError(detail)
 
-        style: form.tts_style,
+        return
 
-        short: {
+      }
 
-          engine: form.tts_short_engine,
+      const updated = (await resp.json()) as Channel
 
-          voice: form.tts_short_voice,
+      await mutate(updated, { revalidate: false })
 
-        },
+      const syncedForm = channelToFormState(updated)
 
-        long: {
+      setForm(syncedForm)
 
-          engine: form.tts_long_engine,
+      setSavedForm(syncedForm)
 
-          voice: form.tts_long_voice,
+      setSaved(true)
 
-        },
+      setTimeout(() => setSaved(false), 3000)
 
-        gemini: {
+    } catch {
 
-          ...(((channel.config?.tts as Record<string, unknown>)?.gemini as Record<string, unknown>) || {}),
+      setSaveError('Impossible d\'enregistrer — vérifiez la connexion au serveur.')
 
-          apply_to: 'off',
+    } finally {
 
-        },
-
-      },
-
-      media_sources: {
-
-        ...(channel.config?.media_sources || {}),
-
-        ai_fallback: {
-
-          plan: form.ai_plan,
-
-          enabled: form.ai_plan !== 'off',
-
-          fallback_chain: form.ai_fallback_chain ? [form.ai_fallback_chain] : [],
-
-          max_images_per_segment: Number(form.max_images_per_segment),
-
-          max_ai_images_per_video: Number(form.max_ai_images_per_video),
-
-          max_ai_images_per_week: form.max_ai_images_per_week
-
-            ? Number(form.max_ai_images_per_week)
-
-            : null,
-
-          fallback_rate_override: form.fallback_rate_override
-
-            ? Number(form.fallback_rate_override)
-
-            : null,
-
-        },
-
-      },
-
-      runway: {
-
-        enabled: Boolean(form.runway_enabled),
-
-        monthly_budget_usd: Number(form.runway_monthly_budget_usd),
-
-        max_clips_per_video: Number(form.runway_max_clips_per_video),
-
-      },
-
-      media_validation: {
-
-        media_validation_template: form.media_validation_template || '',
-
-        default_min_relevance_score: form.default_min_relevance_score
-
-          ? Number(form.default_min_relevance_score)
-
-          : null,
-
-      },
+      setSaving(false)
 
     }
-
-    await fetch(`/api/v1/channels/${id}`, {
-
-      method: 'PATCH',
-
-      headers: { 'Content-Type': 'application/json' },
-
-      body: JSON.stringify({
-
-        theme_category: form.theme_category,
-
-        theme_prompt: form.theme_prompt,
-
-        niche_prompt: form.niche_prompt,
-
-        creative_brief: form.creative_brief || null,
-
-        config,
-
-      }),
-
-    })
-
-    await mutate()
-
-    setSaving(false)
-
-    setSaved(true)
-
-    setTimeout(() => setSaved(false), 3000)
 
   }
 
@@ -576,6 +405,8 @@ export default function ChannelSettingsPage({ params }: Props) {
 
     <PageContainer maxWidth="md">
 
+      {leaveConfirmDialog}
+
       <PageHeader
         title={`Paramètres — ${channel?.name ?? ''}`}
         description="Thème, format de production, plateformes, voix et générateurs IA."
@@ -583,9 +414,27 @@ export default function ChannelSettingsPage({ params }: Props) {
           { label: 'Chaînes', href: '/channels' },
           { label: channel?.name ?? 'Paramètres' },
         ]}
+        actions={(
+          <Button
+            variant="contained"
+            onClick={handleSave}
+            disabled={saving}
+            startIcon={saving ? <CircularProgress size={16} color="inherit" /> : undefined}
+          >
+            {saving ? 'Enregistrement…' : 'Enregistrer'}
+          </Button>
+        )}
       />
 
       {saved && <Alert severity="success" sx={{ mb: 2 }}>Configuration enregistrée</Alert>}
+
+      {isDirty && !saving && (
+        <Alert severity="warning" sx={{ mb: 2 }}>
+          Modifications non enregistrées — pensez à enregistrer avant de quitter la page.
+        </Alert>
+      )}
+
+      {saveError && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setSaveError(null)}>{saveError}</Alert>}
 
       <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mb: 3, borderBottom: 1, borderColor: 'divider' }}>
         <Tab label="Général" />
@@ -1072,12 +921,6 @@ export default function ChannelSettingsPage({ params }: Props) {
           </Box>
 
         )}
-
-        <Button variant="contained" onClick={handleSave} disabled={saving} sx={{ mt: 2 }}>
-
-          {saving ? 'Enregistrement…' : 'Enregistrer'}
-
-        </Button>
 
         </>
       )}

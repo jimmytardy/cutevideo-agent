@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from agent.core.database import User
 from agent.scheduler import jobs
 from agent.scheduler.service import scheduler_service
-from api.deps import require_admin_user
+from api.deps import get_current_user, require_admin_user
 
 router = APIRouter(prefix="/api/v1/scheduler", tags=["scheduler"])
 
@@ -39,6 +39,16 @@ async def get_scheduler_status(_: User = Depends(require_admin_user)) -> dict:
 
 @router.get("/jobs")
 async def list_scheduler_jobs(_: User = Depends(require_admin_user)) -> list[dict]:
+    return await scheduler_service.list_jobs_with_last_run()
+
+
+@router.get("/upcoming")
+async def list_upcoming_jobs(_: User = Depends(get_current_user)) -> list[dict]:
+    """Lecture seule : prochaines tâches planifiées, leur rôle et leur dernier statut.
+
+    Accessible à tout utilisateur authentifié (pas seulement admin) car aucune
+    action de déclenchement n'est exposée — affichage uniquement.
+    """
     return await scheduler_service.list_jobs_with_last_run()
 
 
