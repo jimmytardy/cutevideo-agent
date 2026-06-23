@@ -116,10 +116,40 @@ JOB_REGISTRY: dict[str, Any] = {
 }
 
 JOB_METADATA: list[dict[str, str]] = [
-    {"id": "content_planner_daily", "name": "Content Planner", "schedule": "6h00 Europe/Paris"},
-    {"id": "run_pending_projects_morning", "name": "Pipelines (matin)", "schedule": "6h30 Europe/Paris"},
-    {"id": "run_pending_projects_hourly", "name": "Pipelines (horaire)", "schedule": "7h-23h Europe/Paris"},
-    {"id": "distribution_agent", "name": "Distribution", "schedule": "*/15 min"},
-    {"id": "engagement_agents_biweekly", "name": "Engagement", "schedule": "Lun/Jeu 9h15 Europe/Paris"},
-    {"id": "purge_old_media", "name": "Purge médias", "schedule": "3h00 UTC"},
+    {
+        "id": "content_planner_daily",
+        "name": "Content Planner",
+        "schedule": "6h00 Europe/Paris",
+        "description": "Construit le plan éditorial du lendemain et crée les projets vidéo « en attente » pour chaque chaîne.",
+    },
+    {
+        "id": "run_pending_projects_morning",
+        "name": "Pipelines (matin)",
+        "schedule": "6h30 Europe/Paris",
+        "description": "Lance la pipeline de création des projets en attente dont la publication est prévue le jour cible.",
+    },
+    {
+        "id": "run_pending_projects_hourly",
+        "name": "Pipelines (horaire)",
+        "schedule": "7h-23h Europe/Paris",
+        "description": "Repasse sur les projets en attente non encore démarrés et lance leur pipeline de création.",
+    },
+    {
+        "id": "distribution_agent",
+        "name": "Distribution",
+        "schedule": "*/15 min",
+        "description": "Planifie et publie les vidéos approuvées sur les plateformes (YouTube, TikTok, Instagram).",
+    },
+    {
+        "id": "engagement_agents_biweekly",
+        "name": "Engagement",
+        "schedule": "Lun/Jeu 9h15 Europe/Paris",
+        "description": "Analyse les performances puis répond aux commentaires et met à jour le contexte d'apprentissage des chaînes.",
+    },
+    {
+        "id": "purge_old_media",
+        "name": "Purge médias",
+        "schedule": "3h00 UTC",
+        "description": "Nettoie le stockage en supprimant les fichiers médias qui dépassent la durée de rétention.",
+    },
 ]

@@ -57,10 +57,10 @@ async def trigger_job(job_id: str, _: User = Depends(require_admin_user)) -> Job
     if job_id not in jobs.JOB_REGISTRY:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job introuvable")
     try:
-        result = await scheduler_service.run_job_now(job_id)
+        result = scheduler_service.launch_job(job_id)
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
-    return JobRunResponse(job_id=job_id, status="completed", result=result.get("result"))
+    return JobRunResponse(job_id=job_id, status=result["status"])
 
 
 @router.post("/start")

@@ -1,10 +1,13 @@
 'use client'
 
+import { useState } from 'react'
 import useSWR from 'swr'
 import Card from '@mui/material/Card'
 import CardContent from '@mui/material/CardContent'
 import Chip from '@mui/material/Chip'
 import Button from '@mui/material/Button'
+import CircularProgress from '@mui/material/CircularProgress'
+import Snackbar from '@mui/material/Snackbar'
 import Table from '@mui/material/Table'
 import TableHead from '@mui/material/TableHead'
 import TableBody from '@mui/material/TableBody'
@@ -20,6 +23,7 @@ interface JobInfo {
   id: string
   name: string
   schedule: string
+  description?: string
   next_run_at: string | null
   last_run: {
     status: string
@@ -62,9 +66,25 @@ export default function SchedulerPage() {
     { refreshInterval: 5000 },
   )
 
-  const triggerJob = async (jobId: string) => {
-    await fetch(`/api/v1/scheduler/jobs/${jobId}/run`, { method: 'POST' })
-    await Promise.all([mutateJobs(), mutateRuns(), mutateStatus()])
+  const [launching, setLaunching] = useState<string | null>(null)
+  const [toast, setToast] = useState<string | null>(null)
+
+  const jobName = (jobId: string) => jobs?.find((j) => j.id === jobId)?.name ?? jobId
+
+  const triggerJob = async (job: JobInfo) => {
+    setLaunching(job.id)
+    try {
+      const res = await fetch(`/api/v1/scheduler/jobs/${job.id}/run`, { method: 'POST' })
+      if (!res.ok) {
+        const body = await res.json().catch(() => null)
+        setToast(`Échec du lancement de « ${job.name} » : ${body?.detail ?? res.statusText}`)
+        return
+      }
+      setToast(`« ${job.name} » lancé — suivez sa progression dans l'historique ci-dessous.`)
+      await Promise.all([mutateJobs(), mutateRuns(), mutateStatus()])
+    } finally {
+      setLaunching(null)
+    }
   }
 
   const toggleScheduler = async (action: 'start' | 'stop') => {
@@ -77,7 +97,7 @@ export default function SchedulerPage() {
       <PageContainer>
         <PageHeader
           title="Scheduler"
-          description="Gérez les tâches planifiées et consultez l'historique d'exécution."
+          description="Comprenez le rôle de chaque agent planifié, lancez-le à la volée sans attendre son créneau, et consultez l'historique d'exécution."
         />
 
         {status && (
@@ -112,13 +132,15 @@ export default function SchedulerPage() {
                   <TableBody>
                     {jobs.map((job) => (
                       <TableRow key={job.id} hover>
-                        <TableCell>
+                        <TableCell sx={{ maxWidth: 360 }}>
                           <Typography variant="body2" fontWeight={600}>
                             {job.name}
                           </Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            {job.id}
-                          </Typography>
+                          {job.description && (
+                            <Typography variant="caption" color="text.secondary">
+                              {job.description}
+                            </Typography>
+                          )}
                         </TableCell>
                         <TableCell>{job.schedule}</TableCell>
                         <TableCell>
@@ -136,8 +158,16 @@ export default function SchedulerPage() {
                           )}
                         </TableCell>
                         <TableCell>
-                          <Button size="small" variant="outlined" onClick={() => triggerJob(job.id)}>
-                            Lancer
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            disabled={launching === job.id}
+                            startIcon={
+                              launching === job.id ? <CircularProgress size={14} color="inherit" /> : undefined
+                            }
+                            onClick={() => triggerJob(job)}
+                          >
+                            {launching === job.id ? 'Lancement…' : 'Lancer maintenant'}
                           </Button>
                         </TableCell>
                       </TableRow>
@@ -165,7 +195,7 @@ export default function SchedulerPage() {
                   <TableBody>
                     {runs.map((run) => (
                       <TableRow key={run.id} hover>
-                        <TableCell>{run.job_id}</TableCell>
+                        <TableCell>{jobName(run.job_id)}</TableCell>
                         <TableCell>
                           <Chip size="small" label={run.status} color={STATUS_COLOR[run.status] ?? 'default'} />
                         </TableCell>
@@ -179,6 +209,17 @@ export default function SchedulerPage() {
             </Card>
           )}
         </PageSection>
+
+        <Snackbar
+          open={Boolean(toast)}
+          autoHideDuration={5000}
+          onClose={() => setToast(null)}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        >
+          <Alert severity="info" onClose={() => setToast(null)} sx={{ width: '100%' }}>
+            {toast}
+          </Alert>
+        </Snackbar>
       </PageContainer>
     </AdminGuard>
   )

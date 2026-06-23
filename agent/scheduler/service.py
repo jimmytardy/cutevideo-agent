@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Any
@@ -21,6 +22,7 @@ class SchedulerService:
     def __init__(self) -> None:
         self._scheduler = AsyncIOScheduler()
         self._running = False
+        self._background_tasks: set[asyncio.Task[Any]] = set()
 
     @property
     def running(self) -> bool:
@@ -138,6 +140,28 @@ class SchedulerService:
             raise ValueError(f"Job inconnu : {job_id}")
         result = await fn()
         return {"job_id": job_id, "status": "completed", "result": result}
+
+    def launch_job(self, job_id: str) -> dict[str, Any]:
+        """Lance un job en tâche de fond et retourne immédiatement.
+
+        Le job s'exécute « à la volée » sans bloquer l'appelant ; sa progression
+        est suivie en base (SchedulerRun) via @track_job_run et visible dans
+        l'historique. Le scheduler n'a pas besoin d'être démarré.
+        """
+        fn = jobs.JOB_REGISTRY.get(job_id)
+        if fn is None:
+            raise ValueError(f"Job inconnu : {job_id}")
+
+        async def _runner() -> None:
+            try:
+                await fn()
+            except Exception:  # déjà enregistré en base par @track_job_run
+                logger.exception("Lancement manuel du job %s échoué", job_id)
+
+        task = asyncio.create_task(_runner(), name=f"manual-job-{job_id}")
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        return {"job_id": job_id, "status": "started"}
 
 
 scheduler_service = SchedulerService()
