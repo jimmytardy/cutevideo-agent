@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.core.api_keys import resolve_api_key
+from agent.core.api_keys import GcpCredentials, parse_gcp_credentials, resolve_api_key
 from agent.core.database import User
 from agent.core.llm_config import resolve_max_tokens, resolve_model
 from agent.core.llm_retry import retry_transient_async
@@ -71,6 +71,10 @@ class LlmCallConfig:
     api_key: str
     tier: LlmTier
     source: str
+    # Quand True, l'appel Gemini passe par Vertex AI (auth compte de service GCP)
+    # au lieu de l'API Gemini Developer (clé AIza). api_key est alors ignoré.
+    use_vertex: bool = False
+    gcp: GcpCredentials | None = None
 
 
 @dataclass
@@ -105,6 +109,20 @@ def parse_agent_preferences(raw: dict | None) -> dict[str, AgentLlmPreference]:
 async def _has_user_key(session: AsyncSession, user_id: uuid.UUID, provider: str) -> bool:
     ctx = await resolve_api_key(session, user_id, provider, purpose="llm_agent", tier="paid")
     return ctx.source == "user" and bool(ctx.key)
+
+
+async def _resolve_gcp_for_vertex(
+    session: AsyncSession, user_id: uuid.UUID | None
+) -> GcpCredentials | None:
+    """Credentials GCP (compte de service) pour servir Gemini via Vertex AI.
+
+    Contourne la restriction des clés AQ. de l'API Gemini Developer : Vertex
+    s'authentifie via le compte de service, pas via une clé AIza.
+    """
+    ctx = await resolve_api_key(session, user_id, "gcp", purpose="llm_agent", tier="paid")
+    if not ctx.key:
+        return None
+    return parse_gcp_credentials(ctx)
 
 
 def _is_anthropic_model(model: str) -> bool:
@@ -197,7 +215,9 @@ async def resolve_llm_call(
                 source=ctx.source,
             )
 
-    # Défaut : Gemini via clé user ou plateforme (resolve_api_key)
+    # Défaut : Gemini via Vertex AI (compte de service GCP) si configuré, sinon
+    # clé Gemini Developer (user ou plateforme). Vertex est préféré car il évite
+    # la restriction des clés AQ. de l'API Gemini Developer.
     tier = "free"
     model = _resolve_gemini_model(
         config_agent,
@@ -205,10 +225,22 @@ async def resolve_llm_call(
         model_override=model_override,
         tier=tier,
     )
+    gcp = await _resolve_gcp_for_vertex(session, user_id)
+    if gcp is not None:
+        return LlmCallConfig(
+            provider="gemini",
+            model=model,
+            api_key="",
+            tier="free",
+            source="vertex",
+            use_vertex=True,
+            gcp=gcp,
+        )
     ctx = await resolve_api_key(session, user_id, "gemini", purpose="llm_agent", tier="free")
     if not ctx.key:
         raise RuntimeError(
-            "Aucune clé Gemini disponible. Configurez GOOGLE_GEMINI_API_KEY côté plateforme "
+            "Aucune clé Gemini disponible. Configurez Vertex AI (GCP_PROJECT_ID + "
+            "GOOGLE_APPLICATION_CREDENTIALS), GOOGLE_GEMINI_API_KEY côté plateforme, "
             "ou ajoutez votre clé Gemini dans les paramètres compte."
         )
     return LlmCallConfig(
@@ -267,6 +299,8 @@ async def call_llm(
         max_tokens=resolved_max,
         cacheable_context=cacheable_context,
         agent_name=agent_name,
+        use_vertex=cfg.use_vertex,
+        gcp=cfg.gcp,
     )
 
 
@@ -335,6 +369,23 @@ def _gemini_truncated(response: Any) -> bool:
     return getattr(reason, "name", str(reason)) == "MAX_TOKENS"
 
 
+def _build_vertex_credentials(gcp: GcpCredentials) -> Any | None:
+    """Credentials google-auth pour Vertex AI à partir d'un compte de service GCP."""
+    from google.oauth2 import service_account
+
+    scopes = ["https://www.googleapis.com/auth/cloud-platform"]
+    if gcp.credentials_json:
+        return service_account.Credentials.from_service_account_info(
+            json.loads(gcp.credentials_json), scopes=scopes
+        )
+    if gcp.adc_path:
+        return service_account.Credentials.from_service_account_file(
+            gcp.adc_path, scopes=scopes
+        )
+    # Ni JSON ni fichier explicite : laisse genai utiliser l'ADC de l'environnement.
+    return None
+
+
 async def _call_gemini_text(
     *,
     api_key: str,
@@ -344,11 +395,21 @@ async def _call_gemini_text(
     max_tokens: int,
     cacheable_context: str | None,
     agent_name: str = "llm",
+    use_vertex: bool = False,
+    gcp: GcpCredentials | None = None,
 ) -> str:
     from google import genai
     from google.genai import types
 
-    client = genai.Client(api_key=api_key)
+    if use_vertex and gcp is not None:
+        client = genai.Client(
+            vertexai=True,
+            project=gcp.project_id,
+            location=gcp.location,
+            credentials=_build_vertex_credentials(gcp),
+        )
+    else:
+        client = genai.Client(api_key=api_key)
     full_prompt = prompt
     if cacheable_context and cacheable_context.strip():
         full_prompt = f"{cacheable_context.strip()}\n\n{prompt}"

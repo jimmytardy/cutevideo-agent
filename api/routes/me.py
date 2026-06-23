@@ -13,6 +13,7 @@ from agent.core.api_keys import (
     encrypt_api_key,
     get_user_api_key_row,
 )
+from agent.core.api_key_validation import ApiKeyValidationError, validate_api_key
 from agent.core.database import User, UserApiKey, get_db
 from agent.core.agent_llm_constraints import normalize_agent_preference, normalize_preferences_map
 from agent.core.agent_llm_recommendations import all_agent_llm_recommendations
@@ -129,6 +130,10 @@ async def upsert_my_api_key(
 ) -> ApiKeyStatus:
     if provider not in ALLOWED_PROVIDERS:
         raise HTTPException(status_code=400, detail="Provider non supporté")
+    try:
+        await validate_api_key(provider, body.api_key, body.metadata)
+    except ApiKeyValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     row = await get_user_api_key_row(db, user.id, provider)
     encrypted = encrypt_api_key(body.api_key.strip())
     if row:
