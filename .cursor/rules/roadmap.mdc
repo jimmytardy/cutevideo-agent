@@ -1,0 +1,25 @@
+---
+description: Backlog qualité vidéo actif — ce qu'il reste à implémenter
+globs: ["agent/agents/editor_agent.py", "agent/skills/video/**", "agent/skills/audio/**", "agent/skills/publisher/**", "docs/roadmap-qualite-video.md"]
+alwaysApply: true
+---
+
+# Roadmap — exécution
+
+Référence : [`docs/roadmap-qualite-video.md`](docs/roadmap-qualite-video.md).
+
+## Ne pas refaire
+
+Socle montage (SFX/ASS/LUT/glitch), plan qualité amont (Flux, ArtDirector, metadata/thumbnail agents, critic vision).
+
+## Backlog (un build par session)
+
+1. **B1** — beat-cuts SFX **long 16:9** : `long_montage_profile`, `load_sfx_config(ctx)`, retirer guard `is_short_montage` sur `build_beat_cut_cues` dans `editor_agent`
+2. **B2** — flash inter-segment (`ffmpeg_utils`), pacing long (`pacing_director`, `montage_planner_agent`)
+3. **B3** — publication YouTube : lire miniature `thumbnail_agent` depuis `Project.config`, pas `publisher/thumbnail.generate_thumbnail`
+4. **B4** — `test_montage_audit`, polish SFX (click, impact punch_zoom), graphify/CLAUDE.md
+5. **B5** — opt-in : overrides chaîne, parallaxe/match cuts
+
+## Discipline Cursor
+
+- 1 conversation = 1 build ; pytest modules touchés ; gate manuelle vidéo longue après B2

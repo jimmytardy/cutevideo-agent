@@ -313,6 +313,7 @@ class ThumbnailCandidateResponse(BaseModel):
     prompt: str | None = None
     attribution: str | None = None
     primary: bool = False
+    ctr_score: float | None = None
 
 
 class ScenarioResponse(BaseModel):
@@ -376,6 +377,7 @@ class AudioFileResponse(BaseModel):
 
     id: UUID
     project_id: UUID
+    iteration: int
     segment_order: int | None
     local_path: str | None
     duration_s: float | None

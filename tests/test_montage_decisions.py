@@ -48,17 +48,20 @@ def test_resolve_motion_style_diagram_stays_zoom_in() -> None:
     assert resolve_motion_style("scientific_diagram", "image", index=3) == "zoom_in"
 
 
+def test_resolve_motion_style_statistic_highlight_punch() -> None:
+    assert resolve_motion_style("statistic_highlight", "image", index=1) == "punch_zoom"
+
+
 def test_resolve_overlay_mode_diagram() -> None:
     assert resolve_overlay_mode("scientific_diagram") == "svg_overlay"
 
 
-def test_resolve_overlay_mode_quote_drawtext() -> None:
-    assert resolve_overlay_mode("quote_card") == "drawtext"
+def test_resolve_overlay_mode_quote_ass_when_animation_enabled() -> None:
+    assert resolve_overlay_mode("quote_card") == "ass_overlay"
 
 
-def test_resolve_overlay_mode_photo_with_text_is_drawtext() -> None:
-    # Appui-texte sur une photo réelle : déclenché par on_screen_text, pas par le type.
-    assert resolve_overlay_mode("documentary_photo", "1889") == "drawtext"
+def test_resolve_overlay_mode_photo_with_text_is_ass_overlay() -> None:
+    assert resolve_overlay_mode("documentary_photo", "1889") == "ass_overlay"
 
 
 def test_resolve_overlay_mode_photo_without_text_is_none() -> None:

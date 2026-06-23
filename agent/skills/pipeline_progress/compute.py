@@ -27,6 +27,7 @@ from agent.skills.pipeline_progress.rules import (
     compute_media_agent_progress,
     compute_montage_progress,
     compute_narrator_progress,
+    compute_outline_progress,
     compute_research_progress,
     compute_scenario_progress,
     compute_short_editor_progress,
@@ -35,8 +36,11 @@ from agent.skills.pipeline_progress.rules import (
 
 ITERATION_AGENT_NAMES: frozenset[str] = frozenset({
     "revision_agent",
-    "media_agent",
     "narrator_agent",
+    "art_director_agent",
+    "beat_planner_agent",
+    "diagram_specialist_agent",
+    "media_agent",
     "montage_planner_agent",
     "editor_agent",
     "subtitle_agent",
@@ -139,9 +143,25 @@ async def compute_pipeline_progress(
     else:
         hook_progress = compute_hook_progress(_hook_segment(latest_segments))
 
+    outline_raw = project_config.get("scenario_outline")
+    outline_dict = outline_raw if isinstance(outline_raw, dict) else None
+    outline_run = latest_run("outline_agent")
+    if outline_run and outline_run.status == "success":
+        outline_progress = compute_binary_progress(True, detail="Plan éditorial")
+    else:
+        outline_progress = compute_outline_progress(outline_dict)
+
+    fact_run = latest_run("fact_checker_agent")
+    fact_progress = compute_binary_progress(
+        fact_run is not None and fact_run.status == "success",
+        detail="Vérification faits" if fact_run and fact_run.status == "success" else None,
+    )
+
     preparation: dict[str, AgentProgressData] = {
         "research_agent": compute_research_progress(brief_dict),
+        "outline_agent": outline_progress,
         "scenario_agent": compute_scenario_progress(latest_segments),
+        "fact_checker_agent": fact_progress,
         "hook_optimizer_agent": hook_progress,
     }
 
@@ -177,7 +197,7 @@ async def compute_pipeline_progress(
         audio_for_iter = {
             a.segment_order
             for a in audio_files
-            if a.segment_order is not None
+            if a.segment_order is not None and a.iteration == iteration
         }
         audio_count = len(audio_for_iter)
 
@@ -208,6 +228,16 @@ async def compute_pipeline_progress(
         revision_done = iteration in scenarios_by_iteration and bool(
             scenarios_by_iteration[iteration].segments
         )
+        art_run = latest_run("art_director_agent", iteration)
+        art_done = bool(
+            art_run and art_run.status == "success"
+        ) or bool(project_config.get("visual_style_block"))
+
+        beat_done = any(
+            seg.get("visual_beats")
+            for seg in iter_segments
+            if isinstance(seg, dict)
+        )
 
         try:
             media_progress = await compute_media_progress(
@@ -225,8 +255,20 @@ async def compute_pipeline_progress(
                 revision_done,
                 detail="Scénario révisé" if revision_done else None,
             )
-        agents["media_agent"] = media_item
         agents["narrator_agent"] = compute_narrator_progress(audio_count, voice_total)
+        agents["art_director_agent"] = compute_binary_progress(
+            art_done,
+            detail="Direction visuelle" if art_done else None,
+        )
+        agents["beat_planner_agent"] = compute_binary_progress(
+            beat_done,
+            detail="Visual beats" if beat_done else None,
+        )
+        agents["diagram_specialist_agent"] = compute_binary_progress(
+            beat_done,
+            detail="Schémas enrichis" if beat_done else None,
+        )
+        agents["media_agent"] = media_item
         agents["montage_planner_agent"] = compute_montage_progress(
             plan_segments,
             len(iter_segments),
@@ -267,7 +309,24 @@ async def compute_pipeline_progress(
         expected_short_exports,
     )
 
+    metadata_run = latest_run("metadata_agent")
+    metadata_done = metadata_run is not None and metadata_run.status == "success"
+    has_metadata = isinstance(project_config.get("youtube_metadata"), dict)
+
+    thumbnail_run = latest_run("thumbnail_agent")
+    thumbnail_done = thumbnail_run is not None and thumbnail_run.status == "success"
+    thumb_candidates = project_config.get("thumbnail_candidates")
+    thumb_count = len(thumb_candidates) if isinstance(thumb_candidates, list) else 0
+
     post_production: dict[str, AgentProgressData] = {
+        "metadata_agent": compute_binary_progress(
+            metadata_done or has_metadata,
+            detail="Métadonnées SEO" if (metadata_done or has_metadata) else None,
+        ),
+        "thumbnail_agent": compute_binary_progress(
+            thumbnail_done or thumb_count > 0,
+            detail=f"{thumb_count} concept(s)" if thumb_count else None,
+        ),
         "clipper_agent": compute_binary_progress(
             clipper_done,
             detail=f"{clips_count} clips" if clipper_done else None,

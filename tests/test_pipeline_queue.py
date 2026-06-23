@@ -109,6 +109,43 @@ async def test_prune_removes_non_queued_status() -> None:
 
 
 @pytest.mark.asyncio
+async def test_remove_from_queue_desync_db_queued_without_redis() -> None:
+    """Un projet queued en DB mais absent du ZSET est quand même retirable."""
+    from agent.core.pipeline_queue import remove_from_queue
+
+    project_id = uuid.uuid4()
+    project = SimpleNamespace(id=project_id, status="queued")
+
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=project)
+    session.commit = AsyncMock()
+
+    mock_redis = AsyncMock()
+    mock_redis.zrem = AsyncMock(return_value=0)
+    mock_redis.delete = AsyncMock()
+
+    with (
+        patch(
+            "agent.core.pipeline_queue.AsyncSessionFactory",
+            return_value=_mock_session_factory(session),
+        ),
+        patch("agent.core.pipeline_queue.queue") as mock_queue,
+        patch(
+            "agent.core.pipeline_queue._set_project_pending",
+            new=AsyncMock(),
+        ) as mock_pending,
+    ):
+        mock_queue.connect = AsyncMock()
+        mock_queue.client = mock_redis
+        mock_queue.request_pipeline_cancel = AsyncMock()
+        removed = await remove_from_queue(project_id)
+
+    assert removed is True
+    mock_pending.assert_awaited_once_with(project_id)
+    mock_queue.request_pipeline_cancel.assert_awaited_once_with(str(project_id))
+
+
+@pytest.mark.asyncio
 async def test_dequeue_drops_orphan_without_reenqueue() -> None:
     """Un projet supprimé poppé de la file est abandonné, jamais ré-enfilé."""
     from agent.core.pipeline_queue import dequeue_next_eligible

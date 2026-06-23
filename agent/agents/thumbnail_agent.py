@@ -128,9 +128,75 @@ class ThumbnailAgent(BaseAgent):
                 })
 
         if candidates:
-            candidates[0]["primary"] = True
+            await self._rank_candidates_with_vision(candidates, title)
+            for c in candidates:
+                c["primary"] = False
+            primary = max(candidates, key=lambda c: float(c.get("ctr_score", 0)))
+            primary["primary"] = True
         logger.info("Miniatures générées : %d concept(s)", len(candidates))
         return candidates
+
+    async def _rank_candidates_with_vision(
+        self,
+        candidates: list[dict[str, Any]],
+        title: str,
+    ) -> None:
+        """Classement CTR optionnel via Gemini Vision entre candidats."""
+        if len(candidates) < 2 or not self._gemini_api_key:
+            for c in candidates:
+                c.setdefault("ctr_score", 0.5)
+            return
+
+        import asyncio
+        import json
+
+        try:
+            from google import genai
+            from google.genai import types
+
+            from agent.core.json_parse import parse_gemini_response
+        except ImportError:
+            for c in candidates:
+                c.setdefault("ctr_score", 0.5)
+            return
+
+        prompt = (
+            f"Tu es expert CTR YouTube. Titre vidéo : {title!r}. "
+            "Pour chaque miniature (dans l'ordre), estime un score CTR de 0 à 10 "
+            "(contraste, sujet focal, espace pour titre, émotion). "
+            'Retourne JSON : {"scores": [8.5, 6.2]}'
+        )
+        parts: list[Any] = [prompt]
+        for cand in candidates:
+            path = Path(str(cand.get("local_path") or ""))
+            if path.is_file():
+                parts.append(
+                    types.Part.from_bytes(data=path.read_bytes(), mime_type="image/jpeg")
+                )
+
+        def _run() -> dict[str, Any]:
+            client = genai.Client(api_key=self._gemini_api_key)
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=parts,
+                config=types.GenerateContentConfig(
+                    temperature=0.2,
+                    max_output_tokens=256,
+                    response_mime_type="application/json",
+                ),
+            )
+            return parse_gemini_response(response, "gemini-2.5-flash")
+
+        try:
+            data = await asyncio.to_thread(_run)
+            scores = data.get("scores") or []
+            for idx, cand in enumerate(candidates):
+                raw = scores[idx] if idx < len(scores) else 5.0
+                cand["ctr_score"] = float(raw) / 10.0
+        except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+            logger.warning("Classement miniature vision ignoré : %s", exc)
+            for c in candidates:
+                c.setdefault("ctr_score", 0.5)
 
     @staticmethod
     async def _resolve_title(project_id) -> str:

@@ -27,12 +27,41 @@ def _short_profile_raw() -> dict[str, Any]:
     return load_agent_config().get("video", {}).get("short_montage_profile") or {}
 
 
+def _long_profile_raw() -> dict[str, Any]:
+    return load_agent_config().get("video", {}).get("long_montage_profile") or {}
+
+
 def short_beat_slot_s() -> float:
     return float(_short_profile_raw().get("beat_slot_s", 2.5))
 
 
 def short_sfx_config() -> dict[str, Any]:
     return dict(_short_profile_raw().get("sfx") or {})
+
+
+def long_sfx_config() -> dict[str, Any]:
+    return dict(_long_profile_raw().get("sfx") or {})
+
+
+def long_pacing_config() -> dict[str, Any]:
+    return dict(_long_profile_raw().get("pacing") or {})
+
+
+def load_sfx_config(ctx: "PipelineContext") -> dict[str, Any]:
+    """Merge config SFX globale + profil short ou long."""
+    global_sfx = dict(load_agent_config().get("sfx") or {})
+    profile_sfx = short_sfx_config() if is_short_montage(ctx) else long_sfx_config()
+    return {**global_sfx, **profile_sfx}
+
+
+def inter_segment_flash_config(*, is_short: bool = False) -> tuple[bool, float]:
+    """Flash blanc entre chapitres (long 16:9 uniquement)."""
+    if is_short:
+        return False, 0.0
+    raw = _long_profile_raw()
+    enabled = bool(raw.get("inter_segment_flash", False))
+    duration = float(raw.get("inter_segment_flash_duration_s", 0.15))
+    return enabled, duration
 
 
 def dynamic_recut_enabled() -> bool:

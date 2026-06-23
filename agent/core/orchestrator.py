@@ -399,6 +399,7 @@ class Orchestrator:
                         ctx.project_id,
                         start_from=next_step,
                         keep_scenarios=will_revise,
+                        iteration=iteration,
                     )
                     if next_step == "research_agent":
                         current_agent = "research_agent"
@@ -838,6 +839,7 @@ class Orchestrator:
         start_from: str = "scenario_agent",
         *,
         keep_scenarios: bool = False,
+        iteration: int = 1,
     ) -> None:
         """Nettoyage sélectif des assets selon le point de reprise du pipeline."""
         from sqlalchemy import delete as sa_delete
@@ -862,9 +864,10 @@ class Orchestrator:
 
                 await archive_current_selection(project_id)
             if clear_audio:
-                await session.execute(
-                    sa_delete(AudioFile).where(AudioFile.project_id == project_id)
-                )
+                audio_stmt = sa_delete(AudioFile).where(AudioFile.project_id == project_id)
+                if not pre_media:
+                    audio_stmt = audio_stmt.where(AudioFile.iteration == iteration)
+                await session.execute(audio_stmt)
             if clear_montage:
                 await session.execute(
                     sa_delete(MontagePlan).where(MontagePlan.project_id == project_id)

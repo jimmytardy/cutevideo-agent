@@ -98,7 +98,9 @@ export const PREPARATION_AGENT_KEYS = [
 export const ITERATION_AGENT_KEYS = [
   'revision_agent',
   'narrator_agent',
+  'art_director_agent',
   'beat_planner_agent',
+  'diagram_specialist_agent',
   'media_agent',
   'montage_planner_agent',
   'editor_agent',
@@ -121,7 +123,7 @@ export const ITERATION_1_AGENT_KEYS = [
 export const DELETION_SUMMARY: Record<string, string[]> = {
   research_agent: ['Brief recherche', 'Plan éditorial', 'Scénarios', 'Médias', 'Fichiers audio', 'Vidéos', 'Rapports critiques'],
   outline_agent: ['Plan éditorial', 'Scénarios', 'Médias', 'Fichiers audio', 'Vidéos', 'Rapports critiques'],
-  fact_checker_agent: ['Scénarios', 'Médias', 'Fichiers audio', 'Vidéos', 'Rapports critiques'],
+  fact_checker_agent: ['Scénarios (si corrections)', 'Médias', 'Fichiers audio', 'Vidéos', 'Rapports critiques'],
   scenario_agent: ['Scénarios (visual beats)', 'Médias', 'Fichiers audio', 'Vidéos', 'Rapports critiques'],
   hook_optimizer_agent: [
     'Accroche optimisée (segment 1)',
@@ -479,8 +481,14 @@ export function getResumeStep(
   if (!isAgentStepComplete(agentRuns, 'research_agent')) {
     return { step: 'research_agent', label: AGENT_LABELS.research_agent }
   }
+  if (!isAgentStepComplete(agentRuns, 'outline_agent')) {
+    return { step: 'outline_agent', label: AGENT_LABELS.outline_agent }
+  }
   if (!isAgentStepComplete(agentRuns, 'scenario_agent')) {
     return { step: 'scenario_agent', label: AGENT_LABELS.scenario_agent }
+  }
+  if (!isAgentStepComplete(agentRuns, 'fact_checker_agent')) {
+    return { step: 'fact_checker_agent', label: AGENT_LABELS.fact_checker_agent }
   }
   if (
     !isShort
@@ -501,7 +509,9 @@ export function getResumeStep(
 
   if (isCriticLoopApproved(criticReports)) {
     const postSteps = postProductionAgents
-      ?? (isShort ? ['short_editor_agent'] : ['clipper_agent', 'short_editor_agent'])
+      ?? (isShort
+        ? ['metadata_agent', 'short_editor_agent']
+        : ['metadata_agent', 'thumbnail_agent', 'clipper_agent', 'short_editor_agent'])
     for (const step of postSteps) {
       if (!isAgentStepComplete(agentRuns, step)) {
         return { step, label: AGENT_LABELS[step] ?? step }

@@ -227,6 +227,12 @@ async def remove_project_from_queue(
         )
     removed = await dequeue_pipeline(project_id)
     if not removed:
+        await db.refresh(project)
+        if project.status == "running":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Le pipeline vient de démarrer — utilisez Arrêter",
+            )
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Projet absent de la file")
     return {"message": "Projet retiré de la file d'attente", "project_id": str(project_id)}
 
@@ -430,6 +436,13 @@ async def stop_pipeline(
     if project.status == "queued" or await is_queued(project_id):
         removed = await dequeue_pipeline(project_id)
         if not removed:
+            await db.refresh(project)
+            if project.status == "running":
+                await request_pipeline_cancel(project_id)
+                project.status = "stopped"
+                project.error_message = "Arrêté manuellement"
+                await db.commit()
+                return {"message": "Pipeline arrêté", "project_id": str(project_id)}
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Projet absent de la file")
         return {"message": "Projet retiré de la file d'attente", "project_id": str(project_id)}
 
@@ -704,6 +717,38 @@ async def get_project_thumbnails(
     if not isinstance(raw, list):
         return []
     return [ThumbnailCandidateResponse.model_validate(item) for item in raw if isinstance(item, dict)]
+
+
+@router.get("/{project_id}/thumbnails/{index}/stream", response_model=None)
+async def stream_project_thumbnail(
+    project_id: uuid.UUID,
+    index: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> FileResponse:
+    await get_user_project(db, project_id, current_user)
+    project = await db.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Projet introuvable")
+    raw = (project.config or {}).get("thumbnail_candidates")
+    if not isinstance(raw, list) or index < 0 or index >= len(raw):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Miniature introuvable")
+    item = raw[index]
+    if not isinstance(item, dict):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Miniature introuvable")
+    local_path = item.get("local_path")
+    if not local_path:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Fichier miniature absent")
+    file_path = Path(str(local_path)).resolve()
+    allowed_roots = [
+        Path("./tmp").resolve(),
+        Path("./output").resolve(),
+    ]
+    if not any(str(file_path).startswith(str(root)) for root in allowed_roots):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Chemin non autorisé")
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Fichier introuvable")
+    return FileResponse(str(file_path), media_type=_media_type_for_path(file_path))
 
 
 def _brief_to_response(
@@ -1010,13 +1055,14 @@ async def preview_media_asset_with_labels(
 
 @router.get("/{project_id}/audio", response_model=list[AudioFileResponse])
 async def list_project_audio_files(
-    project_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+    project_id: uuid.UUID,
+    iteration: int | None = Query(default=None, ge=1),
+    db: AsyncSession = Depends(get_db),
 ) -> list[AudioFileResponse]:
-    result = await db.execute(
-        select(AudioFile)
-        .where(AudioFile.project_id == project_id)
-        .order_by(AudioFile.segment_order)
-    )
+    query = select(AudioFile).where(AudioFile.project_id == project_id)
+    if iteration is not None:
+        query = query.where(AudioFile.iteration == iteration)
+    result = await db.execute(query.order_by(AudioFile.iteration, AudioFile.segment_order))
     return [AudioFileResponse.model_validate(a) for a in result.scalars().all()]
 
 

@@ -4,69 +4,45 @@ globs: ["agent/agents/*.py", "agent/core/base_agent.py"]
 alwaysApply: false
 ---
 
-# Comment coder un agent spécialisé
+# Agents spécialisés
 
-## Structure obligatoire
-
-Chaque agent hérite de `BaseAgent` :
+## Structure
 
 ```python
-from agent.core.base_agent import BaseAgent
-from dataclasses import dataclass
-
-@dataclass
-class MonInput:
-    project_id: str
-    # ...
-
-@dataclass
-class MonOutput:
-    result: str
-    # ...
-
 class MonAgent(BaseAgent):
     name = "mon_agent"
 
-    async def run(self, input_data: MonInput) -> MonOutput:
-        run = await self.start_run(input_data)
+    async def run(self, ctx: PipelineContext, ...) -> MonOutput:
+        run = await self.start_run(ctx.project_id, {...}, iteration=ctx.iteration)
         try:
-            result = await self._do_work(input_data)
-            await self.end_run(run, result)
+            result = await self._do_work(ctx, ...)
+            await self.end_run(run, {...})
             return result
         except Exception as e:
             await self.fail_run(run, e)
             raise
-
-    async def _do_work(self, input_data: MonInput) -> MonOutput:
-        # Logique métier ici
-        ...
 ```
 
-## Règles impératives
+## Règles
 
-- Jamais de logique dans `__init__`
-- Jamais d'appel direct à un autre agent — tout passe par `orchestrator.py`
-- Toujours logger début et fin dans `agent_runs` via `start_run` / `end_run`
-- Input et output sont des dataclasses ou modèles Pydantic typés
-- Sauvegarder le résultat en DB avant de retourner
-- Gérer le champ `iteration` pour les agents qui peuvent être relancés (monteur, chercheur média)
+- Pas de logique lourde dans `__init__` (client Anthropic dans `BaseAgent`)
+- Pas d'appel direct à un autre agent
+- Input/output : dataclasses ou Pydantic v2 — pas de dicts bruts en frontière
+- Persister en DB avant `return`
+- Gérer `ctx.iteration` pour agents relançables (media, editor, critic)
 
-## Appel Claude
+## LLM
 
-```python
-async def _call_claude(self, prompt: str, **kwargs) -> str:
-    response = await self.claude.messages.create(
-        model="claude-opus-4-5",
-        max_tokens=4096,
-        messages=[{"role": "user", "content": prompt}],
-        **kwargs
-    )
-    return response.content[0].text
-```
+Modèle et tokens via `resolve_model(self.name)` / `resolve_max_tokens(self.name)` (`llm_config.py`), pas de modèle hardcodé.
 
-## Communication inter-agents
+## Nouvel agent
 
-Les résultats sont échangés via la DB PostgreSQL et la queue Redis :
-- L'orchestrateur lit le résultat DB de l'agent N
-- Le passe en input à l'agent N+1
-- En cas d'itération, le rapport du critique est stocké en DB, l'orchestrateur relit et relance
+1. Hériter `BaseAgent`
+2. Ajouter à `AGENT_ORDER` et boucle `_run_main_loop` / `_STEP_TO_LOOP_IDX` dans `orchestrator.py`
+3. Entrée dans `pipeline_restart.py` si reprise possible
+4. Entrée `llm.agent_models` dans `data/agent_config.json`
+5. Tests dans `tests/` ; `graphify update .` si nouveau module
+
+## Skills vs agents
+
+Les modules sous `agent/skills/` sont des briques réutilisables (FFmpeg, TTS, publisher) — pas des agents orchestrés.

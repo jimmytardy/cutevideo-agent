@@ -1,0 +1,36 @@
+---
+description: Montage FFmpeg, design sonore et style vidéo YouTube
+globs: ["agent/skills/video/**", "agent/skills/audio/sound_design.py", "agent/skills/audio/audio_mixer.py", "agent/agents/editor_agent.py", "agent/agents/montage_planner_agent.py", "data/agent_config.json"]
+alwaysApply: false
+---
+
+# Montage vidéo et son
+
+## Hot path
+
+Décisions créatives : `montage_decisions.py`, `pacing_director.py`, `montage_planner_agent.py`.
+Rendu : `filter_graph_builder.py` + `ffmpeg_utils.assemble_from_montage_plan`.
+Style/config : `video_style_config.py` (SFX palette, textures, pacing, transitions impact).
+
+## FFmpeg (obligatoire)
+
+- Encodes lourds : `run_ffmpeg()` dans `ffmpeg_runtime.py`
+- `-threads` / `thread_args()` en **section output** ; `-filter_threads` via `filter_thread_args()` **avant le premier `-i`**
+- Fan-out par segment : `bounded_gather()` (`agent/core/concurrency.py`), pas `asyncio.gather` brut
+- SFX : synthèse lavfi dans `sound_design.py` (manifest CC0 = fallback opt-in)
+
+## Texte à l'écran
+
+- Riche (pop, typewriter, néon) : ASS via `animated_text.py`, mode `ass_overlay` — pas drawtext pour l'échelle
+- Fallback : `drawtext` dans `filter_graph_builder` si ASS indisponible
+- Burn ASS overlays : une fois post-assemblage (`editor_agent._apply_animated_text_overlays`)
+
+## Étalonnage / texture
+
+- `color_grade_from_style_block` + `build_texture_vf` + `lut3d` — même pass libx264, ordre grade → texture
+- Pre-grade archival : `build_source_pregrade_vf` par `visual_type`
+
+## Profils montage
+
+- Short : `video.short_montage_profile` dans `agent_config.json`
+- Long : backlog B1/B2 — aujourd'hui beat-cuts SFX long **non activés** dans `editor_agent` (guard shorts)

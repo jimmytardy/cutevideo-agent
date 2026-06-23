@@ -49,6 +49,8 @@ DYNAMISME (10 pts)
 - Changement visuel au moins toutes les 4 s (shorts) ?
 - Variété des mouvements (Ken Burns, transitions) — pas de monotonie ?
 - Plans trop longs sans variation (> 4 s) ?
+- Densité SFX (whoosh aux cuts, pop/impact sur texte et stats) — son bien calé sur l'image ?
+- Appuis-texte animés (ASS overlay) présents sur les beats clés ?
 - Si score dynamisme < 6 : start_from = "montage_planner_agent" ou "beat_planner_agent" si beats espacés
 
 VALEUR DU CONTENU (25 pts)

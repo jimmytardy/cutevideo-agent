@@ -25,3 +25,18 @@ def test_plan_pipeline_short_caps_at_two_even_when_unlimited() -> None:
     plan = plan_pipeline(cfg, project_format="short", target_duration_seconds=60, effective_max=None)
     assert plan["max_iterations"] == 2
     assert plan["max_iterations_unlimited"] is False
+
+
+def test_plan_pipeline_long_includes_metadata_and_thumbnail() -> None:
+    cfg = ChannelRuntimeConfig()
+    plan = plan_pipeline(cfg, project_format=None, target_duration_seconds=1800)
+    post = plan["post_production"]
+    assert post[0] == "metadata_agent"
+    assert "thumbnail_agent" in post
+
+
+def test_plan_pipeline_shorts_only_skips_thumbnail() -> None:
+    cfg = ChannelRuntimeConfig(production_mode="shorts_only")
+    plan = plan_pipeline(cfg, project_format="short", target_duration_seconds=60)
+    assert "metadata_agent" in plan["post_production"]
+    assert "thumbnail_agent" not in plan["post_production"]

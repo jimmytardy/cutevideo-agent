@@ -79,6 +79,33 @@
       "zoom_factor": 0.03,
       "pan_enabled": false
     },
+    "grade": {
+      "lut_by_theme": {
+        "histoire": "data/luts/vintage_warm.cube",
+        "science": "data/luts/cool_teal.cube",
+        "default": "data/luts/neutral.cube"
+      }
+    },
+    "texture": {
+      "grain": 8,
+      "vignette": true,
+      "vignette_angle": 0.22,
+      "light_leak": false,
+      "light_leak_opacity": 0.12,
+      "vhs": false,
+      "vhs_shift": 2,
+      "by_theme": {
+        "histoire": {
+          "grain": 12,
+          "vignette": true,
+          "light_leak": true
+        },
+        "true_crime": {
+          "grain": 10,
+          "vhs": true
+        }
+      }
+    },
     "transitions": {
       "enabled": true,
       "duration_s": 0.4,
@@ -99,8 +126,15 @@
         "vuslice",
         "vdslice",
         "fadeblack",
-        "fadewhite"
+        "fadewhite",
+        "glitch",
+        "flash_impact"
       ],
+      "impact": {
+        "glitch_frames": 6,
+        "glitch_noise": 35,
+        "flash_duration_s": 0.15
+      },
       "mood_defaults": {
         "dramatique": "dissolve",
         "tension": "dissolve",
@@ -145,6 +179,23 @@
       "sfx": {
         "beat_cuts_enabled": true,
         "max_cues_per_minute": 12
+      }
+    },
+    "long_montage_profile": {
+      "sfx": {
+        "beat_cuts_enabled": true,
+        "max_cues_per_minute": 10,
+        "text_pop_enabled": true
+      },
+      "inter_segment_flash": true,
+      "inter_segment_flash_duration_s": 0.15,
+      "pacing": {
+        "hook_transition": "fadewhite",
+        "mood_transitions": {
+          "energique": "wipeleft",
+          "dramatique": "dissolve",
+          "tension": "fadeblack"
+        }
       }
     }
   },
@@ -535,6 +586,51 @@
     "resolution": "1280:720",
     "max_clips_per_video": 3,
     "max_clips_per_short": 1
+  },
+  "pacing": {
+    "max_visual_hold_s": 5.0,
+    "max_visual_hold_short_s": 2.5
+  },
+  "text_overlays": {
+    "animation": {
+      "enabled": true,
+      "highlight_color": "#FFE600",
+      "glow_intensity": 0.5,
+      "by_visual_type": {
+        "statistic_highlight": "pop_bounce+highlight",
+        "quote_card": "typewriter",
+        "text_card": "pop_bounce",
+        "headline_overlay": "neon_glow",
+        "lower_third": "mask_reveal"
+      }
+    }
+  },
+  "sound_design": {
+    "sfx_palette": {
+      "pop": { "gain_db": -18.0, "duration_s": 0.2 },
+      "impact": { "gain_db": -16.0, "duration_s": 0.4 },
+      "riser": { "gain_db": -20.0, "duration_s": 1.5 },
+      "whoosh": { "gain_db": -22.0, "duration_s": 0.5 },
+      "accent": { "gain_db": -20.0, "duration_s": 0.6 },
+      "click": { "gain_db": -22.0, "duration_s": 0.08 }
+    },
+    "music_reveal_cut": {
+      "enabled": true,
+      "duration_ms": 300,
+      "depth": 0.02
+    },
+    "ambient_bed": {
+      "enabled": true,
+      "gain_db": -30.0,
+      "theme_presets": {
+        "histoire": "room",
+        "nature": "wind",
+        "sciences": "room",
+        "art": "room",
+        "calme": "room",
+        "sport": "crowd"
+      }
+    }
   },
   "audio_mix": {
     "music_volume_with_voice": 0.06,

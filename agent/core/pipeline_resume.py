@@ -15,6 +15,7 @@ _CREATION_AGENT_ORDER: list[str] = [
     "hook_optimizer_agent",
     "revision_agent",
     "narrator_agent",
+    "art_director_agent",
     "beat_planner_agent",
     "diagram_specialist_agent",
     "media_agent",
@@ -22,6 +23,10 @@ _CREATION_AGENT_ORDER: list[str] = [
     "editor_agent",
     "subtitle_agent",
     "critic_agent",
+    "metadata_agent",
+    "thumbnail_agent",
+    "clipper_agent",
+    "short_editor_agent",
 ]
 
 _AGENT_ORDER_INDEX: dict[str, int] = {
@@ -43,8 +48,6 @@ def next_agent_after(agent_name: str) -> str:
     if idx is None:
         return _FIRST_AGENT
     if idx + 1 >= len(_CREATION_AGENT_ORDER):
-        if agent_name == "critic_agent":
-            return "clipper_agent"
         return agent_name
     return _CREATION_AGENT_ORDER[idx + 1]
 

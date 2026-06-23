@@ -71,10 +71,23 @@ class NarratorAgent(BaseAgent):
             await self.fail_run(run, e)
             raise
 
-    async def _clear_existing_audio(self, project_id: uuid.UUID) -> None:
+    @staticmethod
+    def _audio_iteration(ctx: "PipelineContext") -> int:
+        from agent.core.short_derivation import derivation_iteration
+
+        if ctx.derivation_short_index is not None:
+            return derivation_iteration(ctx.derivation_short_index)
+        return ctx.iteration
+
+    async def _clear_existing_audio(
+        self, project_id: uuid.UUID, *, iteration: int
+    ) -> None:
         async with AsyncSessionFactory() as session:
             await session.execute(
-                delete(AudioFile).where(AudioFile.project_id == project_id)
+                delete(AudioFile).where(
+                    AudioFile.project_id == project_id,
+                    AudioFile.iteration == iteration,
+                )
             )
             await session.commit()
 
@@ -84,7 +97,9 @@ class NarratorAgent(BaseAgent):
         segments = scenario.segments or []
         voice_segments = [s for s in segments if segment_needs_voice(s)]
 
-        await self._clear_existing_audio(ctx.project_id)
+        await self._clear_existing_audio(
+            ctx.project_id, iteration=self._audio_iteration(ctx)
+        )
 
         output_dir = Path(f"./tmp/{ctx.project_id}/audio")
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -224,6 +239,7 @@ class NarratorAgent(BaseAgent):
         async with AsyncSessionFactory() as session:
             audio_file = AudioFile(
                 project_id=ctx.project_id,
+                iteration=self._audio_iteration(ctx),
                 segment_order=order,
                 local_path=str(output_path),
                 duration_s=duration_s,

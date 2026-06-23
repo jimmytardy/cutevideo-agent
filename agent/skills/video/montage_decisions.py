@@ -22,10 +22,15 @@ def load_transition_config(*, is_short: bool = False) -> TransitionConfig:
     return load_montage_transition_config(is_short=is_short)
 
 
+_REVEAL_HOOKS = frozenset({"fait_surprenant", "revelateur", "révélateur", "chiffre"})
+_REVEAL_VISUAL_TYPES = frozenset({"statistic_highlight", "headline_overlay"})
+_IMPACT_TRANSITIONS = frozenset({"glitch", "flash_impact", "hrslice", "hlslice", "vuslice", "vdslice"})
+
+
 def validate_transition(name: str, config: TransitionConfig | None = None) -> str:
     cfg = config or load_transition_config()
     key = (name or "fade").strip().lower()
-    if key in cfg.catalog:
+    if key in _IMPACT_TRANSITIONS or key in cfg.catalog:
         return key
     return "fade"
 
@@ -37,11 +42,18 @@ def resolve_transition(
     next_visual_type: str,
     default_transition: str = "fade",
     transition_hint: str = "",
+    is_chapter_break: bool = False,
+    hook_type: str = "",
     config: TransitionConfig | None = None,
 ) -> str:
     cfg = config or load_transition_config()
     if transition_hint:
         return validate_transition(transition_hint, cfg)
+    hook = (hook_type or "").strip().lower()
+    if is_chapter_break or hook in _REVEAL_HOOKS:
+        if hook in _REVEAL_HOOKS or next_visual_type.lower() in _REVEAL_VISUAL_TYPES:
+            return validate_transition("flash_impact", cfg)
+        return validate_transition("glitch", cfg)
     mood_key = (segment_mood or "calme").lower().strip()
     if mood_key in cfg.mood_defaults:
         return validate_transition(cfg.mood_defaults[mood_key], cfg)
@@ -64,9 +76,14 @@ def resolve_motion_style(
     index: int = 0,
     *,
     is_short: bool = False,
+    hook_type: str = "",
 ) -> MotionStyle:
     if motion_hint in ("static", "zoom_in", "zoom_out", "pan_left", "pan_right", "punch_zoom"):
         return motion_hint  # type: ignore[return-value]
+    vt = (visual_type or "").lower()
+    hook = (hook_type or "").strip().lower()
+    if vt == "statistic_highlight" or hook in _REVEAL_HOOKS:
+        return "punch_zoom"
     if asset_type == "video":
         vt = (visual_type or "").lower()
         if vt in ("sports_action", "wildlife_action", "archival_footage", "news_broll"):
@@ -84,18 +101,47 @@ def resolve_motion_style(
     return style
 
 
-def resolve_overlay_mode(visual_type: str, on_screen_text: str = "") -> str:
+def resolve_text_animation(visual_type: str, hook_type: str = "") -> str:
+    """Mappe visual_type / hook vers un style d'animation ASS."""
+    from agent.skills.video.video_style_config import load_text_overlay_animation_config
+
+    cfg = load_text_overlay_animation_config()
+    if not cfg.enabled:
+        return "pop_bounce"
+    vt = (visual_type or "").lower().strip()
+    hook = (hook_type or "").strip().lower()
+    if vt in cfg.by_visual_type:
+        return str(cfg.by_visual_type[vt])
+    if hook in _REVEAL_HOOKS:
+        return "pop_bounce+highlight"
+    return "pop_bounce"
+
+
+def resolve_overlay_mode(
+    visual_type: str,
+    on_screen_text: str = "",
+    *,
+    hook_type: str = "",
+) -> str:
     vt = (visual_type or "").lower()
-    if vt in ("quote_card", "statistic_highlight", "text_card", "headline_overlay", "lower_third"):
+    from agent.skills.video.video_style_config import load_text_overlay_animation_config
+
+    anim_cfg = load_text_overlay_animation_config()
+    drawtext_types = (
+        "quote_card",
+        "statistic_highlight",
+        "text_card",
+        "headline_overlay",
+        "lower_third",
+    )
+    if vt in drawtext_types or (on_screen_text and on_screen_text.strip()):
+        if anim_cfg.enabled and resolve_text_animation(vt, hook_type=hook_type):
+            return "ass_overlay"
         return "drawtext"
     from agent.skills.media_sources.ai.prompt_builder import is_diagram_visual_type
 
-    # Les diagrammes gardent l'overlay vectoriel (labels positionnés).
     if is_diagram_visual_type(vt):
         return "svg_overlay"
-    # Appui-texte sur n'importe quel plan (photo, archive…) dès qu'un texte est fourni.
-    if on_screen_text and on_screen_text.strip():
-        return "drawtext"
     return "none"
 
 

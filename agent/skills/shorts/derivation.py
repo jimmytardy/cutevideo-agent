@@ -101,7 +101,10 @@ async def run_assembly_for_short_derivation(
 
         audio_result = await session.execute(
             select(AudioFile)
-            .where(AudioFile.project_id == ctx.project_id)
+            .where(
+                AudioFile.project_id == ctx.project_id,
+                AudioFile.iteration == deriv_iteration,
+            )
             .order_by(AudioFile.segment_order)
         )
         audio_files = [

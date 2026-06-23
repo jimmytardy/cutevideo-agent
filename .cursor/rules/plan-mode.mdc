@@ -1,0 +1,42 @@
+---
+description: >-
+  Bonnes pratiques Plan Mode et gates de vérification pour cutevideo-agent.
+  Apply when creating or refining implementation plans for this project.
+alwaysApply: false
+---
+
+# Plan Mode — cutevideo-agent
+
+Complète le skill global `effective-plans`. Cette rule ajoute les contraintes domaine du projet.
+
+## Exploration avant plan
+
+- `graphify query "<question>"` si `graphify-out/graph.json` existe (avant grep massif)
+- `orchestrator.py` → `_STEPS` / `_STEP_TO_LOOP_IDX` = source de vérité du pipeline
+- Fichiers canoniques à citer : `@agent/core/base_agent.py`, `@agent/core/channel_config.py`, `@data/agent_config.json`
+
+## Gates par jalon
+
+Chaque todo frontmatter inclut sa gate de vérification :
+
+| Domaine | Gate |
+|---------|------|
+| Python | `pytest tests/<module>.py` ou `pytest -k "pattern"` |
+| Schéma DB | `alembic upgrade head` si migration touchée |
+| Changements structurels | `graphify update .` en fin de vague |
+| Encodage vidéo/audio | `run_ffmpeg()` + `*thread_args()` + `*filter_thread_args()` |
+| Fan-out par segment | `bounded_gather()` (pas de `asyncio.gather` brut) |
+| Pipeline montage | critic score si applicable (ex. ≥ 70/100) |
+| Frontend | `cd dashboard && npm run build` ou test ciblé |
+
+## Conventions pipeline (rappel plan)
+
+- DB : `agent/core/database.py` uniquement
+- Config : `agent/core/config.py` + `ChannelRuntimeConfig`
+- Agents : héritent `BaseAgent`, sauvegardent en DB avant retour
+- Orchestration : uniquement via `orchestrator.py`
+- Médias : licence vérifiée (CC0, CC-BY, domaine public)
+
+## Persistance
+
+Pour les grosses features : Save to workspace → `.cursor/plans/` avec `isProject: true`.

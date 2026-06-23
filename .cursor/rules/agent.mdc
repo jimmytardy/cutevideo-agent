@@ -6,30 +6,36 @@ alwaysApply: true
 
 # Contexte projet
 
-Agent IA autonome de création vidéo éducative.
-Pipeline multi-agents : chaque agent a un rôle unique, communique via PostgreSQL/Redis.
-Thèmes : histoire, science, nature — vidéos longues (10-60 min) + shorts automatiques.
+Agent IA autonome de création vidéo éducative (long 16:9 + shorts 9:16).
+Pipeline multi-agents : PostgreSQL/Redis, config via `agent/core/config.py` + `ChannelRuntimeConfig`.
 
 ## Règles absolues
 
-- Toute opération DB passe par `agent/core/database.py` (SQLAlchemy async sessions)
-- Toute config passe par `agent/core/config.py` (jamais de valeurs hardcodées)
-- Chaque agent hérite de `BaseAgent` et implémente `run()`
-- Chaque agent sauvegarde son résultat en DB avant de retourner
-- Les agents ne s'appellent jamais directement — tout passe par `orchestrator.py`
-- Les médias utilisés doivent TOUJOURS avoir une licence vérifiée (CC0, CC-BY, domaine public)
-- Pas de secrets dans le code — uniquement depuis les variables d'environnement via `.env`
+- DB : `agent/core/database.py` (SQLAlchemy async) — jamais de SQL brut ad hoc
+- Config : `data/agent_config.json` + `resolve_channel_config()` — pas de valeurs hardcodées
+- Agents : héritent de `BaseAgent`, implémentent `run()`, sauvent en DB via `start_run`/`end_run`/`fail_run`
+- Orchestration : uniquement via `agent/core/orchestrator.py` — jamais d'appel agent→agent direct
+- Médias : licence vérifiée (CC0, CC-BY, domaine public)
+- Secrets : `.env` uniquement
+- Modèles LLM : `agent/core/llm_config.py` (`resolve_model`, `resolve_max_tokens`) — pas de modèle en dur
 
-## Architecture
+## Pipeline création (source de vérité : `orchestrator.py`)
 
 ```
-Scénariste → Chercheur Média → Narrateur Voix → Monteur Vidéo
-    → Sous-titreur → Critique IA → Découpeur Shorts → Éditeur Shorts → Publisher
+Research → Outline → Scenario → [FactChecker, HookOptimizer, Revision]
+ → Narrator → [ArtDirector, BeatPlanner, DiagramSpecialist]
+ → Media → MontagePlanner → Editor → Subtitle → Critic (boucle)
+ → Metadata → Thumbnail → Clipper → ShortEditor
 ```
 
-## Thèmes supportés
+Publication asynchrone : `distribution_agent` → `agent/skills/publisher/executor.py`.
 
-- Histoire (France, monde, antiquité…)
-- Sciences (physique, biologie, astronomie…)
-- Nature (animaux, écologie, géographie…)
-- Art et culture
+## Navigation codebase
+
+- Graph : `graphify query "<question>"` si `graphify-out/graph.json` existe ; `graphify update .` après changement structurel
+- Wiki : `graphify-out/wiki/index.md` ; architecture détaillée : `CLAUDE.md`
+- Backlog actif : `docs/roadmap-qualite-video.md`
+
+## Thèmes
+
+Histoire, sciences, nature, art et culture — priorité sources dans `ChannelRuntimeConfig` / `THEME_SOURCE_PRIORITY`.

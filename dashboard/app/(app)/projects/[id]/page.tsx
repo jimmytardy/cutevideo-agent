@@ -234,15 +234,19 @@ export default function ProjectDetailPage({ params }: Props) {
     }
   }
 
-  const handleRunFrom = async (step: string) => {
+  const handleRunFrom = async (step: string, _iteration?: number) => {
     setActionError(null)
     setActionLoading(true)
     beginPipelineKickoff(step)
     try {
       await mutateProject({ ...project, status: 'queued' }, { revalidate: false })
       await runFromStep(id, step)
-      await mutateProject()
-      await revalidatePipelineData()
+      try {
+        await mutateProject()
+        await revalidatePipelineData()
+      } catch (revalidateError) {
+        console.warn('Revalidation pipeline après relancement :', revalidateError)
+      }
     } catch (e) {
       setPipelineKickoff(null)
       const message = e instanceof Error ? e.message : 'Erreur inconnue'

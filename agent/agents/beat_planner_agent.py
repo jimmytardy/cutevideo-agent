@@ -51,7 +51,10 @@ class BeatPlannerAgent(BaseAgent):
         async with AsyncSessionFactory() as session:
             audio_result = await session.execute(
                 select(AudioFile)
-                .where(AudioFile.project_id == ctx.project_id)
+                .where(
+                    AudioFile.project_id == ctx.project_id,
+                    AudioFile.iteration == ctx.iteration,
+                )
                 .order_by(AudioFile.segment_order)
             )
             audio_files = list(audio_result.scalars().all())

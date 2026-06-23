@@ -427,6 +427,11 @@ export interface ThumbnailCandidate {
   prompt: string | null
   attribution: string | null
   primary: boolean
+  ctr_score?: number | null
+}
+
+export function projectThumbnailStreamUrl(projectId: string, index: number): string {
+  return authenticatedMediaUrl(`/api/v1/projects/${projectId}/thumbnails/${index}/stream`)
 }
 
 export interface Scenario {
@@ -441,6 +446,7 @@ export interface Scenario {
 export interface AudioFile {
   id: string
   project_id: string
+  iteration: number
   segment_order: number | null
   local_path: string | null
   duration_s: number | null

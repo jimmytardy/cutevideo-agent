@@ -23,7 +23,7 @@ from agent.core.visual_beats import (
     parse_visual_beats,
 )
 from agent.skills.media.clip_source_analyzer import clip_metadata_from_dict
-from agent.skills.video.montage_profile import is_short_montage
+from agent.skills.video.montage_profile import is_short_montage, long_pacing_config
 from agent.skills.video.pacing_director import pacing_hints_from_dict
 from agent.skills.video.diagram_overlay_renderer import (
     render_diagram_overlay_png,
@@ -35,8 +35,10 @@ from agent.skills.video.montage_decisions import (
     load_transition_config,
     resolve_motion_style,
     resolve_overlay_mode,
+    resolve_text_animation,
     resolve_transition,
 )
+from agent.skills.video.video_style_config import resolve_max_visual_hold_s
 from agent.skills.video.clip_timeline_normalize import (
     TimelineClipDraft,
     expand_timeline_to_clip_drafts,
@@ -123,7 +125,9 @@ class MontagePlannerAgent(BaseAgent):
             raise
 
     async def _build_and_persist(self, ctx: "PipelineContext", scenario: Scenario) -> MontagePlan:
-        media_assets, audio_files = await self._load_assets(ctx.project_id)
+        media_assets, audio_files = await self._load_assets(
+            ctx.project_id, iteration=ctx.iteration
+        )
         plan_data = await self.build_montage_plan_data(
             ctx, scenario, media_assets, audio_files,
         )
@@ -165,15 +169,28 @@ class MontagePlannerAgent(BaseAgent):
         )
 
     @staticmethod
-    async def _load_assets(project_id: uuid.UUID) -> tuple[list[MediaAsset], list[AudioFile]]:
+    async def _load_assets(
+        project_id: uuid.UUID,
+        *,
+        iteration: int,
+    ) -> tuple[list[MediaAsset], list[AudioFile]]:
         async with AsyncSessionFactory() as session:
             ma = await session.execute(
                 select(MediaAsset)
-                .where(MediaAsset.project_id == project_id, MediaAsset.selected == True)
+                .where(
+                    MediaAsset.project_id == project_id,
+                    MediaAsset.selected == True,
+                    MediaAsset.iteration == iteration,
+                )
                 .order_by(MediaAsset.segment_order, MediaAsset.beat_index)
             )
             af = await session.execute(
-                select(AudioFile).where(AudioFile.project_id == project_id).order_by(AudioFile.segment_order)
+                select(AudioFile)
+                .where(
+                    AudioFile.project_id == project_id,
+                    AudioFile.iteration == iteration,
+                )
+                .order_by(AudioFile.segment_order)
             )
             return list(ma.scalars().all()), list(af.scalars().all())
 
@@ -262,7 +279,8 @@ class MontagePlannerAgent(BaseAgent):
         )
         strip_source = bool(seg.get("strip_source_audio", needs_voice))
         drafts: list[TimelineClipDraft] = []
-        max_static = float(ctx.channel_config.max_static_shot_s)
+        max_hold = resolve_max_visual_hold_s(is_short=is_short)
+        max_static = min(float(ctx.channel_config.max_static_shot_s), max_hold)
         for i, entry in enumerate(timeline):
             src_order = entry.beat.order
             asset = asset_by_beat.get(src_order)
@@ -377,6 +395,14 @@ class MontagePlannerAgent(BaseAgent):
         )
         gemini_api_key = gemini_ctx.key
         trans_cfg = load_transition_config(is_short=is_short)
+        mood_transitions = (
+            {}
+            if is_short
+            else {
+                str(k).lower(): str(v)
+                for k, v in (long_pacing_config().get("mood_transitions") or {}).items()
+            }
+        )
         pacing = pacing_hints_from_dict(getattr(ctx, "pacing_hints", None))
         profile = profile_from_config(is_short)
         overlay_dir = Path(f"./tmp/{ctx.project_id}/overlays")
@@ -393,17 +419,24 @@ class MontagePlannerAgent(BaseAgent):
             eb = effective_beats[i] if effective_beats and i < len(effective_beats) else None
             beat_obj = beat_objs[i] if beat_objs and i < len(beat_objs) else None
             pacing_hint = pacing.get((segment_order, clip.beat_order))
+            hook_type = ""
             motion_hint = (
                 (pacing_hint.motion_hint if pacing_hint else "")
                 or (eb.motion_hint if eb else "")
             )
-            overlay_mode = resolve_overlay_mode(clip.visual_type, clip.on_screen_text)
+            overlay_mode = resolve_overlay_mode(
+                clip.visual_type,
+                clip.on_screen_text,
+                hook_type=hook_type,
+            )
+            text_animation = resolve_text_animation(clip.visual_type, hook_type=hook_type)
             motion_style = resolve_motion_style(
                 clip.visual_type,
                 clip.asset_type,
                 motion_hint=motion_hint,
                 index=i,
                 is_short=is_short,
+                hook_type=hook_type,
             )
 
             text_layout: list[dict[str, Any]] = []
@@ -442,6 +475,8 @@ class MontagePlannerAgent(BaseAgent):
                             png_path,
                         )
                         overlay_path = str(png_path)
+            elif overlay_mode == "ass_overlay" and clip.on_screen_text:
+                overlay_path = ""
             elif overlay_mode == "drawtext" and clip.on_screen_text:
                 png_path = overlay_dir / f"seg{segment_order:02d}_beat{i:02d}_txt.png"
                 try:
@@ -472,12 +507,16 @@ class MontagePlannerAgent(BaseAgent):
                 )
                 if is_short and segment_mood.lower() == "energique" and not transition_hint:
                     transition_hint = "pixelize"
+                if not transition_hint and segment_mood.lower() in mood_transitions:
+                    transition_hint = mood_transitions[segment_mood.lower()]
                 transition_out = resolve_transition(
                     segment_mood=segment_mood,
                     prev_visual_type=clip.visual_type,
                     next_visual_type=next_clip.visual_type,
                     default_transition=default_transition,
                     transition_hint=transition_hint,
+                    is_chapter_break=i == 0 and segment_order > 1,
+                    hook_type=hook_type,
                     config=trans_cfg,
                 )
 
@@ -486,6 +525,7 @@ class MontagePlannerAgent(BaseAgent):
                 "overlay_mode": overlay_mode,
                 "overlay_asset_path": overlay_path,
                 "text_layout": text_layout,
+                "text_animation": text_animation if overlay_mode == "ass_overlay" else "",
                 "transition_out": transition_out,
                 "transition_duration_s": trans_cfg.duration_s,
             }))

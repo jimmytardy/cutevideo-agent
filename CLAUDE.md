@@ -116,10 +116,10 @@ Theme-based media source priority lives in `THEME_SOURCE_PRIORITY` (agent/core/c
 
 Reusable building blocks called by agents — not agents themselves:
 
-- `audio/` — `tts.py` (edge-tts / Azure Neural via `azure_tts.py`), `audio_mixer.py`, `ssml_builder.py` (maps `delivery_style`/mood → Azure SSML `express-as` style + prosody; tolerant of model vocab via `STYLE_ALIASES` / `_normalize_pace`; **DragonHD voices drop `express-as`, only `rate`/`pitch` apply**), `whisper_utils.py`
-- `video/` — `ffmpeg_utils.py` (encode/concat/subtitle burn), `filter_graph_builder.py` (per-segment `filter_complex` render — editor hot path; applies motion, xfade transitions, `drawtext`/`svg_overlay`), `montage_decisions.py` (per-beat creative decisions: `resolve_motion_style` alternates Ken Burns for photos, `resolve_overlay_mode` triggers a text overlay whenever a beat has `on_screen_text`, `resolve_transition`), `ken_burns.py`, `shorts.py`, `viral_subtitles.py`, `ffmpeg_runtime.py` (shared CPU/RAM guardrails)
+- `audio/` — `tts.py` (edge-tts / Azure Neural via `azure_tts.py`), `audio_mixer.py`, `ssml_builder.py` (maps `delivery_style`/mood → Azure SSML `express-as` style + prosody; tolerant of model vocab via `STYLE_ALIASES` / `_normalize_pace`; **DragonHD voices drop `express-as`, only `rate`/`pitch` apply**), `whisper_utils.py`, `sound_design.py` (SFX whoosh/pop/impact/click/riser, beat-cut cues long+short, ambient bed)
+- `video/` — `ffmpeg_utils.py` (encode/concat/subtitle burn; flash blanc inter-chapitres long via `long_montage_profile`), `filter_graph_builder.py` (per-segment `filter_complex` render — editor hot path; applies motion, xfade transitions, `drawtext`/`svg_overlay`), `montage_profile.py` (`short_montage_profile` / `long_montage_profile`, `load_sfx_config`), `pacing_director.py` (hints hook long `fadewhite`, mood transitions), `montage_decisions.py` (per-beat creative decisions: `resolve_motion_style` alternates Ken Burns for photos, `resolve_overlay_mode` triggers a text overlay whenever a beat has `on_screen_text`, `resolve_transition`), `ken_burns.py`, `shorts.py`, `viral_subtitles.py`, `ffmpeg_runtime.py` (shared CPU/RAM guardrails)
 - `media_sources/` — one file per source (Gallica, Europeana, Wikimedia, Unsplash, Pexels, Pixabay, NASA, Internet Archive) + `ai/` for Flux/Imagen3 fallback
-- `publisher/` — `youtube.py`, `tiktok_comments.py`, `instagram.py`, `composio_client.py` (TikTok OAuth), `executor.py`
+- `publisher/` — `youtube.py`, `tiktok_comments.py`, `instagram.py`, `composio_client.py` (TikTok OAuth), `executor.py` (publication YouTube utilise `Project.config.thumbnail` de `thumbnail_agent`, fallback `generate_thumbnail`)
 
 ### FFmpeg CPU/RAM guardrails
 

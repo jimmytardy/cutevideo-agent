@@ -109,6 +109,7 @@ async def mix_multi_segment_music(
     output_path: Path,
     music_volume: float = MUSIC_VOLUME,
     duck_narration: bool = False,
+    reveal_timestamps: list[float] | None = None,
 ) -> bool:
     """Mixe de la musique par blocs de mood avec crossfade entre transitions."""
     from agent.skills.audio.music_selector import select_music_for_mood
@@ -188,6 +189,12 @@ async def mix_multi_segment_music(
             f"{''.join(music_labels)}amix=inputs={len(music_labels)}:duration=longest:normalize=0{bed_label}"
         )
 
+    reveal_filter = _build_music_reveal_cut_filter(reveal_timestamps or [])
+    if reveal_filter:
+        ducked_bed = "[musicduck]"
+        filter_parts.append(f"{bed_label}{reveal_filter}{ducked_bed}")
+        bed_label = ducked_bed
+
     if duck_narration:
         filter_parts.append(
             f"{bed_label}[0:a]sidechaincompress=threshold=0.02:ratio=8:attack=200:release=1000[ducked]"
@@ -217,6 +224,25 @@ async def mix_multi_segment_music(
 async def _copy_audio(src: Path, dst: Path) -> None:
     import shutil
     await asyncio.get_event_loop().run_in_executor(None, shutil.copy2, src, dst)
+
+
+def _build_music_reveal_cut_filter(reveal_timestamps: list[float]) -> str:
+    """Automation volume ponctuelle sur la musique aux révélations."""
+    from agent.skills.video.video_style_config import load_music_reveal_cut_config
+
+    cfg = load_music_reveal_cut_config()
+    if not cfg.get("enabled") or not reveal_timestamps:
+        return ""
+
+    duration_s = max(int(cfg.get("duration_ms", 300)) / 1000.0, 0.05)
+    depth = float(cfg.get("depth", 0.02))
+    expr_parts: list[str] = []
+    for t in reveal_timestamps:
+        start = max(t, 0.0)
+        end = start + duration_s
+        expr_parts.append(f"between(t,{start:.3f},{end:.3f})")
+    enable = "+".join(expr_parts)
+    return f"volume=enable='{enable}':volume={depth}"
 
 
 async def _run(cmd: list[str]) -> None:

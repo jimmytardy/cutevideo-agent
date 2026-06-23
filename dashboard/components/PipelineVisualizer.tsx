@@ -572,7 +572,7 @@ interface Props {
   agentRuns: AgentRun[]
   criticReports: CriticReport[]
   pipelineKickoff?: PipelineKickoff | null
-  onRunFrom?: (step: string) => void | Promise<void>
+  onRunFrom?: (step: string, iteration?: number) => void | Promise<void>
   onStop?: () => void
   onRestartFromCritic?: (reportId: string) => void
   selection?: PipelineSelection
@@ -631,7 +631,9 @@ export default function PipelineVisualizer({
   const iterRevision = iterationRevisionAgents
     ?? ['revision_agent', ...iterFirst]
   const postAgents = postProductionAgents
-    ?? (isShort ? ['short_editor_agent'] : ['clipper_agent', 'short_editor_agent'])
+    ?? (isShort
+      ? ['metadata_agent', 'short_editor_agent']
+      : ['metadata_agent', 'thumbnail_agent', 'clipper_agent', 'short_editor_agent'])
 
   const resumeTarget = getResumeStep(
     agentRuns,
@@ -684,9 +686,10 @@ export default function PipelineVisualizer({
 
   const handleConfirm = async () => {
     if (!confirmTarget || !onRunFrom) return
+    const target = confirmTarget
+    setConfirmTarget(null)
     try {
-      await onRunFrom(confirmTarget.step)
-      setConfirmTarget(null)
+      await onRunFrom(target.step, target.iteration)
     } catch {
       // L'erreur est affichée par la page parente (actionError).
     }
@@ -892,7 +895,9 @@ export default function PipelineVisualizer({
           )}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setConfirmTarget(null)}>Annuler</Button>
+          <Button onClick={() => setConfirmTarget(null)} disabled={actionLoading}>
+            Annuler
+          </Button>
           <Button
             variant="contained"
             color={confirmTarget?.mode === 'resume' ? 'primary' : 'warning'}

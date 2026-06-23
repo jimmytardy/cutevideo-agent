@@ -35,9 +35,10 @@ alwaysApply: true
 
 ## Async
 
-- Utiliser `asyncio.gather()` pour le parallélisme quand possible
+- Parallélisme I/O : `asyncio.gather()` ou `bounded_gather()` (`agent/core/concurrency.py`) pour fan-out segmentaire (TTS, médias, ffmpeg)
 - Pas de `time.sleep()` — utiliser `asyncio.sleep()`
 - Context managers async (`async with`) pour les connexions DB et HTTP
+- Encodes ffmpeg : toujours `run_ffmpeg()` (`agent/skills/video/ffmpeg_runtime.py`), sémaphore global = 1
 
 ## Fichiers
 

@@ -10,6 +10,7 @@ import ffmpeg
 from agent.core.database import AudioFile
 from agent.core.montage_plan import MontagePlanData, SegmentMontagePlan
 from agent.skills.video.filter_graph_builder import render_segment_from_clips
+from agent.skills.video.montage_profile import inter_segment_flash_config
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,53 @@ async def _run_ffmpeg(cmd: list[str]) -> None:
     await run_ffmpeg(cmd)
 
 
+async def _apply_inter_segment_flash(
+    video_path: Path,
+    output_path: Path,
+    flash_duration_s: float = 0.15,
+) -> None:
+    """Flash blanc fade in/out au début d'un segment (rupture chapitre long)."""
+    import asyncio
+
+    probe_cmd = [
+        "ffprobe", "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=width,height",
+        "-of", "csv=p=0:s=x",
+        str(video_path),
+    ]
+    proc = await asyncio.create_subprocess_exec(
+        *probe_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+    )
+    stdout, _ = await proc.communicate()
+    dims = stdout.decode().strip().split("x")
+    width = int(dims[0]) if dims and dims[0].isdigit() else 1920
+    height = int(dims[1]) if len(dims) > 1 and dims[1].isdigit() else 1080
+
+    half = max(flash_duration_s / 2, 0.04)
+    filter_complex = (
+        f"color=c=white:s={width}x{height}:d={flash_duration_s:.3f}:r=30,format=rgba,"
+        f"fade=t=in:st=0:d={half:.3f}:alpha=1,"
+        f"fade=t=out:st={half:.3f}:d={half:.3f}:alpha=1[flash];"
+        f"[0:v][flash]overlay=0:0:enable='lt(t\\,{flash_duration_s:.3f})'[vout]"
+    )
+    from agent.skills.video.ffmpeg_runtime import ffmpeg_preset, thread_args, filter_thread_args
+
+    cmd = [
+        "ffmpeg", "-y",
+        *filter_thread_args(),
+        "-i", str(video_path),
+        "-filter_complex", filter_complex,
+        "-map", "[vout]", "-map", "0:a?",
+        *thread_args(),
+        "-c:v", "libx264", "-crf", "22", "-preset", ffmpeg_preset(),
+        "-c:a", "copy",
+        "-movflags", "+faststart",
+        str(output_path),
+    ]
+    await _run_ffmpeg(cmd)
+
+
 def _assert_audio_stream(video_path: Path) -> None:
     try:
         probe = ffmpeg.probe(str(video_path))
@@ -57,6 +105,7 @@ async def assemble_from_montage_plan(
     grade: str = "",
     *,
     force_vertical: bool = False,
+    theme: str = "",
 ) -> float:
     """Assemble une vidéo depuis un MontagePlan (chemin unique du monteur)."""
     if not montage_plan.segments:
@@ -69,6 +118,7 @@ async def assemble_from_montage_plan(
     }
     is_vertical = montage_plan.is_vertical or force_vertical
     video_segments: list[Path] = []
+    flash_enabled, flash_duration_s = inter_segment_flash_config(is_short=is_vertical)
 
     for seg_plan in sorted(montage_plan.segments, key=lambda s: s.segment_order):
         order = seg_plan.segment_order
@@ -84,7 +134,12 @@ async def assemble_from_montage_plan(
             seg_path,
             is_vertical=is_vertical,
             grade=grade,
+            theme=theme,
         )
+        if flash_enabled and order > 1:
+            flashed_path = tmp_dir / f"segment_{order:02d}_flash.mp4"
+            await _apply_inter_segment_flash(seg_path, flashed_path, flash_duration_s)
+            seg_path = flashed_path
         video_segments.append(seg_path)
 
     concat_list = tmp_dir / "concat.txt"

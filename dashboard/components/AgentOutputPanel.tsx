@@ -24,6 +24,7 @@ import {
   pipelineProgressUrl,
   montagePlanUrl,
   projectScenarioUrl,
+  projectThumbnailStreamUrl,
   type AgentProgressItem,
   type AgentRun,
   type MediaAsset,
@@ -875,10 +876,12 @@ function MetadataView({
 }
 
 function ThumbnailView({
+  projectId,
   candidates,
   isRunning,
   agentRun,
 }: {
+  projectId: string
   candidates: ThumbnailCandidate[] | undefined
   isRunning: boolean
   agentRun?: AgentRun
@@ -893,18 +896,45 @@ function ThumbnailView({
       {candidates.map((item, i) => (
         <Card key={i} variant="outlined">
           <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
-            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: item.prompt ? 0.5 : 0 }}>
-              <Chip size="small" label={`Concept ${i + 1}`} color={item.primary ? 'primary' : 'default'} />
-              {item.primary && <Chip size="small" label="Principal" color="success" variant="outlined" />}
+            <Box sx={{ display: 'flex', gap: 2, flexWrap: { xs: 'wrap', sm: 'nowrap' } }}>
+              {item.local_path && (
+                <Box
+                  component="img"
+                  src={projectThumbnailStreamUrl(projectId, i)}
+                  alt={`Concept miniature ${i + 1}`}
+                  sx={{
+                    width: 240,
+                    minWidth: 200,
+                    height: 135,
+                    objectFit: 'cover',
+                    borderRadius: 1,
+                    bgcolor: 'action.hover',
+                    flexShrink: 0,
+                  }}
+                />
+              )}
+              <Box sx={{ flex: 1, minWidth: 0 }}>
+                <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: item.prompt ? 0.5 : 0 }}>
+                  <Chip size="small" label={`Concept ${i + 1}`} color={item.primary ? 'primary' : 'default'} />
+                  {item.primary && <Chip size="small" label="Principal" color="success" variant="outlined" />}
+                  {item.ctr_score != null && (
+                    <Chip
+                      size="small"
+                      label={`CTR estimé ${Math.round(item.ctr_score * 100)} %`}
+                      variant="outlined"
+                    />
+                  )}
+                </Box>
+                {item.prompt && (
+                  <Typography variant="body2" color="text.secondary">{item.prompt}</Typography>
+                )}
+                {item.attribution && (
+                  <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
+                    {item.attribution}
+                  </Typography>
+                )}
+              </Box>
             </Box>
-            {item.prompt && (
-              <Typography variant="body2" color="text.secondary">{item.prompt}</Typography>
-            )}
-            {item.attribution && (
-              <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
-                {item.attribution}
-              </Typography>
-            )}
           </CardContent>
         </Card>
       ))}
@@ -1167,6 +1197,7 @@ export default function AgentOutputPanel({
       )}
       {step === 'thumbnail_agent' && (
         <ThumbnailView
+          projectId={projectId}
           candidates={thumbnailCandidates}
           isRunning={isRunning}
           agentRun={agentRun}

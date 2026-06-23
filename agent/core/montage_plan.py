@@ -21,7 +21,7 @@ class ClipMetadata(BaseModel):
 
 
 MotionStyle = Literal["static", "zoom_in", "zoom_out", "pan_left", "pan_right", "punch_zoom"]
-OverlayMode = Literal["none", "drawtext", "svg_overlay"]
+OverlayMode = Literal["none", "drawtext", "svg_overlay", "ass_overlay"]
 AssetType = Literal["image", "video", "color"]
 
 
@@ -43,6 +43,7 @@ class BeatClipPlan(BaseModel):
     motion_style: MotionStyle = "zoom_in"
     overlay_mode: OverlayMode = "none"
     overlay_asset_path: str = ""
+    text_animation: str = ""
     strip_source_audio: bool = True
 
 

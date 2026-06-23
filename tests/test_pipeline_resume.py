@@ -23,11 +23,15 @@ def test_next_agent_after_media() -> None:
 
 
 def test_next_agent_after_narrator() -> None:
-    assert next_agent_after("narrator_agent") == "beat_planner_agent"
+    assert next_agent_after("narrator_agent") == "art_director_agent"
+
+
+def test_next_agent_after_art_director() -> None:
+    assert next_agent_after("art_director_agent") == "beat_planner_agent"
 
 
 def test_next_agent_after_critic() -> None:
-    assert next_agent_after("critic_agent") == "clipper_agent"
+    assert next_agent_after("critic_agent") == "metadata_agent"
 
 
 def test_next_agent_after_unknown_defaults_to_research() -> None:

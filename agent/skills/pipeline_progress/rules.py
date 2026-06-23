@@ -72,6 +72,13 @@ def compute_scenario_progress(segments: list[Any] | None) -> AgentProgressData:
     return build_progress(1 if has_segments else 0, 1, detail=detail)
 
 
+def compute_outline_progress(outline: dict[str, Any] | None) -> AgentProgressData:
+    segments = (outline or {}).get("segments") or []
+    if not segments:
+        return build_progress(0, 1)
+    return build_progress(1, 1, detail=f"{len(segments)} segments plan")
+
+
 def compute_hook_progress(hook_segment: dict[str, Any] | None) -> AgentProgressData:
     total = len(HOOK_OPTIMIZABLE_KEYS)
     if not hook_segment:

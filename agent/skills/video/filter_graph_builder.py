@@ -45,23 +45,32 @@ def _load_ken_burns_config(*, is_short: bool = False) -> dict[str, float | bool]
     return load_ken_burns_config(is_short=is_short)
 
 
-def color_grade_from_style_block(style_block: str) -> str:
+def color_grade_from_style_block(style_block: str, *, theme: str = "") -> str:
     """P5 — Dérive un étalonnage léger (FFmpeg) du `style_block` de l'art_director.
 
     Appliqué uniformément à toute la timeline (réel + IA) pour harmoniser le look.
-    Retourne une chaîne de filtres FFmpeg (ex. ``colorbalance=...,eq=...``) ou ``""``
-    si le style ne suggère aucune dominante (rendu neutre).
+    Retourne une chaîne de filtres FFmpeg (ex. ``colorbalance=...,eq=...,lut3d=...``)
+    ou ``""`` si le style ne suggère aucune dominante (rendu neutre).
     """
+    from agent.skills.video.video_style_config import resolve_lut_path
+
     s = (style_block or "").lower()
+    parts: list[str] = []
+
+    lut_path = resolve_lut_path(theme)
+    if lut_path is not None:
+        lut_escaped = str(lut_path.resolve()).replace("\\", "/").replace(":", "\\:")
+        parts.append(f"lut3d=file='{lut_escaped}'")
+
+    if not s.strip() and parts:
+        return ",".join(parts)
+
     if not s.strip():
         return ""
-
-    parts: list[str] = []
 
     warm_kw = ("warm", "sepia", "amber", "ambr", "golden", "earthy", "chaud")
     cool_kw = ("cool", " blue", "teal", "cold", "cosmic", "froid", "noir")
     if any(k in s for k in warm_kw):
-        # Pousse les médians vers l'ambré, retire un peu de bleu.
         parts.append("colorbalance=rm=0.05:gm=0.02:bm=-0.05")
     elif any(k in s for k in cool_kw):
         parts.append("colorbalance=rm=-0.04:bm=0.06")
@@ -73,10 +82,93 @@ def color_grade_from_style_block(style_block: str) -> str:
     elif any(k in s for k in vivid_kw):
         parts.append("eq=saturation=1.12:contrast=1.04")
     else:
-        # Léger « pop » d'unification quand aucune intention forte n'est exprimée.
         parts.append("eq=saturation=1.05:contrast=1.03")
 
     return ",".join(parts)
+
+
+def build_source_pregrade_vf(visual_type: str) -> str:
+    """Pré-grade léger pour unifier archives / sources hétérogènes."""
+    vt = (visual_type or "").lower()
+    if vt == "archival_footage":
+        return "eq=saturation=0.88:contrast=1.05,noise=alls=6:allf=t+u"
+    if vt in ("crime_documentary", "news_broll"):
+        return "eq=saturation=0.92:contrast=1.04"
+    return ""
+
+
+def build_texture_vf(
+    *,
+    theme: str = "",
+    clip_index: int = 0,
+) -> str:
+    """Chaîne de filtres texture (grain, vignette, light leak, VHS) post-grade."""
+    from agent.skills.video.video_style_config import load_texture_config
+
+    cfg = load_texture_config(theme=theme)
+    parts: list[str] = []
+
+    if cfg.grain > 0:
+        parts.append(f"noise=alls={cfg.grain}:allf=t+u")
+    if cfg.vignette:
+        parts.append(f"vignette=angle={cfg.vignette_angle}")
+    if cfg.light_leak and clip_index % 3 == 0:
+        opacity = max(min(cfg.light_leak_opacity, 0.5), 0.05)
+        parts.append(
+            f"geq="
+            f"r='r(X,Y)+{opacity:.2f}*255*lte(X,W*0.15)*gte(Y,H*0.1)':"
+            f"g='g(X,Y)+{opacity * 0.6:.2f}*255*lte(X,W*0.15)*gte(Y,H*0.1)':"
+            f"b='b(X,Y)'"
+        )
+    if cfg.vhs:
+        shift = max(cfg.vhs_shift, 1)
+        parts.append(
+            f"rgbashift=rh={shift}:gh=-{shift}:bh=0,"
+            f"geq=lum='if(mod(floor(Y/2),2),lum(X,Y)*0.92,lum(X,Y))'"
+        )
+    return ",".join(parts)
+
+
+def _map_xfade_transition(name: str) -> str:
+    if name == "flash_impact":
+        return "fadewhite"
+    if name == "glitch":
+        return "fade"
+    return name
+
+
+def _build_transition_filter(
+    current: str,
+    next_label: str,
+    step_out: str,
+    transition: str,
+    t_dur: float,
+    offset: float,
+    profile: VideoProfile,
+) -> str:
+    """Assemble une transition xfade ou glitch hors-xfade."""
+    from agent.skills.video.video_style_config import load_impact_transition_config
+
+    if transition == "glitch":
+        impact = load_impact_transition_config()
+        glitch_s = impact.glitch_frames / max(profile.fps, 1)
+        end = offset + glitch_s
+        raw = f"{step_out}_raw"
+        return (
+            f"[{current}][{next_label}]xfade=transition=fade:duration=0.04:offset={offset:.3f}[{raw}];"
+            f"[{raw}]rgbashift=rh=5:gh=-5:bh=2:enable='between(t,{offset:.3f},{end:.3f})',"
+            f"noise=alls={impact.glitch_noise}:allf=t+u:enable='between(t,{offset:.3f},{end:.3f})'"
+            f"[{step_out}]"
+        )
+
+    xfade_name = _map_xfade_transition(transition)
+    if transition == "flash_impact":
+        impact = load_impact_transition_config()
+        t_dur = min(t_dur, impact.flash_duration_s)
+    return (
+        f"[{current}][{next_label}]xfade=transition={xfade_name}:"
+        f"duration={t_dur:.3f}:offset={offset:.3f}[{step_out}]"
+    )
 
 
 def _escape_drawtext(text: str) -> str:
@@ -214,6 +306,7 @@ def build_segment_filter_complex(
     is_short: bool = False,
     narration_audio_path: str | None = None,
     grade: str = "",
+    theme: str = "",
 ) -> tuple[list[str], str, str, str]:
     """Construit les arguments d'entrée FFmpeg et le filter_complex pour un segment.
 
@@ -274,6 +367,12 @@ def build_segment_filter_complex(
             )
             input_idx += 1
 
+        pregrade = build_source_pregrade_vf(plan.visual_type)
+        if pregrade:
+            graded_clip = f"{processed_label}pg"
+            filter_parts.append(f"[{processed_label}]{pregrade}[{graded_clip}]")
+            processed_label = graded_clip
+
         current_label = processed_label
 
         if plan.overlay_mode == "svg_overlay" and plan.overlay_asset_path:
@@ -314,10 +413,15 @@ def build_segment_filter_complex(
             step_out = f"xf{j}"
             transition = clips[j - 1].transition_out or "fade"
             t_dur = clips[j - 1].transition_duration_s or trans_dur
+            if transition == "flash_impact":
+                from agent.skills.video.video_style_config import load_impact_transition_config
+
+                t_dur = min(t_dur, load_impact_transition_config().flash_duration_s)
             offset = compute_xfade_offset(durations, j - 1, t_dur)
             filter_parts.append(
-                f"[{current}][{next_label}]xfade=transition={transition}:"
-                f"duration={t_dur:.3f}:offset={offset:.3f}[{step_out}]"
+                _build_transition_filter(
+                    current, next_label, step_out, transition, t_dur, offset, profile
+                )
             )
             current = step_out
         out_label = "vout"
@@ -331,6 +435,12 @@ def build_segment_filter_complex(
         graded = "vgr"
         filter_parts.append(f"[{out_label}]{grade.strip()}[{graded}]")
         out_label = graded
+
+    texture = build_texture_vf(theme=theme, clip_index=0)
+    if texture.strip():
+        textured = "vtx"
+        filter_parts.append(f"[{out_label}]{texture.strip()}[{textured}]")
+        out_label = textured
 
     if not narration_audio_path:
         return input_args, ";".join(filter_parts), out_label, "aout"
@@ -374,6 +484,7 @@ async def render_segment_from_clips(
     *,
     is_vertical: bool = False,
     grade: str = "",
+    theme: str = "",
 ) -> None:
     """Encode un segment complet (un seul passage libx264)."""
     profile = profile_from_config(is_vertical)
@@ -385,6 +496,7 @@ async def render_segment_from_clips(
         is_short=is_vertical,
         narration_audio_path=audio_path,
         grade=grade,
+        theme=theme,
     )
 
     from agent.skills.video.ffmpeg_runtime import (

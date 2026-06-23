@@ -1,63 +1,45 @@
 # Architecture CuteVideo Agent
 
-## Vue d'ensemble
+Pipeline multi-agents pour vidéos éducatives longues (10–60 min) + shorts dérivés.
 
-Pipeline de 8 agents IA spécialisés qui communiquent via PostgreSQL/Redis pour produire
-des vidéos éducatives longues (10-60 min) + shorts automatiques.
-
-## Flux de données
+## Pipeline création (`orchestrator.py`)
 
 ```
-Content Planner (cron 6h Paris) → DB: projects pending (sujets + planned_shorts)
-  ↓
-Input (thème mandaté + durée + content_plan)
-  ↓
-Agent 1 — Scénariste     → DB: scenarios
-  ↓
-Agent 2 — Chercheur Média → DB: media_assets (images téléchargées localement)
-  ↓
-Agent 3 — Narrateur Voix  → DB: audio_files (WAV 48kHz)
-  ↓
-Agent 4 — Monteur Vidéo   → DB: videos (MP4 1920x1080)
-  ↓
-Agent 5 — Sous-titreur    → fichier .srt (vidéo longue) ou burn-in (shorts)
-  ↓
-Agent 6 — Critique IA     → DB: critic_reports
-  ├── score >= 70 → APPROVE → Agent 7
-  └── score < 70  → ITERATE → retour agents concernés (max 3x)
-  ↓
-Agent 7 — Découpeur Shorts → timestamps sélectionnés
-  ↓
-Agent 8 — Éditeur Shorts   → DB: videos (3 formats 9:16 par short)
-  ↓
-(projet approved — publication asynchrone)
-  ↓
-Distribution Agent (cron 15 min) → DB: publications (scheduled → published)
+ContentPlanner (cron) → projects pending
+Research → Outline → Scenario
+  ├─ FactChecker / HookOptimizer / Revision (boucles)
+Narrator (TTS + Whisper)
+  ├─ ArtDirector (style_block)
+  ├─ BeatPlanner (visual_beats, on_screen_text)
+  └─ DiagramSpecialist
+MediaAgent (stock → IA Flux/Imagen par beat)
+MontagePlanner → Editor (FFmpeg) → Subtitle
+Critic (boucle, max_critic_iterations)
+Metadata → Thumbnail → Clipper → ShortEditor
 ```
 
-## Communication inter-agents
+## Publication
 
-- L'orchestrateur (`orchestrator.py`) lit les résultats de chaque agent depuis la DB
-- La queue Redis gère l'ordre d'exécution et les retries
-- `distribution_agent` planifie et publie via `agent/skills/publisher/executor.py`
-- En cas d'itération (critique), l'orchestrateur relit le `critic_report` et relance
-  uniquement les agents concernés par les changements demandés
-- Analytics / comments : fenêtre 21j (shorts), 180j (longues)
+`distribution_agent` (cron 15 min) → `publisher/executor.py` (YouTube, TikTok, Instagram).
 
-## Sources médias (par thème)
+## Communication
 
-| Thème | Sources prioritaires |
-|-------|---------------------|
-| Histoire France | Gallica BnF, Europeana, Wikimedia |
-| Nature/Animaux | Unsplash, Pexels, Internet Archive |
-| Sciences | NASA, Wikimedia |
-| Art | Met Open Access, Europeana |
+- Orchestrateur lit/écrit PostgreSQL ; file Redis pour concurrence pipelines
+- Reprise partielle : `pipeline_restart.py`, indices `_STEP_TO_LOOP_IDX` dans `orchestrator.py`
+- Learning context : `ChannelLearningContext` (Analytics + Comments)
 
-## Format vidéo final
+## Qualité vidéo (deux couches)
 
-| Type | Résolution | Codec | Bitrate |
-|------|-----------|-------|---------|
-| Longue | 1920×1080 | H.264/AAC | 8 Mbps |
-| YouTube Shorts | 1080×1920 | H.264/AAC | 6 Mbps |
-| TikTok | 1080×1920 | H.264/AAC | 6 Mbps |
-| Instagram Reels | 1080×1920 | H.264/AAC | 6 Mbps |
+| Couche | Fichiers clés | Statut |
+|--------|---------------|--------|
+| Amont (images, critic) | `prompt_builder.py`, `art_director_agent.py`, `critic_agent.py` | Livré (voir `docs/plan-amelioration-qualite-video.md` §7) |
+| Aval (montage FFmpeg) | `editor_agent.py`, `sound_design.py`, `animated_text.py`, `filter_graph_builder.py` | Socle livré ; gaps long 16:9 → `docs/roadmap-qualite-video.md` |
+
+## Formats
+
+| Type | Résolution |
+|------|------------|
+| Longue | 1920×1080 |
+| Shorts | 1080×1920 |
+
+Config : `data/agent_config.json` → `video.long` / `video.short`.

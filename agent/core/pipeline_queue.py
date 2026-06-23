@@ -193,16 +193,36 @@ async def reenqueue_with_same_score(project_id: uuid.UUID, score: float) -> None
     await queue.client.zadd(PIPELINE_ZQUEUE, {project_key: score})
 
 
+async def _abandon_dequeued_task(project_key: str, project_id: uuid.UUID, *, reason: str) -> None:
+    """Nettoie payload / annulation sans ré-enfiler (retrait manuel ou annulation)."""
+    await queue.client.delete(_payload_key(project_key))
+    await queue.request_pipeline_cancel(project_key)
+
+
 async def remove_from_queue(project_id: uuid.UUID) -> bool:
     """Retire un projet de la file. Retourne False s'il n'y était pas."""
     project_key = str(project_id)
     await queue.connect()
     removed = await queue.client.zrem(PIPELINE_ZQUEUE, project_key)
-    await queue.client.delete(_payload_key(project_key))
     if removed:
+        await _abandon_dequeued_task(project_key, project_id, reason="zrem")
         await _set_project_pending(project_id)
         logger.info("Projet %s retiré de la file d'attente", project_id)
-    return bool(removed)
+        return True
+
+    # Course avec le worker (zpopmin) ou file Redis perdue : encore « queued » en DB.
+    async with AsyncSessionFactory() as session:
+        project = await session.get(Project, project_id)
+        if project is None or project.status != "queued":
+            return False
+
+    await _abandon_dequeued_task(project_key, project_id, reason="desync")
+    await _set_project_pending(project_id)
+    logger.info(
+        "Projet %s retiré de la file (queued en DB sans membre Redis)",
+        project_id,
+    )
+    return True
 
 
 async def is_queued(project_id: uuid.UUID) -> bool:
@@ -381,6 +401,11 @@ async def dequeue_next_eligible() -> DequeueResult:
 
         channel_id = uuid.UUID(payload["channel_id"])
 
+        if await queue.is_pipeline_cancel_requested(project_key):
+            await _abandon_dequeued_task(project_key, project_id, reason="cancel")
+            logger.info("Projet %s abandonné (annulation demandée)", project_id)
+            continue
+
         if not is_disk_sufficient():
             message = format_disk_wait_message()
             await _set_disk_wait_message(project_id, message)
@@ -390,6 +415,17 @@ async def dequeue_next_eligible() -> DequeueResult:
 
         claimed = await try_claim_project(project_id, channel_id)
         if not claimed:
+            async with AsyncSessionFactory() as session:
+                project = await session.get(Project, project_id)
+                project_status = project.status if project else None
+            if project_status != "queued":
+                await _abandon_dequeued_task(project_key, project_id, reason="status")
+                logger.info(
+                    "Projet %s abandonné après échec claim (status=%s)",
+                    project_id,
+                    project_status,
+                )
+                continue
             await reenqueue_with_same_score(project_id, float(score))
             blocked_count += 1
             continue

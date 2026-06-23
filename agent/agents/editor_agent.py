@@ -65,14 +65,17 @@ class EditorAgent(BaseAgent):
         async with AsyncSessionFactory() as session:
             audio_result = await session.execute(
                 select(AudioFile)
-                .where(AudioFile.project_id == ctx.project_id)
+                .where(
+                    AudioFile.project_id == ctx.project_id,
+                    AudioFile.iteration == ctx.iteration,
+                )
                 .order_by(AudioFile.segment_order)
             )
             audio_files = list(audio_result.scalars().all())
             project = await session.get(Project, ctx.project_id)
             style_block = str((project.config or {}).get("visual_style_block", "")) if project else ""
 
-        grade = color_grade_from_style_block(style_block)
+        grade = color_grade_from_style_block(style_block, theme=ctx.theme)
         if grade:
             logger.info("Étalonnage final (P5) dérivé du style : %s", grade)
         segment_meta = self._build_segment_meta(scenario)
@@ -100,11 +103,20 @@ class EditorAgent(BaseAgent):
             project_id=ctx.project_id,
             grade=grade,
             force_vertical=is_vertical,
+            theme=ctx.theme,
         )
 
-        output_path = await self._mix_music_by_mood(ctx, output_path, segment_meta, duration_s)
+        output_path = await self._apply_animated_text_overlays(
+            ctx, output_path, montage_plan, is_vertical=is_vertical
+        )
+        output_path = await self._mix_music_by_mood(
+            ctx, output_path, segment_meta, duration_s, montage_plan=montage_plan
+        )
         output_path = await self._apply_sound_design(
-            ctx, output_path, segment_meta, video_duration_s=duration_s
+            ctx, output_path, segment_meta, video_duration_s=duration_s, montage_plan=montage_plan
+        )
+        output_path = await self._apply_ambient_bed_if_enabled(
+            ctx, output_path, duration_s
         )
 
         has_narration = any(m.get("needs_voice") for m in segment_meta.values())
@@ -230,12 +242,19 @@ class EditorAgent(BaseAgent):
         video_path: Path,
         segment_meta: dict[int, dict],
         total_duration_s: float,
+        *,
+        montage_plan: object | None = None,
     ) -> Path:
         from agent.skills.audio.audio_mixer import (
             load_audio_mix_config,
             mix_multi_segment_music,
             resolve_music_volume,
         )
+        from agent.skills.audio.sound_design import (
+            build_overlay_cues,
+            collect_reveal_timestamps,
+        )
+        from agent.core.montage_plan import MontagePlanData
 
         if not segment_meta or not any(m.get("needs_music") for m in segment_meta.values()):
             logger.info("Mix musique ignoré — aucun segment ne demande de musique")
@@ -246,6 +265,16 @@ class EditorAgent(BaseAgent):
         has_ambient = any(not m.get("strip_source_audio", True) for m in segment_meta.values())
         music_volume = resolve_music_volume(has_narration, has_ambient, mix_cfg)
         duck_narration = mix_cfg["ducking_enabled"] and has_narration
+
+        overlay_cues = []
+        if montage_plan is not None:
+            plan_data = (
+                montage_plan
+                if isinstance(montage_plan, MontagePlanData)
+                else MontagePlanData.from_db_dict(getattr(montage_plan, "plan_data", montage_plan))
+            )
+            overlay_cues = build_overlay_cues(plan_data, has_narration=has_narration)
+        reveal_timestamps = collect_reveal_timestamps(segment_meta, overlay_cues)
 
         try:
             mood_blocks = _build_mood_blocks(segment_meta, total_duration_s)
@@ -261,6 +290,7 @@ class EditorAgent(BaseAgent):
                 mixed_path,
                 music_volume=music_volume,
                 duck_narration=duck_narration,
+                reveal_timestamps=reveal_timestamps,
             )
             if music_mixed:
                 video_path.unlink(missing_ok=True)
@@ -285,39 +315,52 @@ class EditorAgent(BaseAgent):
         segment_meta: dict[int, dict],
         *,
         video_duration_s: float | None = None,
+        montage_plan: object | None = None,
     ) -> Path:
-        """P4 — pose des SFX (whoosh transitions, accent révélations, cuts beats) sur la piste finale."""
-        from agent.agents.montage_planner_agent import load_latest_montage_plan
+        """P1 — pose des SFX (whoosh, pop, impact, riser, cuts beats) sur la piste finale."""
         from agent.core.config import load_agent_config
         from agent.core.montage_plan import MontagePlanData, collect_clip_cut_times
         from agent.skills.audio.sound_design import (
             apply_sfx_cues,
             build_beat_cut_cues,
+            build_overlay_cues,
             build_sfx_cues,
             merge_sfx_cues,
         )
-        from agent.skills.video.montage_profile import is_short_montage, short_sfx_config
+        from agent.skills.video.montage_profile import load_sfx_config
 
         sfx_cfg = load_agent_config().get("sfx", {})
         if not sfx_cfg.get("enabled", True):
             return video_path
 
         segment_cues = build_sfx_cues(segment_meta)
+        overlay_cues: list = []
         beat_cues: list = []
-        if is_short_montage(ctx):
-            profile_sfx = short_sfx_config()
-            if profile_sfx.get("beat_cuts_enabled", True):
-                montage_row = await load_latest_montage_plan(ctx.project_id)
-                if montage_row and montage_row.plan_data:
-                    plan = MontagePlanData.from_db_dict(montage_row.plan_data)
-                    cut_times = collect_clip_cut_times(plan)
-                    beat_cues = build_beat_cut_cues(
-                        cut_times,
-                        max_per_minute=int(profile_sfx.get("max_cues_per_minute", 12)),
-                        video_duration_s=video_duration_s,
-                    )
+        transition_cues: list = []
+        motion_cues: list = []
 
-        cues = merge_sfx_cues(segment_cues, beat_cues)
+        if montage_plan is not None:
+            plan = (
+                montage_plan
+                if isinstance(montage_plan, MontagePlanData)
+                else MontagePlanData.from_db_dict(getattr(montage_plan, "plan_data", montage_plan))
+            )
+            has_narration = any(m.get("needs_voice") for m in segment_meta.values())
+            overlay_cues = build_overlay_cues(plan, has_narration=has_narration)
+            from agent.skills.audio.sound_design import build_motion_cues, build_transition_cues
+
+            transition_cues = build_transition_cues(plan, has_narration=has_narration)
+            motion_cues = build_motion_cues(plan, has_narration=has_narration)
+            sfx_profile = load_sfx_config(ctx)
+            if sfx_profile.get("beat_cuts_enabled", True):
+                cut_times = collect_clip_cut_times(plan)
+                beat_cues = build_beat_cut_cues(
+                    cut_times,
+                    max_per_minute=int(sfx_profile.get("max_cues_per_minute", 12)),
+                    video_duration_s=video_duration_s,
+                )
+
+        cues = merge_sfx_cues(segment_cues, overlay_cues, beat_cues, transition_cues, motion_cues)
         if not cues:
             return video_path
 
@@ -331,6 +374,81 @@ class EditorAgent(BaseAgent):
             out_path.unlink(missing_ok=True)
         except Exception as e:
             logger.warning("Design sonore ignoré (erreur) : %s", e)
+        return video_path
+
+    async def _apply_animated_text_overlays(
+        self,
+        ctx: "PipelineContext",
+        video_path: Path,
+        montage_plan: object,
+        *,
+        is_vertical: bool,
+    ) -> Path:
+        from agent.core.montage_plan import MontagePlanData
+        from agent.skills.video.animated_text import (
+            collect_overlay_events_from_plan,
+            write_animated_overlay_ass,
+        )
+        from agent.skills.video.filter_graph_builder import profile_from_config
+        from agent.skills.video.viral_subtitles import burn_ass_subtitles
+        from agent.skills.video.video_style_config import load_text_overlay_animation_config
+
+        plan_data = (
+            montage_plan
+            if isinstance(montage_plan, MontagePlanData)
+            else MontagePlanData.from_db_dict(getattr(montage_plan, "plan_data", montage_plan))
+        )
+        events = collect_overlay_events_from_plan(plan_data, is_vertical=is_vertical)
+        if not events:
+            return video_path
+
+        profile = profile_from_config(is_vertical)
+        ass_dir = Path(f"./tmp/{ctx.project_id}/overlays")
+        ass_dir.mkdir(parents=True, exist_ok=True)
+        ass_path = ass_dir / "on_screen_overlays.ass"
+        write_animated_overlay_ass(
+            events,
+            load_text_overlay_animation_config(),
+            ass_path,
+            play_res_x=profile.width,
+            play_res_y=profile.height,
+        )
+        out_path = video_path.with_stem(video_path.stem + "_txt")
+        try:
+            await burn_ass_subtitles(video_path, ass_path, out_path)
+            video_path.unlink(missing_ok=True)
+            logger.info("Overlays texte ASS incrustés (%d events)", len(events))
+            return out_path
+        except Exception as exc:
+            logger.warning("Overlays ASS ignorés (fallback drawtext segment) : %s", exc)
+            out_path.unlink(missing_ok=True)
+            return video_path
+
+    async def _apply_ambient_bed_if_enabled(
+        self,
+        ctx: "PipelineContext",
+        video_path: Path,
+        duration_s: float,
+    ) -> Path:
+        from agent.skills.audio.sound_design import apply_ambient_bed
+        from agent.skills.video.video_style_config import load_ambient_bed_config
+
+        if not load_ambient_bed_config(
+            channel_raw_config=dict(ctx.channel.config or {})
+        ).get("enabled"):
+            return video_path
+        out_path = video_path.with_stem(video_path.stem + "_amb")
+        result = await apply_ambient_bed(
+            video_path,
+            out_path,
+            theme=ctx.theme,
+            duration_s=duration_s,
+            channel_raw_config=dict(ctx.channel.config or {}),
+        )
+        if result:
+            video_path.unlink(missing_ok=True)
+            return result
+        out_path.unlink(missing_ok=True)
         return video_path
 
     async def _fallback_music(

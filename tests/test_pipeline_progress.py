@@ -10,6 +10,7 @@ from agent.skills.pipeline_progress.rules import (
     compute_media_agent_progress,
     compute_montage_progress,
     compute_narrator_progress,
+    compute_outline_progress,
     compute_research_progress,
     compute_scenario_progress,
     compute_short_editor_progress,
@@ -123,6 +124,14 @@ def test_media_agent_progress_mapping() -> None:
 def test_binary_progress() -> None:
     assert compute_binary_progress(False).percent == 0
     assert compute_binary_progress(True).percent == 100
+
+
+def test_outline_progress() -> None:
+    empty = compute_outline_progress(None)
+    assert empty.percent == 0
+    done = compute_outline_progress({"segments": [{"order": 1}, {"order": 2}]})
+    assert done.percent == 100
+    assert done.detail == "2 segments plan"
 
 
 def test_short_editor_progress() -> None:

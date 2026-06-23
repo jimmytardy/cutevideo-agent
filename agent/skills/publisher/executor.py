@@ -3,12 +3,13 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 
 from sqlalchemy import select
 
 from agent.core.channel_config import ChannelRuntimeConfig
 from agent.core.config import settings
-from agent.core.database import AsyncSessionFactory, Channel, Publication, Video
+from agent.core.database import AsyncSessionFactory, Channel, Project, Publication, Video
 from agent.core.storage import get_public_video_url_async, resolve_local_path_for_upload
 from agent.skills.publisher import composio_client
 
@@ -112,7 +113,6 @@ async def _publish_youtube(
 ) -> Publication | None:
     import tempfile
 
-    from agent.skills.publisher.thumbnail import generate_thumbnail
     from agent.skills.publisher.youtube import set_thumbnail, upload_video
     from agent.skills.publisher.youtube_channel_manager import post_publish_hook
 
@@ -134,13 +134,12 @@ async def _publish_youtube(
 
     try:
         with tempfile.TemporaryDirectory() as tmp:
-            thumbnail_path = await generate_thumbnail(
+            thumbnail_path = await _resolve_youtube_thumbnail_path(
+                video,
                 title=title,
                 theme=channel.theme_category or description[:80],
+                channel_config=channel_config,
                 output_dir=Path(tmp),
-                ai_cfg=channel_config.ai_fallback,
-                editorial_tone=channel_config.editorial_tone,
-                aspect_ratio="16:9",
             )
             if thumbnail_path:
                 await set_thumbnail(video_id, thumbnail_path, refresh_token=refresh_token)
@@ -167,6 +166,48 @@ async def _publish_youtube(
         logger.warning("post_publish_hook YouTube échoué (non bloquant) : %s", e)
 
     return pub
+
+
+async def _resolve_youtube_thumbnail_path(
+    video: Video,
+    *,
+    title: str,
+    theme: str,
+    channel_config: ChannelRuntimeConfig,
+    output_dir: Path,
+) -> Path | None:
+    """Miniature agent (Project.config) ou fallback generate_thumbnail."""
+    from agent.skills.publisher.thumbnail import generate_thumbnail
+
+    if video.project_id:
+        async with AsyncSessionFactory() as session:
+            project = await session.get(Project, video.project_id)
+            if project and isinstance(project.config, dict):
+                thumb = project.config.get("thumbnail")
+                if isinstance(thumb, dict):
+                    local = thumb.get("local_path")
+                    if local:
+                        path = Path(str(local))
+                        if path.is_file():
+                            logger.info("Miniature agent utilisée : %s", path)
+                            return path
+                for cand in project.config.get("thumbnail_candidates") or []:
+                    if not isinstance(cand, dict):
+                        continue
+                    if cand.get("primary") and cand.get("local_path"):
+                        path = Path(str(cand["local_path"]))
+                        if path.is_file():
+                            logger.info("Miniature agent (candidat primary) : %s", path)
+                            return path
+
+    return await generate_thumbnail(
+        title=title,
+        theme=theme,
+        output_dir=output_dir,
+        ai_cfg=channel_config.ai_fallback,
+        editorial_tone=channel_config.editorial_tone,
+        aspect_ratio="16:9",
+    )
 
 
 async def _publish_tiktok(
