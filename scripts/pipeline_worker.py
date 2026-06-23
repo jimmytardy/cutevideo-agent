@@ -5,12 +5,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import signal
 import uuid
 
 import redis.exceptions
 
 from agent.core.config import get_pipeline_settings
 from agent.core.orchestrator import Orchestrator
+from agent.core.pipeline_cancel import bind_project, unbind_project
 from agent.core.pipeline_lease import (
     acquire_lease,
     get_lease_settings,
@@ -20,11 +22,30 @@ from agent.core.pipeline_lease import (
 from agent.core.pipeline_queue import dequeue_next_eligible, migrate_legacy_pipeline_queue
 from agent.core.pipeline_reconcile import reconcile_orphan_running_projects
 from agent.core.queue import queue
+from agent.core.subprocess_registry import kill_all
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
 WORKER_ID = os.environ.get("WORKER_ID", os.environ.get("HOSTNAME", "worker-1"))
+
+_shutdown_event: asyncio.Event | None = None
+_current_pipeline_task: asyncio.Task[None] | None = None
+
+
+def _get_shutdown_event() -> asyncio.Event:
+    global _shutdown_event
+    if _shutdown_event is None:
+        _shutdown_event = asyncio.Event()
+    return _shutdown_event
+
+
+def _request_shutdown() -> None:
+    logger.info("[%s] Arrêt demandé (signal)", WORKER_ID)
+    _get_shutdown_event().set()
+    task = _current_pipeline_task
+    if task is not None and not task.done():
+        task.cancel()
 
 
 async def _renew_lease_loop(
@@ -47,7 +68,28 @@ async def _renew_lease_loop(
                 return
 
 
+async def _cancel_watcher(
+    project_id: uuid.UUID,
+    pipeline_task: asyncio.Task[None],
+    stop: asyncio.Event,
+    *,
+    poll_interval_s: float = 0.5,
+) -> None:
+    while not stop.is_set() and not pipeline_task.done():
+        if await queue.is_pipeline_cancel_requested(str(project_id)):
+            logger.info("[%s] Annulation Redis détectée — projet %s", WORKER_ID, project_id)
+            pipeline_task.cancel()
+            return
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=poll_interval_s)
+            return
+        except asyncio.TimeoutError:
+            continue
+
+
 async def _process_task(payload: dict) -> None:
+    global _current_pipeline_task
+
     project_id = uuid.UUID(payload["project_id"])
     start_from = payload.get("start_from")
     critic_feedback = payload.get("critic_feedback")
@@ -58,8 +100,9 @@ async def _process_task(payload: dict) -> None:
     stop_renew = asyncio.Event()
     renew_task = asyncio.create_task(_renew_lease_loop(project_id, WORKER_ID, stop_renew))
 
-    try:
-        await Orchestrator().run_pipeline(
+    project_token = bind_project(project_id)
+    pipeline_task = asyncio.create_task(
+        Orchestrator().run_pipeline(
             project_id,
             start_from=start_from,
             critic_feedback=critic_feedback,
@@ -67,6 +110,15 @@ async def _process_task(payload: dict) -> None:
             resume_iteration=resume_iteration,
             already_claimed=True,
         )
+    )
+    _current_pipeline_task = pipeline_task
+    stop_watcher = asyncio.Event()
+    watcher_task = asyncio.create_task(
+        _cancel_watcher(project_id, pipeline_task, stop_watcher)
+    )
+
+    try:
+        await pipeline_task
     except asyncio.CancelledError:
         logger.info("[%s] Pipeline annulé pour le projet %s", WORKER_ID, project_id)
     except Exception as exc:
@@ -78,20 +130,34 @@ async def _process_task(payload: dict) -> None:
             exc_info=True,
         )
     finally:
+        stop_watcher.set()
+        watcher_task.cancel()
+        try:
+            await watcher_task
+        except asyncio.CancelledError:
+            pass
+        _current_pipeline_task = None
         stop_renew.set()
         renew_task.cancel()
         try:
             await renew_task
         except asyncio.CancelledError:
             pass
+        unbind_project(project_token)
+        await kill_all()
         await release_lease(project_id, WORKER_ID)
         await queue.clear_pipeline_cancel(str(project_id))
 
 
 async def _periodic_reconcile_loop(worker_id: str) -> None:
     cfg = get_pipeline_settings()
-    while True:
-        await asyncio.sleep(cfg.reconcile_interval_seconds)
+    shutdown = _get_shutdown_event()
+    while not shutdown.is_set():
+        try:
+            await asyncio.wait_for(shutdown.wait(), timeout=cfg.reconcile_interval_seconds)
+            return
+        except asyncio.TimeoutError:
+            pass
         try:
             count = await reconcile_orphan_running_projects(worker_id=worker_id)
             if count:
@@ -111,12 +177,25 @@ async def _periodic_reconcile_loop(worker_id: str) -> None:
             )
 
 
+async def _sleep_or_shutdown(seconds: float) -> bool:
+    """Attend ``seconds`` ou jusqu'à shutdown. Retourne True si shutdown demandé."""
+    shutdown = _get_shutdown_event()
+    if shutdown.is_set():
+        return True
+    try:
+        await asyncio.wait_for(shutdown.wait(), timeout=seconds)
+        return True
+    except asyncio.TimeoutError:
+        return False
+
+
 async def run_worker() -> None:
     cfg = get_pipeline_settings()
     backoff_s = 2
     blocked_backoff_s = cfg.queue_blocked_backoff_seconds
+    shutdown = _get_shutdown_event()
 
-    while True:
+    while not shutdown.is_set():
         try:
             await queue.connect()
             migrated = await migrate_legacy_pipeline_queue()
@@ -133,11 +212,12 @@ async def run_worker() -> None:
             backoff_s = 2
             reconcile_task = asyncio.create_task(_periodic_reconcile_loop(WORKER_ID))
             try:
-                while True:
+                while not shutdown.is_set():
                     result = await dequeue_next_eligible()
                     if result.payload is None:
                         sleep_s = blocked_backoff_s if result.all_blocked else 1
-                        await asyncio.sleep(sleep_s)
+                        if await _sleep_or_shutdown(sleep_s):
+                            break
                         continue
                     logger.info(
                         "[%s] Tâche pipeline reçue : %s",
@@ -152,6 +232,8 @@ async def run_worker() -> None:
                 except asyncio.CancelledError:
                     pass
         except redis.exceptions.ConnectionError as exc:
+            if shutdown.is_set():
+                break
             logger.warning(
                 "[%s] Redis indisponible (%s) — reconnexion dans %ss",
                 WORKER_ID,
@@ -159,7 +241,8 @@ async def run_worker() -> None:
                 backoff_s,
             )
             await queue.disconnect()
-            await asyncio.sleep(backoff_s)
+            if await _sleep_or_shutdown(backoff_s):
+                break
             backoff_s = min(backoff_s * 2, 30)
         except asyncio.CancelledError:
             await queue.disconnect()
@@ -168,9 +251,22 @@ async def run_worker() -> None:
             await queue.disconnect()
             raise
 
+    await queue.disconnect()
+    logger.info("[%s] Pipeline worker arrêté", WORKER_ID)
+
+
+async def _run_with_signals() -> None:
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(sig, _request_shutdown)
+        except NotImplementedError:
+            pass
+    await run_worker()
+
 
 def main() -> None:
-    asyncio.run(run_worker())
+    asyncio.run(_run_with_signals())
 
 
 if __name__ == "__main__":

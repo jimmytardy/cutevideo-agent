@@ -229,6 +229,17 @@ async def get_presigned_url(storage_key: str, ttl_seconds: int | None = None) ->
     return await asyncio.get_event_loop().run_in_executor(None, _presign)
 
 
+async def download_storage_key(storage_key: str, dest: Path) -> Path:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+
+    def _download() -> None:
+        client, cfg = _make_s3_client()
+        client.download_file(cfg.bucket, storage_key, str(dest))
+
+    await asyncio.get_event_loop().run_in_executor(None, _download)
+    return dest
+
+
 async def ensure_capacity(required_bytes: int) -> None:
     cfg = get_storage_settings()
     used = await get_used_bytes()

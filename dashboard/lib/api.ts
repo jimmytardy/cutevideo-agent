@@ -832,6 +832,67 @@ export async function completeOnboarding(channelId: string): Promise<Channel> {
   return apiJson<Channel>(`${BASE}/channels/${channelId}/onboarding/complete`, { method: 'POST' })
 }
 
+export interface ChannelUpdatePayload {
+  theme_category?: unknown
+  theme_prompt?: unknown
+  niche_prompt?: unknown
+  creative_brief?: string | null
+  config?: Record<string, unknown>
+}
+
+export interface ChannelCostEstimate {
+  ai_images: {
+    plan: string
+    plan_label: string
+    provider_family: string
+    cost_per_image_eur: number
+    images_per_week: number
+    cost_eur_per_week: number
+    cost_eur_per_month: number
+    breakdown: {
+      theme_category: string
+      fallback_rate: number
+      videos_per_week: number
+      segments_per_week: number
+    }
+  }
+  total_eur_per_week: number
+}
+
+export interface ChannelCostPreviewRequest {
+  ai_fallback: {
+    plan?: unknown
+    enabled?: boolean
+    fallback_chain?: unknown[]
+    max_images_per_segment?: number
+    max_ai_images_per_video?: number
+    max_ai_images_per_week?: number | null
+    fallback_rate_override?: number | null
+  }
+}
+
+export async function updateChannel(
+  channelId: string,
+  data: ChannelUpdatePayload,
+): Promise<Channel> {
+  return apiJson<Channel>(`${BASE}/channels/${channelId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+}
+
+export async function previewChannelCostEstimate(
+  channelId: string,
+  data: ChannelCostPreviewRequest,
+): Promise<ChannelCostEstimate> {
+  return apiJson<ChannelCostEstimate>(`${BASE}/channels/${channelId}/cost-estimate/preview`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+}
+
 export async function fetchChannel(channelId: string): Promise<Channel> {
   return apiJson<Channel>(`${BASE}/channels/${channelId}`)
 }

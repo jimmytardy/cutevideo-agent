@@ -123,6 +123,46 @@ WORKER_ENTRYPOINT="${WORKER_ENTRYPOINT:-$(read_env_var "$ENV_PATH" WORKER_ENTRYP
 DOCKER_NETWORK="${DOCKER_NETWORK_ENV:-$(read_env_var "$ENV_PATH" DOCKER_NETWORK)}"
 DOCKER_NETWORK="${DOCKER_NETWORK:-local-network}"
 
+REDIS_URL="${REDIS_URL:-$(read_env_var "$ENV_PATH" REDIS_URL)}"
+REDIS_URL="${REDIS_URL:-redis://redis:6379}"
+
+# Extrait l'hôte depuis REDIS_URL (redis://[:pass@]host[:port][/db]).
+redis_host_from_url() {
+  local url="$1"
+  echo "$url" | sed -E 's|^redis://([^@]*@)?([^:/?]+).*|\2|'
+}
+
+ensure_redis_container() {
+  local redis_host
+  redis_host="$(redis_host_from_url "$REDIS_URL")"
+  [[ -z "$redis_host" ]] && redis_host="redis"
+
+  if docker ps --filter "name=^${redis_host}$" --format '{{.Names}}' | grep -qx "$redis_host"; then
+    echo -e "${GREEN}✓ Redis (${redis_host}) déjà démarré${RESET}"
+    return 0
+  fi
+
+  if docker ps -a --filter "name=^${redis_host}$" --format '{{.Names}}' | grep -qx "$redis_host"; then
+    echo -e "${YELLOW}  Redis (${redis_host}) arrêté → redémarrage...${RESET}"
+    docker start "$redis_host" >/dev/null
+    docker network connect "$DOCKER_NETWORK" "$redis_host" 2>/dev/null || true
+    echo -e "${GREEN}✓ Redis (${redis_host}) redémarré${RESET}"
+    return 0
+  fi
+
+  echo -e "${YELLOW}  Redis (${redis_host}) introuvable → création sur ${DOCKER_NETWORK}...${RESET}"
+  if ! docker network inspect "$DOCKER_NETWORK" >/dev/null 2>&1; then
+    echo -e "${YELLOW}  Réseau ${DOCKER_NETWORK} absent → création...${RESET}"
+    docker network create "$DOCKER_NETWORK" >/dev/null
+  fi
+  docker run -d \
+    --name "$redis_host" \
+    --network "$DOCKER_NETWORK" \
+    --restart unless-stopped \
+    redis:7-alpine >/dev/null
+  echo -e "${GREEN}✓ Redis (${redis_host}) créé et démarré${RESET}"
+}
+
 # Volumes persistants (ex: cache Whisper partagé app/worker) — montés sur tous les conteneurs.
 VOLUME_OPT=""
 if [[ -n "$EXTRA_VOLUMES" ]]; then
@@ -171,7 +211,14 @@ fi
 
 echo ""
 
-# ── 6. Helper : (re)déploie un conteneur ─────
+# ── 6b. Redis (infra partagée) ───────────────
+echo -e "${BOLD}[1b/3] Vérification Redis...${RESET}"
+echo -e "  REDIS_URL : ${CYAN}${REDIS_URL}${RESET}"
+ensure_redis_container
+
+echo ""
+
+# ── 7. Helper : (re)déploie un conteneur ─────
 # Args : <nom_conteneur> <port_mapping|""> <entrypoint_override|"">
 deploy_container() {
   local name="$1" port_mapping="$2" entrypoint="$3"

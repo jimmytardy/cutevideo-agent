@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
+
+from agent.core.concurrency import bounded_gather, beat_fanout_concurrency
 
 from agent.core.database import AsyncSessionFactory, MediaAsset
 from agent.core.visual_beats import VisualBeat, beat_narration_excerpt, beats_to_dicts, parse_visual_beats
@@ -138,6 +142,246 @@ def _beat_video_target(
     return 1
 
 
+@dataclass
+class _BeatCoordination:
+    pool_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    runway_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    ai_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    used_pool_ids: set[str] = field(default_factory=set)
+
+
+async def _try_claim_pool_asset(
+    agent: "MediaAgent",
+    *,
+    beat: VisualBeat,
+    segment: dict[str, Any],
+    pool_assets: list[MediaAsset],
+    validation_brief: "MediaValidationBrief",
+    ctx: "PipelineContext",
+    output_dir: Any,
+    order: int,
+    min_score: int,
+    coord: _BeatCoordination,
+) -> MediaAsset | None:
+    for _ in range(3):
+        async with coord.pool_lock:
+            available = [a for a in pool_assets if str(a.id) not in coord.used_pool_ids]
+        if not available:
+            return None
+        reused, _score = await try_reuse_for_beat(
+            beat=beat,
+            segment=segment,
+            pool_assets=available,
+            validation_brief=validation_brief,
+            video_subject=ctx.theme,
+            channel_category=ctx.theme_category,
+            min_score=min_score,
+            api_key=getattr(agent, "_gemini_api_key", "") or "",
+            output_dir=output_dir,
+            segment_order=order,
+        )
+        if not reused:
+            return None
+        async with coord.pool_lock:
+            asset_id = str(reused.id)
+            if asset_id in coord.used_pool_ids:
+                continue
+            coord.used_pool_ids.add(asset_id)
+            return reused
+    return None
+
+
+async def _process_single_beat(
+    agent: "MediaAgent",
+    ctx: "PipelineContext",
+    segment: dict[str, Any],
+    beat: VisualBeat,
+    *,
+    order: int,
+    keywords: list[str],
+    sources: list[str],
+    ms_cfg: Any,
+    ai_cfg: Any,
+    validation_brief: "MediaValidationBrief",
+    pool_assets: list[MediaAsset],
+    lib_cfg: Any,
+    output_dir: Any,
+    aspect_ratio: str,
+    is_derivation: bool,
+    dev_attempts: int,
+    paid_attempts: int,
+    coord: _BeatCoordination,
+) -> list[MediaAsset]:
+    from pathlib import Path
+
+    beat_assets: list[MediaAsset] = []
+    min_relevance = validation_brief.min_score_for_beat(order, beat)
+
+    if lib_cfg.enabled and pool_assets and not getattr(ctx, "skip_media_pool_reuse", False):
+        reused = await _try_claim_pool_asset(
+            agent,
+            beat=beat,
+            segment=segment,
+            pool_assets=pool_assets,
+            validation_brief=validation_brief,
+            ctx=ctx,
+            output_dir=output_dir,
+            order=order,
+            min_score=lib_cfg.reuse_min_score,
+            coord=coord,
+        )
+        if reused:
+            return [reused]
+    elif lib_cfg.enabled and pool_assets and getattr(ctx, "skip_media_pool_reuse", False):
+        logger.info("Pool reuse désactivé (critique visuelle) — beat %d", beat.order)
+
+    beat_keywords = agent._anchored_keywords(_beat_keywords(beat, keywords))
+    video_target = _beat_video_target(ctx, beat, ms_cfg)
+    allows_search = not is_derivation or getattr(ctx, "short_derivation_mode", None) != "reuse_pool_only"
+    allows_ai = not is_derivation or getattr(ctx, "short_derivation_mode", None) == "full"
+    source_plan = resolve_beat_sources(beat, segment, sources)
+    agent._relevance_log.append({
+        "segment_order": order,
+        "beat_order": beat.order,
+        "visual_type": beat.visual_type,
+        "routing_reason": source_plan.routing_reason,
+        "effective_sources": source_plan.sources,
+        "skip_stock": source_plan.skip_stock,
+    })
+    beat_sources = list(source_plan.sources)
+    if is_derivation:
+        beat_sources = [s for s in beat_sources if s != "ai"]
+    candidates: list[dict] = []
+    if allows_search and not source_plan.skip_stock:
+        candidates = await agent._search_segment_with_iterations(
+            ctx=ctx,
+            segment={**segment, "search_keywords": beat_keywords},
+            sources=sources,
+            ms_cfg=ms_cfg,
+            keywords=beat_keywords,
+            period=segment.get("historical_period", ""),
+            effective_sources=beat_sources,
+            assets_needed=1,
+            video_target=video_target,
+            min_candidates=2,
+            min_relevance=min_relevance,
+            output_dir=Path(output_dir) / f"beat_{beat.order:02d}",
+            validation_brief=validation_brief,
+            order=order,
+            beat=beat,
+        )
+    selected = agent._select_assets(candidates, video_target, 1)
+
+    runway_cfg = ctx.channel_config.runway
+    is_hero_beat = beat.order == 1 and is_short_montage(ctx)
+    runway_cap = runway_cfg.max_clips_per_video
+    if is_hero_beat:
+        runway_cap = max(runway_cap, runway_cfg.max_clips_per_short)
+    runway_reserved = False
+    if (
+        is_hero_beat
+        and not any(item.get("asset_type") == "video" for item in selected)
+        and runway_cfg.enabled
+        and allows_ai
+    ):
+        async with coord.runway_lock:
+            if agent._runway_clips_used < runway_cap:
+                agent._runway_clips_used += 1
+                runway_reserved = True
+        if runway_reserved:
+            beat_dir = Path(output_dir) / f"beat_{beat.order:02d}"
+            runway_prompt = f"{ctx.theme} — {beat.prompt[:120]}"
+            runway_item = await agent._generate_runway_clip(
+                runway_prompt, beat_dir, runway_cfg, ctx
+            )
+            if runway_item:
+                validated = await agent._validate_single_asset(
+                    runway_item,
+                    ctx=ctx,
+                    segment=segment,
+                    min_relevance=min_relevance,
+                    output_dir=beat_dir,
+                    validation_brief=validation_brief,
+                )
+                if validated:
+                    selected = [validated]
+                else:
+                    async with coord.runway_lock:
+                        agent._runway_clips_used = max(0, agent._runway_clips_used - 1)
+                    runway_reserved = False
+            else:
+                async with coord.runway_lock:
+                    agent._runway_clips_used = max(0, agent._runway_clips_used - 1)
+                runway_reserved = False
+
+    if not selected and ms_cfg.enable_ai_fallback and ai_cfg.enabled and allows_ai:
+        beat_dir = Path(output_dir) / f"beat_{beat.order:02d}"
+        ai_prompt = await synthesize_beat_ai_prompt(
+            agent, ctx, beat, aspect_ratio=aspect_ratio,
+            cache_dir=beat_dir / "prompt_cache",
+        )
+        ai_slot_acquired = False
+        async with coord.ai_lock:
+            if await agent._can_generate_ai_image(ctx, ai_cfg):
+                agent._ai_images_used += 1
+                ai_slot_acquired = True
+        if ai_slot_acquired:
+            try:
+                ai_result = await agent._generate_validated_ai_image(
+                    ai_prompt,
+                    beat_dir,
+                    ctx,
+                    {**segment, "narration_text": beat_narration_excerpt(beat)},
+                    min_relevance,
+                    ai_cfg,
+                    aspect_ratio,
+                    validation_brief,
+                    use_prompt_as_is=True,
+                    beat=beat,
+                    visual_type=beat.visual_type,
+                )
+                pending: list[dict] = []
+                await agent._apply_ai_image_result(
+                    ai_result,
+                    ctx=ctx,
+                    segment=segment,
+                    ai_prompt=ai_prompt,
+                    selected=pending,
+                    dev_attempts=dev_attempts,
+                    paid_attempts=paid_attempts,
+                    count_toward_video_quota=False,
+                )
+                selected = pending
+                if not pending:
+                    async with coord.ai_lock:
+                        agent._ai_images_used = max(0, agent._ai_images_used - 1)
+            except Exception:
+                async with coord.ai_lock:
+                    agent._ai_images_used = max(0, agent._ai_images_used - 1)
+                raise
+
+    if selected:
+        item = selected[0]
+        asset = await agent._persist_beat_asset(
+            ctx=ctx,
+            item=item,
+            segment_order=order,
+            beat=beat,
+            output_dir=Path(output_dir) / f"beat_{beat.order:02d}",
+            generation_prompt=item.get("_generation_prompt") or beat.prompt,
+        )
+        beat_assets.append(asset)
+        for extra in selected[1:]:
+            await agent._persist_pool_candidate(
+                ctx, extra, order, beat, Path(output_dir), lib_cfg.pool_min_score
+            )
+    else:
+        logger.warning("Beat %d segment %d : aucun média trouvé", beat.order, order)
+        agent._segment_media_gaps.add(order)
+
+    return beat_assets
+
+
 async def process_segment_beats(
     agent: MediaAgent,
     ctx: PipelineContext,
@@ -168,154 +412,55 @@ async def process_segment_beats(
         output_dir = Path(f"./tmp/{ctx.project_id}/media/segment_{order:02d}")
     output_dir.mkdir(parents=True, exist_ok=True)
     _, dev_attempts, paid_attempts = ai_fallback_attempt_config()
+    coord = _BeatCoordination()
+    beat_limit = beat_fanout_concurrency()
 
-    assets: list[MediaAsset] = []
-    used_pool_ids: set[str] = set()
+    async def _run_beat(beat: VisualBeat) -> list[MediaAsset]:
+        return await _process_single_beat(
+            agent,
+            ctx,
+            segment,
+            beat,
+            order=order,
+            keywords=keywords,
+            sources=sources,
+            ms_cfg=ms_cfg,
+            ai_cfg=ai_cfg,
+            validation_brief=validation_brief,
+            pool_assets=pool_assets,
+            lib_cfg=lib_cfg,
+            output_dir=output_dir,
+            aspect_ratio=aspect_ratio,
+            is_derivation=is_derivation,
+            dev_attempts=dev_attempts,
+            paid_attempts=paid_attempts,
+            coord=coord,
+        )
 
-    for beat in beats:
-        asset: MediaAsset | None = None
-        min_relevance = validation_brief.min_score_for_beat(order, beat)
-
-        if lib_cfg.enabled and pool_assets:
-            available = [a for a in pool_assets if str(a.id) not in used_pool_ids]
-            if not getattr(ctx, "skip_media_pool_reuse", False):
-                reused, score = await try_reuse_for_beat(
-                    beat=beat,
-                    segment=segment,
-                    pool_assets=available,
-                    validation_brief=validation_brief,
-                    video_subject=ctx.theme,
-                    channel_category=ctx.theme_category,
-                    min_score=lib_cfg.reuse_min_score,
-                    api_key=getattr(agent, "_gemini_api_key", "") or "",
-                    output_dir=output_dir,
-                    segment_order=order,
-                )
-                if reused:
-                    asset = reused
-                    used_pool_ids.add(str(reused.id))
-                    assets.append(asset)
-                    continue
-            else:
-                logger.info("Pool reuse désactivé (critique visuelle) — beat %d", beat.order)
-
-        beat_keywords = agent._anchored_keywords(_beat_keywords(beat, keywords))
-        video_target = _beat_video_target(ctx, beat, ms_cfg)
-        allows_search = not is_derivation or getattr(ctx, "short_derivation_mode", None) != "reuse_pool_only"
-        allows_ai = not is_derivation or getattr(ctx, "short_derivation_mode", None) == "full"
-        source_plan = resolve_beat_sources(beat, segment, sources)
-        agent._relevance_log.append({
-            "segment_order": order,
-            "beat_order": beat.order,
-            "visual_type": beat.visual_type,
-            "routing_reason": source_plan.routing_reason,
-            "effective_sources": source_plan.sources,
-            "skip_stock": source_plan.skip_stock,
-        })
-        beat_sources = list(source_plan.sources)
-        if is_derivation:
-            beat_sources = [s for s in beat_sources if s != "ai"]
-        candidates: list[dict] = []
-        if allows_search and not source_plan.skip_stock:
-            candidates = await agent._search_segment_with_iterations(
-                ctx=ctx,
-                segment={**segment, "search_keywords": beat_keywords},
-                sources=sources,
-                ms_cfg=ms_cfg,
-                keywords=beat_keywords,
-                period=segment.get("historical_period", ""),
-                effective_sources=beat_sources,
-                assets_needed=1,
-                video_target=video_target,
-                min_candidates=2,
-                min_relevance=min_relevance,
-                output_dir=output_dir / f"beat_{beat.order:02d}",
-                validation_brief=validation_brief,
-                order=order,
-                beat=beat,
-            )
-        selected = agent._select_assets(candidates, video_target, 1)
-
-        runway_cfg = ctx.channel_config.runway
-        is_hero_beat = beat.order == 1 and is_short_montage(ctx)
-        runway_cap = runway_cfg.max_clips_per_video
-        if is_hero_beat:
-            runway_cap = max(runway_cap, runway_cfg.max_clips_per_short)
-        if (
-            is_hero_beat
-            and not any(item.get("asset_type") == "video" for item in selected)
-            and runway_cfg.enabled
-            and agent._runway_clips_used < runway_cap
-            and allows_ai
-        ):
-            beat_dir = output_dir / f"beat_{beat.order:02d}"
-            runway_prompt = f"{ctx.theme} — {beat.prompt[:120]}"
-            runway_item = await agent._generate_runway_clip(
-                runway_prompt, beat_dir, runway_cfg, ctx
-            )
-            if runway_item:
-                validated = await agent._validate_single_asset(
-                    runway_item,
-                    ctx=ctx,
-                    segment=segment,
-                    min_relevance=min_relevance,
-                    output_dir=beat_dir,
-                    validation_brief=validation_brief,
-                )
-                if validated:
-                    selected = [validated]
-                    agent._runway_clips_used += 1
-
-        if not selected and ms_cfg.enable_ai_fallback and ai_cfg.enabled and allows_ai:
-            beat_dir = output_dir / f"beat_{beat.order:02d}"
-            ai_prompt = await synthesize_beat_ai_prompt(
-                agent, ctx, beat, aspect_ratio=aspect_ratio,
-                cache_dir=beat_dir / "prompt_cache",
-            )
-            if await agent._can_generate_ai_image(ctx, ai_cfg):
-                ai_result = await agent._generate_validated_ai_image(
-                    ai_prompt,
-                    beat_dir,
-                    ctx,
-                    {**segment, "narration_text": beat_narration_excerpt(beat)},
-                    min_relevance,
-                    ai_cfg,
-                    aspect_ratio,
-                    validation_brief,
-                    use_prompt_as_is=True,
-                    beat=beat,
-                    visual_type=beat.visual_type,
-                )
-                pending: list[dict] = []
-                await agent._apply_ai_image_result(
-                    ai_result,
-                    ctx=ctx,
-                    segment=segment,
-                    ai_prompt=ai_prompt,
-                    selected=pending,
-                    dev_attempts=dev_attempts,
-                    paid_attempts=paid_attempts,
-                )
-                selected = pending
-
-        if selected:
-            item = selected[0]
-            asset = await agent._persist_beat_asset(
-                ctx=ctx,
-                item=item,
-                segment_order=order,
-                beat=beat,
-                output_dir=output_dir / f"beat_{beat.order:02d}",
-                generation_prompt=item.get("_generation_prompt") or beat.prompt,
-            )
-            assets.append(asset)
-            for extra in selected[1:]:
-                await agent._persist_pool_candidate(
-                    ctx, extra, order, beat, output_dir, lib_cfg.pool_min_score
-                )
-        else:
-            logger.warning("Beat %d segment %d : aucun média trouvé", beat.order, order)
-            agent._segment_media_gaps.add(order)
+    if len(beats) > 1 and beat_limit > 1:
+        logger.info(
+            "Segment %d : %d beats en parallèle (limite %d)",
+            order,
+            len(beats),
+            beat_limit,
+        )
+        results = await bounded_gather(
+            *(_run_beat(beat) for beat in beats),
+            limit=beat_limit,
+            return_exceptions=True,
+        )
+        assets: list[MediaAsset] = []
+        for beat, result in zip(beats, results):
+            if isinstance(result, Exception):
+                logger.warning("Beat %d segment %d échoué : %s", beat.order, order, result)
+                agent._segment_media_gaps.add(order)
+                continue
+            assets.extend(result)
+        assets.sort(key=lambda a: (a.segment_order or 0, a.beat_index or 0))
+    else:
+        assets = []
+        for beat in beats:
+            assets.extend(await _run_beat(beat))
 
     if lib_cfg.enabled:
         await trim_pool(ctx.project_id, lib_cfg.max_pool_size_per_project)
@@ -335,8 +480,6 @@ def _beat_keywords(beat: VisualBeat, segment_keywords: list[str]) -> list[str]:
         if k and k.lower() not in seen:
             seen.add(k.lower())
             out.append(k)
-    # Chokepoint final avant requête média externe : neutralise la syntaxe de requête
-    # (beat.prompt est aussi du texte LLM, donc non fiable).
     return sanitize_search_terms(out[:6] or segment_keywords[:4])
 
 

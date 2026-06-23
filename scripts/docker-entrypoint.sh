@@ -1,6 +1,8 @@
 #!/bin/sh
 set -e
 
+./scripts/wait-for-redis.sh
+
 echo "Applying database migrations..."
 alembic upgrade head
 
@@ -17,6 +19,15 @@ echo "Starting API supervisor on port 8000..."
   done
 ) &
 SUPERVISOR_PID=$!
+
+_shutdown() {
+  echo "Shutting down API supervisor..."
+  kill -TERM "$SUPERVISOR_PID" 2>/dev/null || true
+  pkill -TERM -P "$SUPERVISOR_PID" 2>/dev/null || true
+  wait "$SUPERVISOR_PID" 2>/dev/null || true
+}
+
+trap _shutdown EXIT INT TERM
 
 echo "Waiting for API health check..."
 ready=0
@@ -36,5 +47,4 @@ fi
 
 echo "Starting dashboard on port 3000..."
 cd /app/dashboard
-trap 'kill "$SUPERVISOR_PID" 2>/dev/null || true' EXIT INT TERM
 exec npm run start -- -p 3000 -H 0.0.0.0

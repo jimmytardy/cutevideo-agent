@@ -23,6 +23,7 @@ from agent.core.visual_beats import (
     parse_visual_beats,
 )
 from agent.skills.media.clip_source_analyzer import clip_metadata_from_dict
+from agent.skills.video.beat_timeline import word_segments_from_json
 from agent.skills.video.montage_profile import is_short_montage, long_pacing_config
 from agent.skills.video.pacing_director import pacing_hints_from_dict
 from agent.skills.video.diagram_overlay_renderer import (

@@ -949,7 +949,9 @@ async def stream_media_asset(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> FileResponse | RedirectResponse:
-    await get_user_project(db, project_id, current_user)
+    from agent.core.media_asset_resolve import resolve_media_asset_stream_target
+
+    project = await get_user_project(db, project_id, current_user)
     result = await db.execute(
         select(MediaAsset).where(
             MediaAsset.id == asset_id,
@@ -960,15 +962,15 @@ async def stream_media_asset(
     if not asset:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Média introuvable")
 
-    if asset.local_path:
-        local = Path(asset.local_path)
-        if local.exists():
-            return FileResponse(str(local), media_type=_media_type_for_path(local))
+    target = await resolve_media_asset_stream_target(asset, project.config)
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Fichier média introuvable")
 
-    if asset.source_url and asset.source_url.startswith("http"):
-        return RedirectResponse(asset.source_url)
-
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Fichier média introuvable")
+    kind, value = target
+    if kind == "file":
+        path = Path(value)
+        return FileResponse(value, media_type=_media_type_for_path(path))
+    return RedirectResponse(value)
 
 
 @router.get("/{project_id}/media-assets/{asset_id}/preview", response_model=None)
@@ -981,6 +983,7 @@ async def preview_media_asset_with_labels(
     """Preview image avec diagram_labels superposés (ffmpeg drawtext)."""
     from agent.core.api_keys import fetch_api_key
     from agent.core.channel_config import resolve_channel_config
+    from agent.core.media_asset_resolve import materialize_media_asset_local
     from agent.core.subscription import get_user_subscription_limits
     from agent.skills.video.media_asset_preview import (
         find_beat_labels,
@@ -996,11 +999,11 @@ async def preview_media_asset_with_labels(
         )
     )
     asset = result.scalar_one_or_none()
-    if not asset or not asset.local_path:
+    if not asset:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Média introuvable")
 
-    local = Path(asset.local_path)
-    if not local.exists():
+    local = await materialize_media_asset_local(asset, project.config)
+    if local is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Fichier média introuvable")
 
     scenario_result = await db.execute(

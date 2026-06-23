@@ -72,13 +72,24 @@ async def run_ffmpeg(cmd: list[str], *, error_prefix: str = "FFmpeg error") -> N
 
     Garantit qu'un seul process ffmpeg s'exécute à la fois dans tout le
     process Python, même si l'appelant fait du fan-out (asyncio.gather).
+    Tue le subprocess si la tâche asyncio parente est annulée.
     """
+    from agent.core.subprocess_registry import register, terminate_proc, unregister
+
     async with _get_semaphore():
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        _, stderr = await proc.communicate()
+        register(proc)
+        stderr = b""
+        try:
+            _, stderr = await proc.communicate()
+        except asyncio.CancelledError:
+            await terminate_proc(proc)
+            raise
+        finally:
+            unregister(proc)
     if proc.returncode != 0:
         raise RuntimeError(f"{error_prefix}: {stderr.decode()[-2000:]}")

@@ -26,6 +26,21 @@ def fanout_concurrency() -> int:
         return 3
 
 
+def beat_fanout_concurrency() -> int:
+    """Nb max de visual_beats traités en parallèle dans un segment (media_agent).
+
+    Les étapes stock / scoring Gemini sont surtout I/O — on peut dépasser le
+    fan-out segments. Réglable via MEDIA_BEAT_FANOUT_CONCURRENCY.
+    """
+    raw = os.getenv("MEDIA_BEAT_FANOUT_CONCURRENCY")
+    if raw:
+        try:
+            return max(1, int(raw))
+        except ValueError:
+            pass
+    return max(fanout_concurrency() * 2, 6)
+
+
 async def bounded_gather(
     *awaitables: Awaitable[_T],
     limit: int | None = None,
@@ -38,7 +53,11 @@ async def bounded_gather(
     sem = asyncio.Semaphore(limit if limit is not None else fanout_concurrency())
 
     async def _run(aw: Awaitable[_T]) -> _T:
+        from agent.core.pipeline_cancel import raise_if_pipeline_cancelled
+
+        await raise_if_pipeline_cancelled()
         async with sem:
+            await raise_if_pipeline_cancelled()
             return await aw
 
     return await asyncio.gather(

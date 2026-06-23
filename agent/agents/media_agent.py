@@ -12,6 +12,7 @@ from agent.core.base_agent import BaseAgent
 from agent.core.concurrency import bounded_gather
 from agent.core.config import get_storage_settings
 from agent.core.database import AsyncSessionFactory, MediaAsset, Project, Scenario
+from agent.core.media_asset_resolve import clip_metadata_for_media_item
 from agent.core.media_validation import MediaValidationBrief, resolve_validation_brief
 from agent.core.storage import (
     build_temp_ai_storage_key,
@@ -739,6 +740,8 @@ class MediaAgent(BaseAgent):
         selected: list[dict],
         dev_attempts: int,
         paid_attempts: int,
+        *,
+        count_toward_video_quota: bool = True,
     ) -> None:
         order = int(segment.get("order", 0))
         if result.outcome == "api_failed":
@@ -753,8 +756,9 @@ class MediaAgent(BaseAgent):
             return
         if result.item:
             selected.append(result.item)
-            self._ai_images_used += 1
-            await self._record_ai_image_usage(ctx)
+            if count_toward_video_quota:
+                self._ai_images_used += 1
+                await self._record_ai_image_usage(ctx)
             if result.temp_s3_key and result.temp_s3_key not in self._kept_temp_s3_keys:
                 self._kept_temp_s3_keys.append(result.temp_s3_key)
 
@@ -1207,6 +1211,7 @@ class MediaAgent(BaseAgent):
                     generation_prompt=item.get("title"),
                     visual_type=None,
                     iteration=self._media_iteration(ctx),
+                    clip_metadata=clip_metadata_for_media_item(item),
                 )
                 session.add(asset)
                 assets.append(asset)
@@ -1527,12 +1532,14 @@ class MediaAgent(BaseAgent):
         assert isinstance(beat, VisualBeat)
         local_path = await self._download_asset(item, output_dir)
         duration_s = item.get("duration_s")
-        clip_metadata = None
+        clip_metadata = clip_metadata_for_media_item(item)
         path_obj = Path(local_path) if local_path else None
         if path_obj and path_obj.exists() and item.get("asset_type") == "video":
-            duration_s, clip_metadata = await self._analyze_video_asset(
+            duration_s, video_meta = await self._analyze_video_asset(
                 ctx, path_obj, item, beat, segment_order,
             )
+            if video_meta:
+                clip_metadata = {**(clip_metadata or {}), **video_meta}
         async with AsyncSessionFactory() as session:
             asset = MediaAsset(
                 project_id=ctx.project_id,
@@ -1589,6 +1596,7 @@ class MediaAgent(BaseAgent):
                 generation_prompt=item.get("_generation_prompt") or beat.prompt,
                 visual_type=beat.visual_type,
                 iteration=self._media_iteration(ctx),
+                clip_metadata=clip_metadata_for_media_item(item),
             )
             await promote_to_pool(asset, pool_min_score=pool_min_score)
             session.add(asset)

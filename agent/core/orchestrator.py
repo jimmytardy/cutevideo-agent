@@ -248,6 +248,12 @@ class Orchestrator:
                 await self._update_project_status(session, project_id, "approved")
             logger.info("Pipeline terminé pour le projet %s", project_id)
         except asyncio.CancelledError:
+            from agent.core.storage import cleanup_local_videos_for_project, cleanup_temp_ai_images
+            from agent.core.subprocess_registry import kill_all
+
+            await kill_all()
+            await cleanup_local_videos_for_project(project_id)
+            await cleanup_temp_ai_images(project_id)
             async with AsyncSessionFactory() as session:
                 await self._update_project_status(session, project_id, "stopped", "Arrêté manuellement")
             await stop_running_agent_runs(project_id)

@@ -36,7 +36,7 @@ import Tab from '@mui/material/Tab'
 
 import { PageContainer, PageHeader, LoadingState, useConfirmDialog } from '@/components/layout'
 
-import { fetcher, fetchRunwayStatus, type Channel, type RunwayStatus } from '@/lib/api'
+import { fetcher, fetchRunwayStatus, previewChannelCostEstimate, updateChannel, type Channel, type ChannelCostEstimate, type RunwayStatus } from '@/lib/api'
 
 import {
   buildChannelUpdatePayload,
@@ -150,44 +150,6 @@ function voiceOptionsForEngine(
 
 
 
-interface CostEstimate {
-
-  ai_images: {
-
-    plan: string
-
-    plan_label: string
-
-    provider_family: string
-
-    cost_per_image_eur: number
-
-    images_per_week: number
-
-    cost_eur_per_week: number
-
-    cost_eur_per_month: number
-
-    breakdown: {
-
-      theme_category: string
-
-      fallback_rate: number
-
-      videos_per_week: number
-
-      segments_per_week: number
-
-    }
-
-  }
-
-  total_eur_per_week: number
-
-}
-
-
-
 interface Props {
 
   params: { id: string }
@@ -222,7 +184,7 @@ export default function ChannelSettingsPage({ params }: Props) {
 
   const [savedForm, setSavedForm] = useState<ChannelSettingsForm | null>(null)
 
-  const [costEstimate, setCostEstimate] = useState<CostEstimate | null>(null)
+  const [costEstimate, setCostEstimate] = useState<ChannelCostEstimate | null>(null)
 
   const [tab, setTab] = useState(0)
 
@@ -239,13 +201,9 @@ export default function ChannelSettingsPage({ params }: Props) {
 
   const fetchCostPreview = useCallback(async (currentForm: Record<string, unknown>) => {
 
-    const resp = await fetch(`/api/v1/channels/${id}/cost-estimate/preview`, {
+    try {
 
-      method: 'POST',
-
-      headers: { 'Content-Type': 'application/json' },
-
-      body: JSON.stringify({
+      const estimate = await previewChannelCostEstimate(id, {
 
         ai_fallback: {
 
@@ -273,13 +231,13 @@ export default function ChannelSettingsPage({ params }: Props) {
 
         },
 
-      }),
+      })
 
-    })
+      setCostEstimate(estimate)
 
-    if (resp.ok) {
+    } catch {
 
-      setCostEstimate(await resp.json())
+      /* aperçu optionnel — ignorer si indisponible */
 
     }
 
@@ -325,43 +283,7 @@ export default function ChannelSettingsPage({ params }: Props) {
 
     try {
 
-      const resp = await fetch(`/api/v1/channels/${id}`, {
-
-        method: 'PATCH',
-
-        headers: { 'Content-Type': 'application/json' },
-
-        body: JSON.stringify(payload),
-
-      })
-
-      if (!resp.ok) {
-
-        let detail = `Erreur ${resp.status}`
-
-        try {
-
-          const err = await resp.json()
-
-          if (err.detail) {
-
-            detail = typeof err.detail === 'string' ? err.detail : JSON.stringify(err.detail)
-
-          }
-
-        } catch {
-
-          /* réponse non-JSON */
-
-        }
-
-        setSaveError(detail)
-
-        return
-
-      }
-
-      const updated = (await resp.json()) as Channel
+      const updated = await updateChannel(id, payload)
 
       await mutate(updated, { revalidate: false })
 
@@ -375,9 +297,9 @@ export default function ChannelSettingsPage({ params }: Props) {
 
       setTimeout(() => setSaved(false), 3000)
 
-    } catch {
+    } catch (error) {
 
-      setSaveError('Impossible d\'enregistrer — vérifiez la connexion au serveur.')
+      setSaveError(error instanceof Error ? error.message : 'Impossible d\'enregistrer — vérifiez la connexion au serveur.')
 
     } finally {
 

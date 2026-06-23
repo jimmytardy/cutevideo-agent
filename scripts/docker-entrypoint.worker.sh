@@ -1,6 +1,8 @@
 #!/bin/sh
 set -e
 
+./scripts/wait-for-redis.sh
+
 # Entrypoint worker PROD : exécute le pipeline_worker sans hot-reload.
 # (La variante .worker.dev.sh utilise watchfiles pour le développement.)
 
@@ -9,10 +11,18 @@ alembic upgrade head
 
 export PYTHONPATH=/app
 
-echo "Starting pipeline worker supervisor..."
-while true; do
-  echo "Starting pipeline worker..."
-  python /app/scripts/pipeline_worker.py || true
-  echo "Pipeline worker exited — restarting in 2s..."
-  sleep 2
-done
+_shutdown() {
+  echo "Shutting down pipeline worker..."
+  if [ -n "$WORKER_PID" ]; then
+    kill -TERM "$WORKER_PID" 2>/dev/null || true
+    wait "$WORKER_PID" 2>/dev/null || true
+  fi
+  exit 0
+}
+
+trap _shutdown TERM INT
+
+echo "Starting pipeline worker..."
+python /app/scripts/pipeline_worker.py &
+WORKER_PID=$!
+wait "$WORKER_PID"

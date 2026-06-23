@@ -37,18 +37,41 @@ class AgentQueue:
         # à chaque appel (sinon une nouvelle connexion par opération, plusieurs/s).
         if self._client is not None:
             return
-        self._client = aioredis.from_url(
-            settings.redis_url,
-            decode_responses=True,
-            socket_connect_timeout=5,
-            # Laisser BLPOP gérer l'attente ; un socket_timeout trop court provoque
-            # redis.exceptions.TimeoutError au lieu d'un retour nil.
-            socket_timeout=REDIS_SOCKET_TIMEOUT_S,
-            retry_on_timeout=True,
-            health_check_interval=30,
-        )
-        await self._client.ping()
-        logger.info("Connexion Redis établie")
+
+        import asyncio
+
+        last_error: Exception | None = None
+        for attempt in range(1, 11):
+            client: aioredis.Redis | None = None
+            try:
+                client = aioredis.from_url(
+                    settings.redis_url,
+                    decode_responses=True,
+                    socket_connect_timeout=5,
+                    socket_timeout=REDIS_SOCKET_TIMEOUT_S,
+                    retry_on_timeout=True,
+                    health_check_interval=30,
+                )
+                await client.ping()
+                self._client = client
+                logger.info("Connexion Redis établie")
+                return
+            except (redis.exceptions.ConnectionError, OSError) as exc:
+                last_error = exc
+                if client is not None:
+                    await client.aclose()
+                if attempt < 10:
+                    delay = min(attempt, 3)
+                    logger.warning(
+                        "Redis indisponible (tentative %d/10) : %s — nouvel essai dans %ds",
+                        attempt,
+                        exc,
+                        delay,
+                    )
+                    await asyncio.sleep(delay)
+
+        assert last_error is not None
+        raise last_error
 
     async def disconnect(self) -> None:
         if self._client:
