@@ -118,12 +118,19 @@ async def _publish_youtube(
 
     video_path = await resolve_local_path_for_upload(video)
     refresh_token = channel.youtube_refresh_token or settings.youtube_refresh_token
+    from agent.skills.publisher.synthetic_disclosure import detect_realistic_synthetic_media
+
+    contains_synthetic = False
+    if video.project_id:
+        contains_synthetic = await detect_realistic_synthetic_media(video.project_id)
+
     video_id = await upload_video(
         video_path=video_path,
         title=title,
         description=description,
         tags=tags,
         category_id=channel_config.youtube_category_id,
+        contains_synthetic_media=contains_synthetic,
         refresh_token=refresh_token,
     )
     pub = await _mark_published(

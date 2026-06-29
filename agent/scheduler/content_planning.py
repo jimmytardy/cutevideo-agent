@@ -60,9 +60,27 @@ async def load_topic_history(
                 "sub_theme": plan.get("sub_theme"),
                 "provisional_title": plan.get("provisional_title"),
                 "main_entities": plan.get("main_entities", []),
+                "content_plan": plan,
+                "format": (p.config or {}).get("format"),
             }
         )
     return history
+
+
+async def load_format_history(
+    channel_id: uuid.UUID,
+    *,
+    limit: int = 80,
+) -> tuple[list[str], list[str], list[str]]:
+    """Historique format/intro/outro des vidéos longues récentes."""
+    from agent.skills.content_planning.format_rotation import extract_format_histories
+
+    rows = await load_topic_history(channel_id, limit=limit)
+    long_rows = [
+        r for r in rows
+        if r.get("format") in (None, "long") or not r.get("format")
+    ]
+    return extract_format_histories(long_rows)
 
 
 async def count_planner_projects_for_publish_date(

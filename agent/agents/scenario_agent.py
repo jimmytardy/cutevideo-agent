@@ -55,6 +55,8 @@ TON ÉDITORIAL : {editorial_tone}
 {creative_brief_block}SUJET DE LA VIDÉO : "{theme}"
 
 {content_plan_block}
+{editorial_format_block}
+{scenario_structure_block}
 
 {research_block}
 
@@ -87,10 +89,16 @@ Retourne UNIQUEMENT un JSON valide avec cette structure :
       {visual_beats_example}
     }}
   ],
+  "authorship_angle": {{
+    "thesis": "Thèse / point de vue en 1 phrase",
+    "reason_to_watch": "Pourquoi regarder cette vidéo maintenant",
+    "intro_hook": "Phrase d'ouverture oralisant la thèse (~15 s)"
+  }},
   "total_duration_s": 1800
 }}
 
 Principes OBLIGATOIRES :
+- authorship_angle OBLIGATOIRE : thesis non vide ; segment 1 doit oraliser intro_hook ; description mentionne la thèse
 - Structure narrative : arc tension → révélation → payoff dans les titres de segments
 - Segment 1 : accroche / paradoxe avec question rhétorique dans les ~15 premières secondes
 - Segments milieu : mécanisme, preuves, approfondissement
@@ -140,6 +148,8 @@ TON : {editorial_tone}
 {creative_brief_block}SUJET : "{theme}"
 
 {content_plan_block}
+{editorial_format_block}
+{scenario_structure_block}
 
 {research_block}
 
@@ -172,10 +182,16 @@ Retourne UNIQUEMENT ce JSON :
       {visual_beats_example}
     }}
   ],
+  "authorship_angle": {{
+    "thesis": "Thèse / point de vue en 1 phrase",
+    "reason_to_watch": "Pourquoi regarder ce short",
+    "intro_hook": "Hook oral (~5 s)"
+  }},
   "total_duration_s": {target_duration_s}
 }}
 
 RÈGLES SHORT :
+- authorship_angle OBLIGATOIRE : thesis non vide ; segment 1 oralise intro_hook
 - 1 à 3 segments ; durée totale indicative entre {min_duration_s} et {max_duration_s} s (durée réelle calibrée post-voix)
 - Minimum TikTok : {min_duration_s} s — ne pas viser une durée fixe si le contenu demande plus
 - needs_voice : true par défaut pour contenu éducatif ; false uniquement si visuel + on_screen_text suffisent
@@ -449,6 +465,8 @@ def _format_fact_check_feedback_block(feedback: list[dict] | None) -> str:
 def _format_content_plan_block(plan: dict[str, Any] | None) -> str:
     if not plan:
         return ""
+    from agent.skills.scenario.authorship_angle import format_editorial_format_block
+
     entities = ", ".join(plan.get("main_entities") or [])
     seo = ", ".join(plan.get("seo_keywords") or [])
     lines = [
@@ -464,6 +482,32 @@ def _format_content_plan_block(plan: dict[str, Any] | None) -> str:
     hook = plan.get("reactive_news_hook")
     if hook:
         lines.append(f"- Accroche actualité : {hook}")
+    block = "\n".join(lines) + "\n"
+    return block + format_editorial_format_block(plan)
+
+
+def _format_scenario_structure_block(
+    plan: dict[str, Any] | None,
+    channel_raw_config: dict[str, Any] | None,
+) -> str:
+    if not plan:
+        return ""
+    from agent.core.editorial_formats import get_format_by_id
+
+    fmt_id = str(plan.get("editorial_format_id") or "").strip()
+    fmt = get_format_by_id(fmt_id, channel_raw_config)
+    if not fmt or not fmt.scenario_structure:
+        return ""
+    intro = plan.get("intro_variant") or ""
+    outro = plan.get("outro_variant") or ""
+    lines = [
+        "STRUCTURE DE SCÉNARIO (format assigné — à respecter) :",
+        fmt.scenario_structure,
+    ]
+    if intro:
+        lines.append(f"Variante intro imposée : {intro}")
+    if outro:
+        lines.append(f"Variante outro imposée : {outro}")
     return "\n".join(lines) + "\n"
 
 
@@ -530,6 +574,9 @@ class ScenarioInput:
     min_short_duration_s: int = 60
     max_short_duration_s: int = 120
     content_plan_block: str = ""
+    editorial_format_block: str = ""
+    scenario_structure_block: str = ""
+    content_plan: dict[str, Any] | None = None
     research_block: str = ""
     research_rules_block: str = ""
     critic_feedback_block: str = ""
@@ -567,6 +614,11 @@ class ScenarioAgent(BaseAgent):
             min_short_duration_s=ctx.channel_config.min_short_duration_s,
             max_short_duration_s=ctx.channel_config.max_short_duration_s,
             content_plan_block=_format_content_plan_block(ctx.content_plan),
+            editorial_format_block="",
+            scenario_structure_block=_format_scenario_structure_block(
+                ctx.content_plan, dict(ctx.channel.config or {})
+            ),
+            content_plan=ctx.content_plan,
             research_block=_format_research_block(ctx.research_brief),
             research_rules_block=_format_research_rules_block(ctx.research_brief),
             critic_feedback_block=critic_feedback_block,
@@ -648,6 +700,8 @@ class ScenarioAgent(BaseAgent):
                     creative_brief_block=input_data.creative_brief_block,
                     theme=input_data.theme,
                     content_plan_block=input_data.content_plan_block,
+                    editorial_format_block=input_data.editorial_format_block,
+                    scenario_structure_block=input_data.scenario_structure_block,
                     research_block=input_data.research_block,
                     research_rules_block=input_data.research_rules_block,
                     learning_block=learning_block,
@@ -700,6 +754,8 @@ class ScenarioAgent(BaseAgent):
                     creative_brief_block=input_data.creative_brief_block,
                     theme=input_data.theme,
                     content_plan_block=input_data.content_plan_block,
+                    editorial_format_block=input_data.editorial_format_block,
+                    scenario_structure_block=input_data.scenario_structure_block,
                     research_block=input_data.research_block,
                     research_rules_block=input_data.research_rules_block,
                     learning_block=learning_block,
@@ -757,6 +813,13 @@ class ScenarioAgent(BaseAgent):
         )
         data = apply_brief_to_scenario_data(data, brief)
 
+        from agent.skills.scenario.authorship_angle import normalize_authorship_angle
+
+        authorship = normalize_authorship_angle(data, content_plan=input_data.content_plan)
+        data["authorship_angle"] = authorship
+        if authorship.get("thesis") and not str(data.get("description") or "").strip():
+            data["description"] = authorship["thesis"]
+
         if is_short and channel_config is not None:
             data = clamp_short_scenario_payload(
                 data,
@@ -782,6 +845,7 @@ class ScenarioAgent(BaseAgent):
             project = project_result.scalar_one_or_none()
             project_config = dict(project.config or {}) if project else {}
             project_config["media_validation_brief"] = brief.to_dict()
+            project_config["authorship_angle"] = authorship
 
             await session.execute(
                 update(Project)

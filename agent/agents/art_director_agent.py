@@ -96,12 +96,19 @@ class ArtDirectorAgent(BaseAgent):
     async def _direct(self, ctx: "PipelineContext") -> str:
         brief = (ctx.channel_config.creative_brief or "").strip()
         creative_brief_block = f"BRIEF CRÉATIF :\n{brief}\n" if brief else ""
+        palette_block = ""
+        async with AsyncSessionFactory() as session:
+            project = await session.get(Project, ctx.project_id)
+            palette = (project.config or {}).get("visual_palette") if project else None
+        if isinstance(palette, list) and palette:
+            colors = ", ".join(str(c) for c in palette[:5])
+            palette_block = f"PALETTE DOMINANTE IMPOSÉE : {colors}\n"
         prompt = ART_DIRECTOR_PROMPT.format(
             channel_name=ctx.channel.name,
             theme_category=ctx.theme_category,
             editorial_tone=ctx.channel_config.editorial_tone,
             theme=ctx.theme,
-            creative_brief_block=creative_brief_block,
+            creative_brief_block=creative_brief_block + palette_block,
         )
         try:
             raw = await self._call_claude(prompt, system=ART_DIRECTOR_SYSTEM, max_tokens=512)
@@ -123,6 +130,9 @@ class ArtDirectorAgent(BaseAgent):
                 raise RuntimeError(f"Projet {project_id} introuvable")
             config = dict(project.config or {})
             config["visual_style_block"] = style_block
+            palette = config.get("visual_palette")
+            if isinstance(palette, list):
+                config["visual_palette"] = palette
             await session.execute(
                 update(Project).where(Project.id == project_id).values(config=config)
             )

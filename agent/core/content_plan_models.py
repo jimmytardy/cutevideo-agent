@@ -13,6 +13,10 @@ class VideoTopicPlan(BaseModel):
     narrative_format: str = Field(
         description="portrait | comparaison | récit | tuto | débat | chronologie | ..."
     )
+    editorial_format_id: str = Field(default="", description="ID format éditorial (banque editorial.formats)")
+    intro_variant: str = Field(default="", description="Variante d'intro du format")
+    outro_variant: str = Field(default="", description="Variante d'outro du format")
+    editorial_angle_note: str = Field(default="", description="Note d'angle optionnelle (non bloquante)")
     estimated_duration_s: int
     sub_theme: str
     main_entities: list[str] = Field(default_factory=list)

@@ -22,6 +22,8 @@ METADATA_PROMPT_SHORT = """Rédige les métadonnées de publication de ce SHORT 
 CHAÎNE : {channel_name} ({theme_category})
 SUJET : {theme}
 LANGUE : {language}
+FORMAT ÉDITORIAL : {editorial_format}
+ANGLE ÉDITORIAL : {authorship_thesis}
 FORMAT : YouTube Short / TikTok / Reels
 {research_block}
 STRUCTURE (segments) :
@@ -39,6 +41,8 @@ METADATA_PROMPT = """Rédige les métadonnées de publication de cette vidéo.
 CHAÎNE : {channel_name} ({theme_category})
 SUJET : {theme}
 LANGUE : {language}
+FORMAT ÉDITORIAL : {editorial_format}
+ANGLE ÉDITORIAL : {authorship_thesis}
 {research_block}
 STRUCTURE (segments) :
 {scenario_summary}
@@ -114,12 +118,24 @@ class MetadataAgent(BaseAgent):
         scenario_summary = "\n".join(
             f"- {s.get('title', '')} ({int(s.get('duration_s') or 0)}s)" for s in segments[:12]
         )
+        editorial_format = ""
+        authorship_thesis = ""
+        async with AsyncSessionFactory() as session:
+            project = await session.get(Project, ctx.project_id)
+            if project and isinstance(project.config, dict):
+                plan = project.config.get("content_plan") or {}
+                editorial_format = str(plan.get("narrative_format") or plan.get("editorial_format_id") or "")
+                angle = project.config.get("authorship_angle") or {}
+                if isinstance(angle, dict):
+                    authorship_thesis = str(angle.get("thesis") or "")
         prompt_template = METADATA_PROMPT_SHORT if ctx.is_short_project else METADATA_PROMPT
         prompt = prompt_template.format(
             channel_name=ctx.channel.name,
             theme_category=ctx.theme_category,
             theme=ctx.theme,
             language=ctx.channel_config.content_language,
+            editorial_format=editorial_format or ctx.theme_category,
+            authorship_thesis=authorship_thesis or ctx.theme,
             research_block=_format_research_block(ctx.research_brief),
             scenario_summary=scenario_summary,
         )

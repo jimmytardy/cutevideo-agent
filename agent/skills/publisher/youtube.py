@@ -14,6 +14,7 @@ async def upload_video(
     category_id: str = "27",
     privacy_status: str = "public",
     made_for_kids: bool = False,
+    contains_synthetic_media: bool = False,
     refresh_token: str | None = None,
 ) -> str:
     """Upload une vidéo sur YouTube via YouTube Data API v3. Retourne l'ID vidéo."""
@@ -26,7 +27,8 @@ async def upload_video(
     video_id = await loop.run_in_executor(
         None,
         _upload_sync,
-        video_path, title, description, tags, category_id, privacy_status, made_for_kids, refresh_token,
+        video_path, title, description, tags, category_id, privacy_status, made_for_kids,
+        contains_synthetic_media, refresh_token,
     )
     logger.info("YouTube upload réussi : https://youtube.com/watch?v=%s", video_id)
     return video_id
@@ -40,6 +42,7 @@ def _upload_sync(
     category_id: str,
     privacy_status: str,
     made_for_kids: bool,
+    contains_synthetic_media: bool,
     refresh_token: str | None,
 ) -> str:
     from agent.core.config import settings
@@ -68,6 +71,7 @@ def _upload_sync(
         "status": {
             "privacyStatus": privacy_status,
             "madeForKids": made_for_kids,
+            "containsSyntheticMedia": contains_synthetic_media,
         },
     }
 

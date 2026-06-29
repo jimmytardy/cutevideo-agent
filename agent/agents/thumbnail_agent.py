@@ -82,6 +82,14 @@ class ThumbnailAgent(BaseAgent):
         output_dir = Path(f"./tmp/{ctx.project_id}/thumbnail")
         output_dir.mkdir(parents=True, exist_ok=True)
         style_block = getattr(ctx, "visual_style_block", "") or ""
+        thumb_hint = ""
+        async with AsyncSessionFactory() as session:
+            project = await session.get(Project, ctx.project_id)
+            if project and isinstance(project.config, dict):
+                thumb_hint = str(project.config.get("thumbnail_style_hint") or "")
+        thumb_style = _THUMBNAIL_STYLE
+        if thumb_hint:
+            thumb_style = f"{_THUMBNAIL_STYLE}, {thumb_hint}"
 
         # Deux angles : sujet emblématique vs ambiance/émotion du hook.
         briefs_fr = [
@@ -94,12 +102,12 @@ class ThumbnailAgent(BaseAgent):
             subject_en = await synthesize_flux_subject(
                 visual_type="custom",
                 prompt_fr=brief_fr,
-                style_hint=_THUMBNAIL_STYLE,
+                style_hint=thumb_style,
                 phrase_anchor=title,
                 api_key=self._gemini_api_key or None,
                 cache_dir=output_dir / "prompt_cache",
             )
-            parts = [subject_en.strip().rstrip("."), _THUMBNAIL_STYLE]
+            parts = [subject_en.strip().rstrip("."), thumb_style]
             if style_block.strip():
                 parts.append(style_block.strip().rstrip("."))
             parts.append("landscape 16:9 horizontal framing")

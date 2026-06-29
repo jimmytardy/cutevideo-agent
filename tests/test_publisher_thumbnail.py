@@ -126,6 +126,11 @@ async def test_publish_youtube_calls_set_thumbnail_with_agent_path(tmp_path: Pat
             "agent.skills.publisher.youtube_channel_manager.post_publish_hook",
             new_callable=AsyncMock,
         ),
+        patch(
+            "agent.skills.publisher.synthetic_disclosure.detect_realistic_synthetic_media",
+            new_callable=AsyncMock,
+            return_value=False,
+        ),
     ):
         factory_mock.return_value.__aenter__.return_value = mock_session
         await _publish_youtube(

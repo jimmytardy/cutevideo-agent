@@ -74,6 +74,11 @@
       "bitrate": "8M",
       "audio_bitrate": "192k"
     },
+    "perception": {
+      "enabled": true,
+      "max_assets_per_video": 20,
+      "model": "gemini-2.5-flash"
+    },
     "ken_burns": {
       "enabled": true,
       "zoom_factor": 0.03,
@@ -175,6 +180,7 @@
         }
       },
       "beat_slot_s": 2.5,
+      "beat_snap_tolerance_s": 0.15,
       "dynamic_recut_enabled": false,
       "sfx": {
         "beat_cuts_enabled": true,
@@ -182,6 +188,7 @@
       }
     },
     "long_montage_profile": {
+      "beat_snap_tolerance_s": 0.15,
       "sfx": {
         "beat_cuts_enabled": true,
         "max_cues_per_minute": 10,
@@ -197,6 +204,11 @@
           "tension": "fadeblack"
         }
       }
+    },
+    "jl_cuts": {
+      "enabled": false,
+      "max_audio_lead_s": 0.3,
+      "max_audio_trail_s": 0.3
     }
   },
   "whisper": {
@@ -556,6 +568,12 @@
       "views_underperform_pct": -10.0
     }
   },
+  "style": {
+    "max_reference_videos": 12,
+    "refresh_days": 30,
+    "max_clip_duration_s": 180,
+    "competitor_video_ratio": 0.6
+  },
   "onboarding": {
     "market_research": {
       "platforms": [
@@ -640,6 +658,80 @@
   },
   "sfx": {
     "enabled": true
+  },
+  "editorial": {
+    "format_rotation": {
+      "window_k": 3,
+      "min_distinct_formats": 5
+    },
+    "formats": [
+      {
+        "id": "enquete",
+        "label": "Enquête",
+        "scenario_structure": "Structure en 4 actes : mystère, indices, révélation, conclusion.",
+        "intro_variants": ["question-mystere", "fait-inexplicable", "temoignage-choc"],
+        "outro_variants": ["reponse-claire", "piste-ouverte"],
+        "montage_overrides": {"pacing": {"hook_transition": "fadeblack"}},
+        "palette_presets": [["#1a1a2e", "#16213e", "#0f3460"]],
+        "caption_style": {"primary_color": "#FFFFFF", "highlight_color": "#FF4444"},
+        "thumbnail_style_hint": "mysterious noir atmosphere, investigative mood"
+      },
+      {
+        "id": "liste-classement",
+        "label": "Liste / Classement",
+        "scenario_structure": "Countdown : intro annonce le classement, segments ordonnés, outro top 3.",
+        "intro_variants": ["compte-a-rebours", "stat-choc", "promesse-top"],
+        "outro_variants": ["recap-top3", "surprise-numero1"],
+        "montage_overrides": {"sfx": {"beat_cuts_enabled": true, "max_cues_per_minute": 14}},
+        "palette_presets": [["#FFD700", "#1a1a1a", "#FFFFFF"]],
+        "caption_style": {"primary_color": "#FFFFFF", "highlight_color": "#FFD700"},
+        "thumbnail_style_hint": "bold ranking visual, listicle energy"
+      },
+      {
+        "id": "mythe-vs-realite",
+        "label": "Mythe vs Réalité",
+        "scenario_structure": "Mythe populaire puis démontage factuel segment par segment.",
+        "intro_variants": ["mythe-populaire", "on-croit-que", "legend-urbaine"],
+        "outro_variants": ["verdict-facts", "nuance-finale"],
+        "montage_overrides": {"inter_segment_flash": true},
+        "palette_presets": [["#E63946", "#F1FAEE", "#1D3557"]],
+        "caption_style": {"primary_color": "#F1FAEE", "highlight_color": "#E63946"},
+        "thumbnail_style_hint": "myth vs fact split contrast"
+      },
+      {
+        "id": "etude-de-cas",
+        "label": "Étude de cas",
+        "scenario_structure": "Cas concret : contexte, protagoniste, mécanisme, conséquences, leçon.",
+        "intro_variants": ["cas-concret", "personnage-cle", "situation-reelle"],
+        "outro_variants": ["lecon-generale", "application-viewer"],
+        "montage_overrides": {"pacing": {"hook_transition": "dissolve"}},
+        "palette_presets": [["#2C3E50", "#ECF0F1", "#3498DB"]],
+        "caption_style": {"primary_color": "#ECF0F1", "highlight_color": "#3498DB"},
+        "thumbnail_style_hint": "case study hero shot, documentary realism"
+      },
+      {
+        "id": "chronologie",
+        "label": "Chronologie",
+        "scenario_structure": "Narration temporelle ordonnée avec transitions datées.",
+        "intro_variants": ["date-cle", "avant-apres", "ligne-temps"],
+        "outro_variants": ["heritage", "bilan-temporel"],
+        "montage_overrides": {"pacing": {"mood_transitions": {"dramatique": "wiperight"}}},
+        "palette_presets": [["#8B4513", "#DEB887", "#2F4F4F"]],
+        "caption_style": {"primary_color": "#FFFFFF", "highlight_color": "#DEB887"},
+        "thumbnail_style_hint": "timeline aesthetic, historical sepia tones"
+      },
+      {
+        "id": "questions-reponses",
+        "label": "Questions-Réponses",
+        "scenario_structure": "FAQ : intro pose les questions, un segment par réponse.",
+        "intro_variants": ["questions-viewers", "tu-te-demandes", "quiz-rapide"],
+        "outro_variants": ["question-ouverte", "call-to-discuss"],
+        "montage_overrides": {"sfx": {"text_pop_enabled": true}},
+        "palette_presets": [["#4361EE", "#7209B7", "#F72585"]],
+        "caption_style": {"primary_color": "#FFFFFF", "highlight_color": "#4361EE"},
+        "thumbnail_style_hint": "Q&A energy, question mark visual"
+      }
+    ]
   },
   "audio_mastering": {
     "enabled": true,

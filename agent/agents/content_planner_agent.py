@@ -13,12 +13,15 @@ from agent.core.channel_config import resolve_channel_config
 from agent.core.config import load_agent_config
 from agent.core.content_plan_models import DailyContentPlan, ThemeAnalysis, VideoTopicPlan
 from agent.core.database import AsyncSessionFactory, Channel, Project
+from agent.core.editorial_formats import format_bank_summary, get_format_by_id
 from agent.core.learning_context import load_channel_context
 from agent.core.llm_config import compact_learning_context, is_planner_llm_day
+from agent.skills.content_planning.format_rotation import apply_format_rotation_to_plan
 from agent.skills.content_planning.heuristic_planner import build_heuristic_plan, find_similar_in_history
 from agent.scheduler.content_planning import (
     build_editorial_identity,
     count_planner_projects_for_publish_date,
+    load_format_history,
     load_topic_history,
     production_quotas,
 )
@@ -57,6 +60,9 @@ Sujets intemporels de secours pour ce thème : {evergreen_topics_json}
 ## Historique des sujets déjà produits
 {history_json}
 
+## Formats éditoriaux autorisés (choisir editorial_format_id dans cette liste)
+{format_bank_summary}
+
 ## Contexte performance (analytics + commentaires)
 {learning_context}
 
@@ -82,8 +88,9 @@ Retourne UNIQUEMENT ce JSON :
       "priority": 1,
       "format": "long",
       "provisional_title": "...",
-      "angle": "2 lignes max",
-      "narrative_format": "récit|portrait|...",
+      "angle": "2 lignes max — thèse / point de vue de la vidéo",
+      "editorial_format_id": "id depuis la banque ci-dessus",
+      "narrative_format": "label du format (récit|enquête|...)",
       "estimated_duration_s": {default_long_duration_s},
       "sub_theme": "...",
       "main_entities": ["personne", "lieu", "..."],
@@ -119,6 +126,7 @@ Règles strictes :
 - Voix/narration : recommandée sur shorts éducatifs (needs_voice true) ; optionnelle pour formats purement visuels
 - Musique (needs_music) : optionnelle — false si voix seule ou son ambiant suffisent
 - Aucune répétition sémantique avec l'historique
+- Chaque long DOIT avoir un editorial_format_id distinct des {format_rotation_k} derniers longs si possible
 - subject = formulation claire pour alimenter le scénariste (pas le titre YouTube seul)"""
 
 
@@ -226,7 +234,7 @@ class ContentPlannerAgent(BaseAgent):
 
         long_count, short_count = production_quotas(cfg)
         history = await load_topic_history(channel.id)
-        return build_heuristic_plan(
+        plan = build_heuristic_plan(
             channel,
             production_date=production_date,
             target_publish_date=target_publish_date,
@@ -237,6 +245,7 @@ class ContentPlannerAgent(BaseAgent):
             history=history,
             evergreen=list(evergreen),
         )
+        return await self._apply_format_rotation(channel, cfg, plan)
 
     async def _plan_channel(
         self,
@@ -304,6 +313,8 @@ class ContentPlannerAgent(BaseAgent):
             freshness_days=freshness_days,
             evergreen_topics_json=json.dumps(evergreen, ensure_ascii=False),
             history_json=json.dumps(history, ensure_ascii=False, indent=2),
+            format_bank_summary=format_bank_summary(cfg.editorial_formats),
+            format_rotation_k=cfg.format_rotation.window_k,
             learning_context="(voir bloc contexte chaîne ci-dessus)",
         )
 
@@ -324,7 +335,8 @@ class ContentPlannerAgent(BaseAgent):
             default_long_s,
             default_short_s,
         )
-        return self._dedup_plan_against_history(plan, history)
+        plan = self._dedup_plan_against_history(plan, history)
+        return await self._apply_format_rotation(channel, cfg, plan)
 
     async def _persist_plan(
         self,
@@ -335,7 +347,21 @@ class ContentPlannerAgent(BaseAgent):
     ) -> int:
         prod_iso = (production_date or production_day()).isoformat()
         cfg = resolve_channel_config(channel)
+        channel_raw = dict(channel.config or {})
         created = 0
+
+        def _visual_extras(topic: VideoTopicPlan) -> dict[str, Any]:
+            fmt = get_format_by_id(topic.editorial_format_id, channel_raw)
+            extras: dict[str, Any] = {}
+            if fmt and fmt.palette_presets:
+                idx = hash(topic.subject) % len(fmt.palette_presets)
+                extras["visual_palette"] = fmt.palette_presets[idx]
+            if fmt and fmt.caption_style:
+                extras["subtitle_style_override"] = dict(fmt.caption_style)
+            if fmt and fmt.thumbnail_style_hint:
+                extras["thumbnail_style_hint"] = fmt.thumbnail_style_hint
+            return extras
+
         async with AsyncSessionFactory() as session:
             if cfg.production_mode != "shorts_only":
                 for idx, long_topic in enumerate(plan.long_videos):
@@ -358,6 +384,7 @@ class ContentPlannerAgent(BaseAgent):
                             "content_plan": long_topic.model_dump(),
                             "planned_shorts": shorts_for_long,
                             "format": "long",
+                            **_visual_extras(long_topic),
                         },
                     )
                     session.add(project)
@@ -393,6 +420,7 @@ class ContentPlannerAgent(BaseAgent):
                         "planned_shorts": [],
                         "format_hint": "short_standalone",
                         "format": "short_standalone",
+                        **_visual_extras(short_topic),
                     },
                 )
                 session.add(project)
@@ -439,6 +467,10 @@ class ContentPlannerAgent(BaseAgent):
                         provisional_title=str(item.get("provisional_title", "Sans titre")),
                         angle=str(item.get("angle", "")),
                         narrative_format=str(item.get("narrative_format", "récit")),
+                        editorial_format_id=str(item.get("editorial_format_id", "")),
+                        intro_variant=str(item.get("intro_variant", "")),
+                        outro_variant=str(item.get("outro_variant", "")),
+                        editorial_angle_note=str(item.get("editorial_angle_note", "")),
                         estimated_duration_s=est,
                         sub_theme=str(item.get("sub_theme", "")),
                         main_entities=[str(e) for e in item.get("main_entities", [])],
@@ -506,6 +538,22 @@ class ContentPlannerAgent(BaseAgent):
                 live_history.append({"subject": topic.subject, "title": topic.provisional_title})
 
         return plan.model_copy(update={"long_videos": filtered_longs, "short_videos": filtered_shorts})
+
+    async def _apply_format_rotation(
+        self,
+        channel: Channel,
+        cfg: Any,
+        plan: DailyContentPlan,
+    ) -> DailyContentPlan:
+        fmt_ids, intros, outros = await load_format_history(channel.id)
+        return apply_format_rotation_to_plan(
+            plan,
+            cfg.editorial_formats,
+            fmt_ids,
+            intros,
+            outros,
+            k=cfg.format_rotation.window_k,
+        )
 
     @staticmethod
     def _parse_json(raw: str) -> dict[str, Any]:

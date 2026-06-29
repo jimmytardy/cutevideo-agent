@@ -16,7 +16,7 @@ from agent.core.base_agent import BaseAgent
 
 from agent.core.config import load_agent_config
 
-from agent.core.database import AsyncSessionFactory, AudioFile, Video
+from agent.core.database import AsyncSessionFactory, AudioFile, Project, Video
 
 from agent.core.video_paths import resolve_video_local_path
 
@@ -409,9 +409,14 @@ class SubtitleAgent(BaseAgent):
 
         lines = await self._proofread_subtitle_lines(lines)
 
+        subs_data = subs_cfg.model_dump() if hasattr(subs_cfg, "model_dump") else dict(subs_cfg)
+        async with AsyncSessionFactory() as session:
+            project = await session.get(Project, ctx.project_id)
+            override = (project.config or {}).get("subtitle_style_override") if project else None
+        if isinstance(override, dict):
+            subs_data.update(override)
 
-
-        style = style_from_config(subs_cfg)
+        style = style_from_config(subs_data)
 
         ass_path = output_dir / f"subtitles_{video.id}.ass"
 

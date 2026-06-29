@@ -7,6 +7,12 @@ from typing import Any, Literal, Union
 from pydantic import BaseModel, Field
 
 from agent.core.config import load_agent_config
+from agent.core.editorial_formats import (
+    EditorialFormatDefinition,
+    EditorialFormatRotationConfig,
+    resolve_editorial_formats,
+    resolve_format_rotation_config,
+)
 from agent.core.database import Channel
 
 logger = logging.getLogger(__name__)
@@ -231,6 +237,8 @@ class ChannelRuntimeConfig(BaseModel):
     editorial_tone: str = ""
     editorial_target_audience: str = "Grand public curieux, français"
     editorial_differentiator: str = ""
+    editorial_formats: list[EditorialFormatDefinition] = Field(default_factory=list)
+    format_rotation: EditorialFormatRotationConfig = Field(default_factory=EditorialFormatRotationConfig)
     creative_brief: str = ""
     min_critic_score: int = 90
     min_short_structure_score: int = 15
@@ -642,6 +650,8 @@ def resolve_channel_config(
         editorial_tone=str(editorial.get("tone", "")),
         editorial_target_audience=str(editorial.get("target_audience", "Grand public curieux, français")),
         editorial_differentiator=str(editorial.get("differentiator", kit.get("content_angle", ""))),
+        editorial_formats=resolve_editorial_formats(channel_overrides),
+        format_rotation=resolve_format_rotation_config(channel_overrides),
         creative_brief=str(getattr(channel, "creative_brief", "") or ""),
         min_critic_score=int(pipeline.get("min_critic_score", global_cfg.get("pipeline", {}).get("min_critic_score", 90))),
         min_short_structure_score=int(
