@@ -756,7 +756,26 @@ class MediaAgent(BaseAgent):
             self._segment_media_gaps.add(order)
             return
         if result.item:
-            selected.append(result.item)
+            from agent.skills.media.rights_check import enrich_candidate, is_publishable
+
+            item = enrich_candidate(result.item)
+            ok, reason = is_publishable(item)
+            if not ok:
+                logger.warning(
+                    "Segment %d : image IA refusée (licence) — %s",
+                    order,
+                    reason,
+                )
+                gap = MediaGap(
+                    segment_order=order,
+                    reason=f"ai_license_rejected:{reason}",
+                    attempts=dev_attempts + paid_attempts,
+                    prompt=ai_prompt,
+                )
+                self._media_gaps.append(gap)
+                self._segment_media_gaps.add(order)
+                return
+            selected.append(item)
             if count_toward_video_quota:
                 self._ai_images_used += 1
                 await self._record_ai_image_usage(ctx)
@@ -883,6 +902,7 @@ class MediaAgent(BaseAgent):
                 video_candidates = self._dedupe_and_filter(
                     video_candidates, ms_cfg.min_width_px, exclude_urls=rejected_urls
                 )
+                video_candidates, _ = self._gate_publishable_candidates(video_candidates)
 
             image_candidates = await self._search_with_fallback(
                 effective_sources,
@@ -897,6 +917,7 @@ class MediaAgent(BaseAgent):
             image_candidates = self._dedupe_and_filter(
                 image_candidates, ms_cfg.min_width_px, exclude_urls=rejected_urls
             )
+            image_candidates, _ = self._gate_publishable_candidates(image_candidates)
 
             candidates = video_candidates + image_candidates
             total_raw_candidates += len(candidates)
@@ -1196,14 +1217,17 @@ class MediaAgent(BaseAgent):
         for item in selected:
             is_video = item.get("asset_type") == "video"
             local_path = await self._download_asset(item, output_dir)
+            rights = self._rights_fields(item)
             asset = MediaAsset(
                 project_id=ctx.project_id,
                 segment_order=order,
                 source=item.get("source"),
-                source_url=item.get("url"),
+                source_url=rights["source_url"],
                 local_path=str(local_path) if local_path else item.get("local_generated"),
-                license=item.get("license"),
-                attribution=item.get("attribution"),
+                license=rights["license"],
+                attribution=rights["attribution"],
+                author=rights["author"],
+                requires_attribution=rights["requires_attribution"],
                 asset_type="video" if is_video else "image",
                 selected=True,
                 relevance_score=item.get("_relevance_score"),
@@ -1434,6 +1458,24 @@ class MediaAgent(BaseAgent):
             return []
 
     @staticmethod
+    def _rights_fields(item: dict) -> dict[str, Any]:
+        from agent.skills.media.rights_check import media_asset_rights_fields
+
+        fields = media_asset_rights_fields(item)
+        return {
+            **fields,
+            "attribution": fields.get("attribution") or item.get("attribution"),
+        }
+
+    @staticmethod
+    def _gate_publishable_candidates(
+        candidates: list[dict],
+    ) -> tuple[list[dict], list[dict]]:
+        from agent.skills.media.rights_check import filter_publishable
+
+        return filter_publishable(candidates)
+
+    @staticmethod
     def _dedupe_and_filter(
         candidates: list[dict],
         min_width: int,
@@ -1490,10 +1532,14 @@ class MediaAgent(BaseAgent):
             return []
         orientation = getattr(self, "_search_orientation", "landscape")
         if source in ("pexels", "pixabay", "coverr"):
-            return await fn(
+            raw = await fn(
                 keywords, period, media_type=media_type, orientation=orientation  # type: ignore[arg-type]
             )
-        return await fn(keywords, period, media_type=media_type)
+        else:
+            raw = await fn(keywords, period, media_type=media_type)
+        from agent.skills.media.rights_check import enrich_candidate
+
+        return [enrich_candidate(item) for item in raw]
 
     async def _can_generate_ai_image(self, ctx: "PipelineContext", ai_cfg: Any) -> bool:
         if ai_cfg.plan.value == "off" or not ai_cfg.enabled:
@@ -1561,15 +1607,18 @@ class MediaAgent(BaseAgent):
             duration_s=float(duration_s) if duration_s else None,
         )
         async with AsyncSessionFactory() as session:
+            rights = self._rights_fields(item)
             asset = MediaAsset(
                 project_id=ctx.project_id,
                 segment_order=segment_order,
                 beat_index=beat.order,
                 source=item.get("source"),
-                source_url=item.get("url"),
+                source_url=rights["source_url"],
                 local_path=str(local_path) if local_path else item.get("local_generated"),
-                license=item.get("license"),
-                attribution=item.get("attribution"),
+                license=rights["license"],
+                attribution=rights["attribution"] or item.get("attribution"),
+                author=rights["author"],
+                requires_attribution=rights["requires_attribution"],
                 asset_type=item.get("asset_type", "image"),
                 selected=True,
                 relevance_score=item.get("_relevance_score"),
@@ -1600,16 +1649,19 @@ class MediaAgent(BaseAgent):
         from agent.skills.media.media_library import promote_to_pool
 
         local_path = await self._download_asset(item, output_dir)
+        rights = self._rights_fields(item)
         async with AsyncSessionFactory() as session:
             asset = MediaAsset(
                 project_id=ctx.project_id,
                 segment_order=segment_order,
                 beat_index=beat.order,
                 source=item.get("source"),
-                source_url=item.get("url"),
+                source_url=rights["source_url"],
                 local_path=str(local_path) if local_path else item.get("local_generated"),
-                license=item.get("license"),
-                attribution=item.get("attribution"),
+                license=rights["license"],
+                attribution=rights["attribution"] or item.get("attribution"),
+                author=rights["author"],
+                requires_attribution=rights["requires_attribution"],
                 asset_type=item.get("asset_type", "image"),
                 selected=False,
                 relevance_score=item.get("_relevance_score"),

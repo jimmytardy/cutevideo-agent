@@ -75,6 +75,8 @@ async def fetch_music_for_mood(
 
 
 async def _fetch_freesound(query: str, output_dir: Path) -> Path | None:
+    from agent.skills.media.rights_check import is_publishable
+
     api_key = settings.freesound_api_key
     if not api_key:
         logger.debug("Freesound API key non configurée, skip")
@@ -103,6 +105,12 @@ async def _fetch_freesound(query: str, output_dir: Path) -> Path | None:
                 data = await resp.json()
 
             for item in data.get("results", []):
+                license_raw = str(item.get("license") or "")
+                ok, reason = is_publishable({"license": license_raw, "source": "freesound"})
+                if not ok:
+                    logger.debug("Freesound piste ignorée (licence) : %s", reason)
+                    continue
+
                 preview_url = (
                     item.get("previews", {}).get("preview-hq-mp3")
                     or item.get("previews", {}).get("preview-lq-mp3")
@@ -132,10 +140,12 @@ async def _fetch_freesound(query: str, output_dir: Path) -> Path | None:
 
 async def _fetch_internet_archive(query: str, output_dir: Path) -> Path | None:
     """Télécharge une piste audio domaine public depuis Internet Archive."""
+    from agent.skills.media_sources.internet_archive import _is_open_license
+
     safe_query = " ".join(query.split()[:4])
     params = {
         "q": f"({safe_query}) AND mediatype:audio",
-        "fl[]": ["identifier", "title"],
+        "fl[]": ["identifier", "title", "licenseurl"],
         "rows": "8",
         "page": "1",
         "output": "json",
@@ -153,7 +163,8 @@ async def _fetch_internet_archive(query: str, output_dir: Path) -> Path | None:
 
             for doc in data.get("response", {}).get("docs", []):
                 identifier = doc.get("identifier", "")
-                if not identifier:
+                license_url = str(doc.get("licenseurl") or "")
+                if not identifier or not license_url or not _is_open_license(license_url):
                     continue
 
                 dest = await _download_ia_audio(session, identifier, output_dir)

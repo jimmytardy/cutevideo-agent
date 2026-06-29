@@ -342,6 +342,8 @@ class MediaAssetResponse(BaseModel):
     local_path: str | None
     license: str | None
     attribution: str | None
+    author: str | None = None
+    requires_attribution: bool = False
     asset_type: str | None
     selected: bool
     relevance_score: int | None = None

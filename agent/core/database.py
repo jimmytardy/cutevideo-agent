@@ -217,6 +217,8 @@ class MediaAsset(Base):
     local_path: Mapped[str | None] = mapped_column(String, nullable=True)
     license: Mapped[str | None] = mapped_column(String, nullable=True)
     attribution: Mapped[str | None] = mapped_column(String, nullable=True)
+    author: Mapped[str | None] = mapped_column(String, nullable=True)
+    requires_attribution: Mapped[bool] = mapped_column(Boolean, default=False)
     asset_type: Mapped[str | None] = mapped_column(String, nullable=True)
     selected: Mapped[bool] = mapped_column(Boolean, default=False)
     relevance_score: Mapped[int | None] = mapped_column(Integer, nullable=True)

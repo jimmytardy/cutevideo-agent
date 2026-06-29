@@ -1,0 +1,3 @@
+{
+  "_note": "Déclarer chaque piste sous {mood}/{filename} avec license non vide. Les pistes absentes du manifest sont exclues."
+}

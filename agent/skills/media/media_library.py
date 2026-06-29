@@ -90,6 +90,8 @@ def _asset_to_candidate(asset: MediaAsset) -> dict[str, Any]:
         "local_generated": asset.local_path,
         "license": asset.license,
         "attribution": asset.attribution,
+        "author": asset.author,
+        "requires_attribution": asset.requires_attribution,
         "title": asset.generation_prompt or asset.relevance_reason or "",
         "asset_type": asset.asset_type or "image",
         "_relevance_score": asset.relevance_score,
@@ -116,10 +118,16 @@ async def try_reuse_for_beat(
     if not pool_assets:
         return None, 0
 
+    from agent.skills.media.rights_check import is_publishable
+
+    publishable_assets = [a for a in pool_assets if is_publishable(a)[0]]
+    if not publishable_assets:
+        return None, 0
+
     from agent.core.visual_beats import beat_narration_excerpt
     from agent.skills.media_sources.relevance_scorer import score_media_candidates
 
-    candidates = [_asset_to_candidate(a) for a in pool_assets]
+    candidates = [_asset_to_candidate(a) for a in publishable_assets]
     scored = await score_media_candidates(
         candidates,
         video_subject=video_subject,

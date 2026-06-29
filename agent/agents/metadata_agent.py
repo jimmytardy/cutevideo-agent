@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import select, update
 
 from agent.core.base_agent import BaseAgent
-from agent.core.database import AsyncSessionFactory, Project, Scenario
+from agent.core.database import AsyncSessionFactory, MediaAsset, Project, Scenario
 
 if TYPE_CHECKING:
     from agent.core.orchestrator import PipelineContext
@@ -157,6 +157,9 @@ class MetadataAgent(BaseAgent):
 
         chapters_block = format_chapters_block(chapters)
         full_description = f"{description}\n\n{chapters_block}".strip() if chapters_block else description
+        credits_block = await self._build_credits_block(ctx.project_id)
+        if credits_block:
+            full_description = f"{full_description}\n\n{credits_block}".strip()
 
         return {
             "title": title,
@@ -164,6 +167,21 @@ class MetadataAgent(BaseAgent):
             "tags": tags,
             "chapters": chapters,
         }
+
+    @staticmethod
+    async def _build_credits_block(project_id: object) -> str:
+        from agent.skills.media.rights_check import build_credits_block
+
+        async with AsyncSessionFactory() as session:
+            result = await session.execute(
+                select(MediaAsset).where(
+                    MediaAsset.project_id == project_id,
+                    MediaAsset.selected.is_(True),
+                    MediaAsset.requires_attribution.is_(True),
+                )
+            )
+            assets = list(result.scalars().all())
+        return build_credits_block(assets)
 
     @staticmethod
     async def _persist(project_id: object, metadata: dict[str, Any]) -> None:
