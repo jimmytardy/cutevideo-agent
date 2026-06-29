@@ -280,6 +280,7 @@ class MediaAgent(BaseAgent):
         )
 
         self._ai_images_used = 0
+        self._perception_calls_used = 0
         self._runway_clips_used = 0
         self._validation_brief = validation_brief
         self._search_anchor = await self._resolve_search_anchor(ctx, validation_brief)
@@ -353,6 +354,7 @@ class MediaAgent(BaseAgent):
         )
 
         self._ai_images_used = 0
+        self._perception_calls_used = 0
         self._runway_clips_used = 0
         self._validation_brief = validation_brief
         self._search_anchor = await self._resolve_search_anchor(ctx, validation_brief)
@@ -740,7 +742,6 @@ class MediaAgent(BaseAgent):
         selected: list[dict],
         dev_attempts: int,
         paid_attempts: int,
-        *,
         count_toward_video_quota: bool = True,
     ) -> None:
         order = int(segment.get("order", 0))
@@ -1191,28 +1192,40 @@ class MediaAgent(BaseAgent):
         assets: list[MediaAsset] = []
         output_dir.mkdir(parents=True, exist_ok=True)
 
+        pending: list[tuple[MediaAsset, Path | None, str, float | None]] = []
+        for item in selected:
+            is_video = item.get("asset_type") == "video"
+            local_path = await self._download_asset(item, output_dir)
+            asset = MediaAsset(
+                project_id=ctx.project_id,
+                segment_order=order,
+                source=item.get("source"),
+                source_url=item.get("url"),
+                local_path=str(local_path) if local_path else item.get("local_generated"),
+                license=item.get("license"),
+                attribution=item.get("attribution"),
+                asset_type="video" if is_video else "image",
+                selected=True,
+                relevance_score=item.get("_relevance_score"),
+                relevance_reason=item.get("_relevance_reason"),
+                library_status="selected",
+                generation_prompt=item.get("title"),
+                visual_type=None,
+                iteration=self._media_iteration(ctx),
+                clip_metadata=clip_metadata_for_media_item(item),
+            )
+            context = f"{segment.get('title', '')} — {item.get('title', '')}"
+            pending.append((
+                asset,
+                local_path,
+                context,
+                float(item["duration_s"]) if item.get("duration_s") else None,
+            ))
+
+        await self._apply_perception_batch(ctx, pending)
+
         async with AsyncSessionFactory() as session:
-            for item in selected:
-                is_video = item.get("asset_type") == "video"
-                local_path = await self._download_asset(item, output_dir)
-                asset = MediaAsset(
-                    project_id=ctx.project_id,
-                    segment_order=order,
-                    source=item.get("source"),
-                    source_url=item.get("url"),
-                    local_path=str(local_path) if local_path else item.get("local_generated"),
-                    license=item.get("license"),
-                    attribution=item.get("attribution"),
-                    asset_type="video" if is_video else "image",
-                    selected=True,
-                    relevance_score=item.get("_relevance_score"),
-                    relevance_reason=item.get("_relevance_reason"),
-                    library_status="selected",
-                    generation_prompt=item.get("title"),
-                    visual_type=None,
-                    iteration=self._media_iteration(ctx),
-                    clip_metadata=clip_metadata_for_media_item(item),
-                )
+            for asset, _, _, _ in pending:
                 session.add(asset)
                 assets.append(asset)
             await session.commit()
@@ -1540,6 +1553,13 @@ class MediaAgent(BaseAgent):
             )
             if video_meta:
                 clip_metadata = {**(clip_metadata or {}), **video_meta}
+        perception, file_hash = await self._apply_perception(
+            ctx,
+            path=path_obj,
+            asset_type=str(item.get("asset_type", "image")),
+            context=f"{beat.phrase_anchor} — {beat.prompt}",
+            duration_s=float(duration_s) if duration_s else None,
+        )
         async with AsyncSessionFactory() as session:
             asset = MediaAsset(
                 project_id=ctx.project_id,
@@ -1560,6 +1580,8 @@ class MediaAgent(BaseAgent):
                 iteration=self._media_iteration(ctx),
                 duration_s=float(duration_s) if duration_s else None,
                 clip_metadata=clip_metadata,
+                perception=perception,
+                file_hash=file_hash,
             )
             session.add(asset)
             await session.commit()
@@ -1601,6 +1623,68 @@ class MediaAgent(BaseAgent):
             await promote_to_pool(asset, pool_min_score=pool_min_score)
             session.add(asset)
             await session.commit()
+
+    async def _apply_perception(
+        self,
+        ctx: "PipelineContext",
+        *,
+        path: Path | None,
+        asset_type: str,
+        context: str = "",
+        duration_s: float | None = None,
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        from agent.skills.media.asset_perception import load_perception_config, perceive_asset, perception_to_dict
+
+        cfg = load_perception_config()
+        if not cfg.get("enabled", True):
+            return None, None
+        if not getattr(self, "_gemini_api_key", ""):
+            return None, None
+        max_assets = int(cfg.get("max_assets_per_video", 20))
+        if self._perception_calls_used >= max_assets:
+            return None, None
+
+        resolved = path
+        if resolved is None or not resolved.is_file():
+            return None, None
+
+        meta, file_hash, cache_hit = await perceive_asset(
+            resolved,
+            asset_type=asset_type,
+            theme=ctx.theme,
+            api_key=self._gemini_api_key,
+            context=context,
+            duration_s=duration_s,
+        )
+        if meta is not None and not cache_hit:
+            self._perception_calls_used += 1
+        return perception_to_dict(meta), file_hash
+
+    async def _apply_perception_batch(
+        self,
+        ctx: "PipelineContext",
+        pending: list[tuple[MediaAsset, Path | None, str, float | None]],
+    ) -> None:
+        from agent.core.media_asset_resolve import find_existing_local_path
+
+        async def _one(
+            entry: tuple[MediaAsset, Path | None, str, float | None],
+        ) -> None:
+            asset, local_path, context, duration_s = entry
+            path = local_path
+            if path is None and asset.local_path:
+                path = find_existing_local_path(asset.local_path)
+            perception, file_hash = await self._apply_perception(
+                ctx,
+                path=path,
+                asset_type=str(asset.asset_type or "image"),
+                context=context,
+                duration_s=duration_s,
+            )
+            asset.perception = perception
+            asset.file_hash = file_hash
+
+        await bounded_gather(*[_one(entry) for entry in pending], return_exceptions=True)
 
     async def _analyze_video_asset(
         self,

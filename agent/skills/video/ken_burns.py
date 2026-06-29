@@ -38,6 +38,19 @@ def _build_static_filter(width: int, height: int, fps: int) -> str:
     )
 
 
+def _focus_crop_exprs(motion_focus: list[float] | None) -> tuple[str, str]:
+    if not motion_focus or len(motion_focus) < 2:
+        return "(in_w-out_w)/2", "(in_h-out_h)/2"
+    if len(motion_focus) >= 4:
+        fcx = f"({motion_focus[0]}+{motion_focus[2]}/2)"
+        fcy = f"({motion_focus[1]}+{motion_focus[3]}/2)"
+    else:
+        fcx, fcy = str(motion_focus[0]), str(motion_focus[1])
+    x_expr = f"max(0\\,min({fcx}*in_w-out_w/2\\,in_w-out_w))"
+    y_expr = f"max(0\\,min({fcy}*in_h-out_h/2\\,in_h-out_h))"
+    return x_expr, y_expr
+
+
 def _build_zoom_filter(
     width: int,
     height: int,
@@ -47,6 +60,7 @@ def _build_zoom_filter(
     zoom_factor: float,
     pan_enabled: bool,
     pan_direction: int,
+    motion_focus: list[float] | None = None,
 ) -> str:
     """Filtre Ken Burns : zoom linéaire centré via crop+scale (sans zoompan).
 
@@ -69,12 +83,13 @@ def _build_zoom_filter(
     scale_w = f"trunc(iw*{z}/2)*2"
     scale_h = f"trunc(ih*{z}/2)*2"
 
+    base_x, base_y = _focus_crop_exprs(motion_focus)
     if pan_enabled and pan_direction != 0:
         pan_expr = f"{pan_direction * 40}*n/{n_frames}"
-        x_expr = f"(in_w-out_w)/2+({pan_expr})"
+        x_expr = f"{base_x}+({pan_expr})"
+        y_expr = base_y
     else:
-        x_expr = "(in_w-out_w)/2"
-    y_expr = "(in_h-out_h)/2"
+        x_expr, y_expr = base_x, base_y
 
     return (
         f"scale={prescale_w}:{prescale_h}:force_original_aspect_ratio=increase:flags=lanczos,"

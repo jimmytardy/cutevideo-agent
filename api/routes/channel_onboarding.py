@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from typing import Any, Literal
@@ -26,6 +27,7 @@ from api.models import (
     GenerateBrandRequest,
     MarketAnalysisRequest,
     MarketAnalysisResponse,
+    OnboardingCompleteRequest,
     OnboardingDraftRequest,
     OnboardingInstagramRequest,
     OnboardingTikTokRequest,
@@ -385,6 +387,7 @@ async def patch_onboarding_instagram(
 @router.post("/{channel_id}/onboarding/complete", response_model=ChannelResponse)
 async def complete_onboarding(
     channel_id: uuid.UUID,
+    body: OnboardingCompleteRequest | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Channel:
@@ -416,10 +419,40 @@ async def complete_onboarding(
         cfg["media_source_priority"] = priority
         channel.config = cfg
 
+    if body and body.market_analysis_id:
+        ma_result = await db.execute(
+            select(MarketAnalysis).where(
+                MarketAnalysis.id == body.market_analysis_id,
+                MarketAnalysis.user_id == current_user.id,
+            )
+        )
+        market_row = ma_result.scalar_one_or_none()
+        if market_row and isinstance(market_row.report, dict):
+            report = market_row.report
+            cfg = channel.config or {}
+            cfg["market_research"] = {
+                "top_competitors": report.get("top_competitors", []),
+                "captured_at": market_row.created_at.isoformat()
+                if market_row.created_at
+                else None,
+                "market_analysis_id": str(market_row.id),
+            }
+            channel.config = cfg
+
     channel.onboarding_step = "complete"
     channel.is_active = True
     await db.commit()
     await db.refresh(channel)
+
+    from agent.agents.style_director_agent import StyleDirectorAgent
+
+    async def _run_style_director() -> None:
+        try:
+            await StyleDirectorAgent().run_for_channel(channel.id, force=True)
+        except Exception:
+            logger.exception("StyleDirector post-onboarding échoué pour %s", channel.slug)
+
+    asyncio.create_task(_run_style_director())
     return channel
 
 

@@ -7,6 +7,8 @@ from pathlib import Path
 
 from agent.core.config import load_agent_config
 from agent.core.montage_plan import BeatClipPlan, MotionStyle
+from typing import Any
+
 from agent.skills.video.montage_decisions import (
     clip_duration_s,
     compute_xfade_offset,
@@ -41,8 +43,12 @@ def profile_from_config(is_vertical: bool) -> VideoProfile:
     )
 
 
-def _load_ken_burns_config(*, is_short: bool = False) -> dict[str, float | bool]:
-    return load_ken_burns_config(is_short=is_short)
+def _load_ken_burns_config(
+    *,
+    is_short: bool = False,
+    channel_raw_config: dict[str, Any] | None = None,
+) -> dict[str, float | bool]:
+    return load_ken_burns_config(is_short=is_short, channel_raw_config=channel_raw_config)
 
 
 def color_grade_from_style_block(style_block: str, *, theme: str = "") -> str:
@@ -180,6 +186,34 @@ def _escape_drawtext(text: str) -> str:
     )
 
 
+def _focus_crop_exprs(motion_focus: list[float] | None) -> tuple[str, str]:
+    if not motion_focus:
+        return "(in_w-out_w)/2", "(in_h-out_h)/2"
+    if len(motion_focus) >= 4:
+        fcx = f"({motion_focus[0]}+{motion_focus[2]}/2)"
+        fcy = f"({motion_focus[1]}+{motion_focus[3]}/2)"
+    else:
+        fcx, fcy = str(motion_focus[0]), str(motion_focus[1])
+    x_expr = f"max(0\\,min({fcx}*in_w-out_w/2\\,in_w-out_w))"
+    y_expr = f"max(0\\,min({fcy}*in_h-out_h/2\\,in_h-out_h))"
+    return x_expr, y_expr
+
+
+def _aspect_aware_crop_exprs(
+    crop_box: list[float] | None,
+    target_w: int,
+    target_h: int,
+) -> tuple[str, str]:
+    center_x, center_y = "(in_w-out_w)/2", "(in_h-out_h)/2"
+    if not crop_box:
+        return center_x, center_y
+    salient_x, salient_y = _focus_crop_exprs(crop_box)
+    target_ar = target_w / target_h
+    x_expr = f"if(gt(abs(in_w/in_h-{target_ar:.8f})\\,0.01)\\,{salient_x}\\,{center_x})"
+    y_expr = f"if(gt(abs(in_w/in_h-{target_ar:.8f})\\,0.01)\\,{salient_y}\\,{center_y})"
+    return x_expr, y_expr
+
+
 def _build_motion_vf(
     input_label: str,
     output_label: str,
@@ -188,13 +222,22 @@ def _build_motion_vf(
     motion_style: MotionStyle,
     *,
     is_short: bool = False,
+    motion_focus: list[float] | None = None,
+    crop_box: list[float] | None = None,
+    channel_raw_config: dict[str, Any] | None = None,
 ) -> str:
-    kb = _load_ken_burns_config(is_short=is_short)
+    kb = _load_ken_burns_config(is_short=is_short, channel_raw_config=channel_raw_config)
     zoom_factor = float(kb["zoom_factor"]) if kb["enabled"] else 0.0
     n_frames = max(int(duration_s * profile.fps), 1)
     w, h, fps = profile.width, profile.height, profile.fps
 
     if motion_style == "static" or zoom_factor <= 0:
+        if crop_box:
+            x_expr, y_expr = _aspect_aware_crop_exprs(crop_box, w, h)
+            return (
+                f"[{input_label}]scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
+                f"crop={w}:{h}:x='{x_expr}':y='{y_expr}',fps={fps}[{output_label}]"
+            )
         return (
             f"[{input_label}]scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
             f"crop={w}:{h},fps={fps}[{output_label}]"
@@ -225,10 +268,10 @@ def _build_motion_vf(
         pan_expr = None
 
     if pan_expr is not None:
-        x_expr = f"(in_w-out_w)/2+({pan_expr})"
+        base_x, y_expr = _focus_crop_exprs(motion_focus)
+        x_expr = f"{base_x}+({pan_expr})"
     else:
-        x_expr = "(in_w-out_w)/2"
-    y_expr = "(in_h-out_h)/2"
+        x_expr, y_expr = _focus_crop_exprs(motion_focus)
 
     return (
         f"[{input_label}]scale={prescale_w}:{prescale_h}:force_original_aspect_ratio=increase:flags=lanczos,"
@@ -307,6 +350,7 @@ def build_segment_filter_complex(
     narration_audio_path: str | None = None,
     grade: str = "",
     theme: str = "",
+    channel_raw_config: dict[str, Any] | None = None,
 ) -> tuple[list[str], str, str, str]:
     """Construit les arguments d'entrée FFmpeg et le filter_complex pour un segment.
 
@@ -316,7 +360,7 @@ def build_segment_filter_complex(
     if not clips:
         raise ValueError("Aucun clip dans le segment")
 
-    trans_cfg = load_transition_config(is_short=is_short)
+    trans_cfg = load_transition_config(is_short=is_short, channel_raw_config=channel_raw_config)
     trans_dur = trans_cfg.duration_s if trans_cfg.enabled else 0.0
     durations = [clip_duration_s(c) for c in clips]
 
@@ -363,6 +407,9 @@ def build_segment_filter_complex(
                 _build_motion_vf(
                     f"{input_idx}:v", processed_label, duration, profile, plan.motion_style,
                     is_short=is_short,
+                    motion_focus=plan.motion_focus,
+                    crop_box=plan.crop_box,
+                    channel_raw_config=channel_raw_config,
                 )
             )
             input_idx += 1
@@ -447,6 +494,17 @@ def build_segment_filter_complex(
 
     narration_idx = input_idx
     input_args.extend(["-i", narration_audio_path])
+    narration_duration_s = max(
+        (c.timeline_end_s + c.audio_trail_s for c in clips),
+        default=0.0,
+    )
+    narr_filters, narr_label = _build_narration_audio_filters(
+        narration_idx,
+        clips,
+        narration_duration_s=narration_duration_s,
+    )
+    filter_parts.extend(narr_filters)
+
     ambient_volume = 0.35
     ambient_labels: list[str] = []
     for spec_i, (vid_idx, trim_start, dur, delay_s) in enumerate(ambient_audio_specs):
@@ -469,12 +527,57 @@ def build_segment_filter_complex(
                 f"{ins}amix=inputs={len(ambient_labels)}:duration=longest:normalize=0[{mixed_amb}]"
             )
         filter_parts.append(
-            f"[{narration_idx}:a][{mixed_amb}]amix=inputs=2:duration=first:normalize=0[aout]"
+            f"[{narr_label}][{mixed_amb}]amix=inputs=2:duration=first:normalize=0[aout]"
         )
     else:
-        filter_parts.append(f"[{narration_idx}:a]anull[aout]")
+        filter_parts.append(f"[{narr_label}]anull[aout]")
 
     return input_args, ";".join(filter_parts), out_label, "aout"
+
+
+def _build_narration_audio_filters(
+    narration_idx: int,
+    clips: list[BeatClipPlan],
+    *,
+    narration_duration_s: float,
+) -> tuple[list[str], str]:
+    """Découpe la narration par clip avec décalages J/L."""
+    has_jl = any(c.audio_lead_s > 0 or c.audio_trail_s > 0 for c in clips)
+    if not has_jl:
+        return [f"[{narration_idx}:a]anull[narrout]"], "narrout"
+
+    filter_parts: list[str] = []
+    slice_labels: list[str] = []
+    for i, clip in enumerate(clips):
+        trim_start = max(0.0, clip.timeline_start_s - clip.audio_lead_s)
+        trim_end = min(narration_duration_s, clip.timeline_end_s + clip.audio_trail_s)
+        if trim_end <= trim_start + 0.01:
+            continue
+        output_offset = max(0.0, clip.timeline_start_s - clip.audio_lead_s)
+        delay_ms = int(output_offset * 1000)
+        label = f"narr{i}"
+        slice_dur = trim_end - trim_start
+        parts = [
+            f"atrim=start={trim_start:.3f}:end={trim_end:.3f}",
+            "asetpts=PTS-STARTPTS",
+            "afade=t=in:st=0:d=0.02",
+        ]
+        if slice_dur > 0.05:
+            parts.append(f"afade=t=out:st={max(0.0, slice_dur - 0.02):.3f}:d=0.02")
+        parts.append(f"adelay={delay_ms}|{delay_ms}")
+        filter_parts.append(f"[{narration_idx}:a]{','.join(parts)}[{label}]")
+        slice_labels.append(label)
+
+    if not slice_labels:
+        return [f"[{narration_idx}:a]anull[narrout]"], "narrout"
+    if len(slice_labels) == 1:
+        return filter_parts, slice_labels[0]
+    mixed = "narrmix"
+    ins = "".join(f"[{lbl}]" for lbl in slice_labels)
+    filter_parts.append(
+        f"{ins}amix=inputs={len(slice_labels)}:duration=longest:normalize=0[{mixed}]"
+    )
+    return filter_parts, mixed
 
 
 async def render_segment_from_clips(
@@ -485,6 +588,7 @@ async def render_segment_from_clips(
     is_vertical: bool = False,
     grade: str = "",
     theme: str = "",
+    channel_raw_config: dict[str, Any] | None = None,
 ) -> None:
     """Encode un segment complet (un seul passage libx264)."""
     profile = profile_from_config(is_vertical)
@@ -497,6 +601,7 @@ async def render_segment_from_clips(
         narration_audio_path=audio_path,
         grade=grade,
         theme=theme,
+        channel_raw_config=channel_raw_config,
     )
 
     from agent.skills.video.ffmpeg_runtime import (

@@ -10,6 +10,13 @@ class ClipSegmentMeta(BaseModel):
     start_s: float
     end_s: float
     reason: str = ""
+    score: int = 0
+    peak_s: float | None = None
+
+
+CompositionType = Literal[
+    "portrait", "wide", "detail", "crowd", "text_heavy", "abstract"
+]
 
 
 class ClipMetadata(BaseModel):
@@ -18,6 +25,14 @@ class ClipMetadata(BaseModel):
     static_ratio: float | None = None
     best_segments: list[ClipSegmentMeta] = Field(default_factory=list)
     summary: str = ""
+    salient_box: list[float] | None = None
+    faces: int = 0
+    face_box: list[float] | None = None
+    horizon_y: float | None = None
+    composition: CompositionType | None = None
+    energy: int | None = None
+    emotional_tone: str = ""
+    dominant_colors: list[str] = Field(default_factory=list)
 
 
 MotionStyle = Literal["static", "zoom_in", "zoom_out", "pan_left", "pan_right", "punch_zoom"]
@@ -41,10 +56,14 @@ class BeatClipPlan(BaseModel):
     transition_out: str = "fade"
     transition_duration_s: float | None = None
     motion_style: MotionStyle = "zoom_in"
+    motion_focus: list[float] | None = None
+    crop_box: list[float] | None = None
     overlay_mode: OverlayMode = "none"
     overlay_asset_path: str = ""
     text_animation: str = ""
     strip_source_audio: bool = True
+    audio_lead_s: float = 0.0
+    audio_trail_s: float = 0.0
 
 
 class EffectiveBeat(BaseModel):
@@ -65,6 +84,7 @@ class SegmentMontagePlan(BaseModel):
     adaptation_notes: str = ""
     segment_mood: str = "calme"
     default_transition: str = "fade"
+    music_path: str = ""
 
 
 class MontagePlanData(BaseModel):

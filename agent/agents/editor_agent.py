@@ -104,6 +104,7 @@ class EditorAgent(BaseAgent):
             grade=grade,
             force_vertical=is_vertical,
             theme=ctx.theme,
+            channel_raw_config=dict(ctx.channel.config or {}),
         )
 
         output_path = await self._apply_animated_text_overlays(
@@ -277,7 +278,24 @@ class EditorAgent(BaseAgent):
         reveal_timestamps = collect_reveal_timestamps(segment_meta, overlay_cues)
 
         try:
-            mood_blocks = _build_mood_blocks(segment_meta, total_duration_s)
+            segment_music_paths: dict[int, str] = {}
+            if montage_plan is not None:
+                plan_data = (
+                    montage_plan
+                    if isinstance(montage_plan, MontagePlanData)
+                    else MontagePlanData.from_db_dict(
+                        getattr(montage_plan, "plan_data", montage_plan)
+                    )
+                )
+                for seg in plan_data.segments:
+                    if seg.music_path:
+                        segment_music_paths[seg.segment_order] = seg.music_path
+
+            mood_blocks = _build_mood_blocks(
+                segment_meta,
+                total_duration_s,
+                segment_music_paths=segment_music_paths,
+            )
             if not mood_blocks:
                 return await self._fallback_music(
                     ctx, video_path, music_volume, duck_narration
@@ -499,6 +517,8 @@ def _scenario_requires_audio(segment_meta: dict[int, dict]) -> bool:
 def _build_mood_blocks(
     segment_meta: dict[int, dict],
     total_duration_s: float,
+    *,
+    segment_music_paths: dict[int, str] | None = None,
 ) -> list[dict]:
     if not segment_meta:
         return []
@@ -506,8 +526,9 @@ def _build_mood_blocks(
     ordered = sorted(segment_meta.items())
     blocks: list[dict] = []
     current_start = 0.0
+    music_paths = segment_music_paths or {}
 
-    for _order, meta in ordered:
+    for order, meta in ordered:
         mood = meta.get("mood", "calme")
         duration = float(meta.get("duration_s", 30))
 
@@ -517,7 +538,14 @@ def _build_mood_blocks(
             ) < 0.01:
                 blocks[-1]["duration_s"] += duration
             else:
-                blocks.append({"start_s": current_start, "duration_s": duration, "mood": mood})
+                block: dict = {
+                    "start_s": current_start,
+                    "duration_s": duration,
+                    "mood": mood,
+                }
+                if order in music_paths:
+                    block["music_path"] = music_paths[order]
+                blocks.append(block)
 
         current_start += duration
 

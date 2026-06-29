@@ -169,6 +169,10 @@ class OnboardingInstagramRequest(BaseModel):
     instagram_profile: dict[str, Any] | None = None
 
 
+class OnboardingCompleteRequest(BaseModel):
+    market_analysis_id: UUID | None = None
+
+
 class YouTubeOAuthUrlResponse(BaseModel):
     authorization_url: str
     state: str
@@ -408,6 +412,8 @@ class BeatClipPlanResponse(BaseModel):
     source_trim_end_s: float | None = None
     trim_reason: str = ""
     on_screen_text: str = ""
+    audio_lead_s: float = 0.0
+    audio_trail_s: float = 0.0
 
 
 class SegmentMontagePlanResponse(BaseModel):

@@ -143,8 +143,15 @@ async def mix_multi_segment_music(
         start_s = float(block["start_s"])
         duration_s = float(block["duration_s"])
 
-        music = select_music_for_mood(mood)
-        if not music:
+        preset_path = block.get("music_path")
+        music: Path | None = None
+        if preset_path:
+            candidate = Path(str(preset_path))
+            if candidate.is_file():
+                music = candidate
+        if music is None:
+            music = select_music_for_mood(mood)
+        if music is None:
             music = await fetch_music_for_mood(mood, output_dir=Path("./tmp/music"))
         if music:
             blocks_with_music.append((music, start_s, duration_s))

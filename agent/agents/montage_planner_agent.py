@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
@@ -13,6 +14,7 @@ from agent.core.database import AsyncSessionFactory, AudioFile, MediaAsset, Mont
 from agent.core.json_parse import parse_json_text
 from agent.core.montage_plan import (
     BeatClipPlan,
+    ClipMetadata,
     EffectiveBeat,
     MontagePlanData,
     SegmentMontagePlan,
@@ -23,8 +25,15 @@ from agent.core.visual_beats import (
     parse_visual_beats,
 )
 from agent.skills.media.clip_source_analyzer import clip_metadata_from_dict
-from agent.skills.video.beat_timeline import word_segments_from_json
-from agent.skills.video.montage_profile import is_short_montage, long_pacing_config
+from agent.skills.video.beat_timeline import compute_beat_timeline, word_segments_from_json
+from agent.skills.video.montage_profile import (
+    beat_snap_tolerance_s,
+    is_short_montage,
+    jl_cuts_config,
+    load_sfx_config,
+    long_pacing_config,
+)
+from agent.skills.video.beat_snap import assign_jl_cuts, snap_clip_boundaries
 from agent.skills.video.pacing_director import pacing_hints_from_dict
 from agent.skills.video.diagram_overlay_renderer import (
     render_diagram_overlay_png,
@@ -34,6 +43,7 @@ from agent.skills.video.diagram_text_layout import analyze_diagram_text_layout
 from agent.skills.video.filter_graph_builder import profile_from_config
 from agent.skills.video.montage_decisions import (
     load_transition_config,
+    resolve_motion_focus,
     resolve_motion_style,
     resolve_overlay_mode,
     resolve_text_animation,
@@ -47,6 +57,7 @@ from agent.skills.video.clip_timeline_normalize import (
     validate_visual_audio_alignment,
 )
 from agent.skills.video.trim_selector import select_trim_window
+from agent.skills.video.crop_utils import derive_crop_box
 
 if TYPE_CHECKING:
     from agent.core.orchestrator import PipelineContext
@@ -358,6 +369,47 @@ class MontagePlannerAgent(BaseAgent):
         clips = extend_last_clip_to_match_audio(clips, audio_duration)
         validate_visual_audio_alignment(clips, audio_duration)
 
+        channel_raw = dict(ctx.channel.config or {})
+        music_path_str = ""
+        sfx_cfg = load_sfx_config(ctx)
+        from agent.agents.narrator_agent import segment_needs_music
+
+        if (
+            is_short
+            and sfx_cfg.get("beat_cuts_enabled", True)
+            and segment_needs_music(seg)
+        ):
+            from agent.skills.audio.beat_detector import detect_beats
+            from agent.skills.audio.music_selector import select_music_for_mood
+
+            selected = select_music_for_mood(segment_mood)
+            if selected:
+                music_path_str = str(selected)
+                beats = await asyncio.to_thread(detect_beats, music_path_str)
+                if beats:
+                    tolerance = beat_snap_tolerance_s(is_short=True, channel_raw_config=channel_raw)
+                    clips = snap_clip_boundaries(
+                        clips,
+                        beats,
+                        tolerance_s=tolerance,
+                        audio_duration_s=audio_duration,
+                    )
+                    clips = extend_last_clip_to_match_audio(clips, audio_duration)
+                    validate_visual_audio_alignment(clips, audio_duration)
+
+        jl_cfg = jl_cuts_config(channel_raw_config=channel_raw)
+        clips = assign_jl_cuts(clips, jl_cfg, is_short=is_short)
+
+        clip_metadata_by_path: dict[str, ClipMetadata] = {}
+        for asset in seg_assets:
+            if not asset.local_path:
+                continue
+            meta = clip_metadata_from_dict(
+                asset.clip_metadata if isinstance(asset.clip_metadata, dict) else None
+            )
+            if meta is not None:
+                clip_metadata_by_path[asset.local_path] = meta
+
         enriched = await self._enrich_clips(
             ctx,
             order,
@@ -367,6 +419,7 @@ class MontagePlannerAgent(BaseAgent):
             effective_beats=effective_beats,
             beat_objs=beat_objs,
             narration_excerpt=(seg.get("narration_text") or "")[:500],
+            clip_metadata_by_path=clip_metadata_by_path,
         )
 
         return SegmentMontagePlan(
@@ -375,6 +428,7 @@ class MontagePlannerAgent(BaseAgent):
             clips=enriched,
             adaptation_notes=adaptation_notes,
             segment_mood=segment_mood,
+            music_path=music_path_str,
         )
 
     async def _enrich_clips(
@@ -388,6 +442,7 @@ class MontagePlannerAgent(BaseAgent):
         effective_beats: list[EffectiveBeat] | None = None,
         beat_objs: list[Any] | None = None,
         narration_excerpt: str = "",
+        clip_metadata_by_path: dict[str, ClipMetadata] | None = None,
     ) -> list[BeatClipPlan]:
         from agent.core.api_keys import fetch_api_key
 
@@ -395,13 +450,20 @@ class MontagePlannerAgent(BaseAgent):
             ctx.user_id, "gemini", purpose="diagram_layout", tier="free"
         )
         gemini_api_key = gemini_ctx.key
-        trans_cfg = load_transition_config(is_short=is_short)
+        trans_cfg = load_transition_config(
+            is_short=is_short,
+            channel_raw_config=dict(ctx.channel.config or {}),
+        )
         mood_transitions = (
             {}
             if is_short
             else {
                 str(k).lower(): str(v)
-                for k, v in (long_pacing_config().get("mood_transitions") or {}).items()
+                for k, v in (
+                    long_pacing_config(channel_raw_config=dict(ctx.channel.config or {}))
+                    .get("mood_transitions")
+                    or {}
+                ).items()
             }
         )
         pacing = pacing_hints_from_dict(getattr(ctx, "pacing_hints", None))
@@ -416,6 +478,8 @@ class MontagePlannerAgent(BaseAgent):
         )
 
         enriched: list[BeatClipPlan] = []
+        last_motion: str | None = None
+        motion_repeat_count = 0
         for i, clip in enumerate(clips):
             eb = effective_beats[i] if effective_beats and i < len(effective_beats) else None
             beat_obj = beat_objs[i] if beat_objs and i < len(beat_objs) else None
@@ -431,6 +495,7 @@ class MontagePlannerAgent(BaseAgent):
                 hook_type=hook_type,
             )
             text_animation = resolve_text_animation(clip.visual_type, hook_type=hook_type)
+            perception = (clip_metadata_by_path or {}).get(clip.asset_path)
             motion_style = resolve_motion_style(
                 clip.visual_type,
                 clip.asset_type,
@@ -438,6 +503,20 @@ class MontagePlannerAgent(BaseAgent):
                 index=i,
                 is_short=is_short,
                 hook_type=hook_type,
+                perception=perception,
+                last_motion=last_motion,  # type: ignore[arg-type]
+                motion_repeat_count=motion_repeat_count,
+            )
+            if motion_style == last_motion:
+                motion_repeat_count += 1
+            else:
+                motion_repeat_count = 1
+                last_motion = motion_style
+            motion_focus = resolve_motion_focus(perception, motion_style)
+            crop_box = (
+                derive_crop_box(perception.salient_box)
+                if clip.asset_type == "image" and perception
+                else None
             )
 
             text_layout: list[dict[str, Any]] = []
@@ -510,6 +589,7 @@ class MontagePlannerAgent(BaseAgent):
                     transition_hint = "pixelize"
                 if not transition_hint and segment_mood.lower() in mood_transitions:
                     transition_hint = mood_transitions[segment_mood.lower()]
+                next_perception = (clip_metadata_by_path or {}).get(next_clip.asset_path)
                 transition_out = resolve_transition(
                     segment_mood=segment_mood,
                     prev_visual_type=clip.visual_type,
@@ -519,10 +599,14 @@ class MontagePlannerAgent(BaseAgent):
                     is_chapter_break=i == 0 and segment_order > 1,
                     hook_type=hook_type,
                     config=trans_cfg,
+                    prev_perception=perception,
+                    next_perception=next_perception,
                 )
 
             enriched.append(clip.model_copy(update={
                 "motion_style": motion_style,
+                "motion_focus": motion_focus,
+                "crop_box": crop_box,
                 "overlay_mode": overlay_mode,
                 "overlay_asset_path": overlay_path,
                 "text_layout": text_layout,

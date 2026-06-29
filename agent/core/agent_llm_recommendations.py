@@ -27,6 +27,7 @@ _AGENT_RECOMMENDED: dict[str, str] = {
     "short_producer_agent": "claude-opus-4-5",
     "comments_agent": "claude-sonnet-4-5",
     "channel_planner_agent": "claude-opus-4-5",
+    "style_director_agent": "gemini-2.5-pro",
     "distribution_agent": "claude-sonnet-4-5",
     "scenario_media_gap": "claude-sonnet-4-5",
     "validation_brief": "claude-opus-4-5",

@@ -65,6 +65,12 @@ class SchedulerService:
             id="purge_old_media",
             replace_existing=True,
         )
+        self._scheduler.add_job(
+            jobs.run_style_director_refresh,
+            CronTrigger(hour=4, minute=0, timezone="Europe/Paris"),
+            id="style_director_refresh",
+            replace_existing=True,
+        )
         logger.info("Scheduler configuré (%d jobs)", len(jobs.JOB_REGISTRY))
 
     async def start(self) -> None:

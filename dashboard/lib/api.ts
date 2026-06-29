@@ -477,6 +477,8 @@ export interface BeatClipPlan {
   source_trim_end_s: number | null
   trim_reason: string
   on_screen_text: string
+  audio_lead_s?: number
+  audio_trail_s?: number
 }
 
 export interface SegmentMontagePlan {
@@ -484,6 +486,7 @@ export interface SegmentMontagePlan {
   effective_beats: EffectiveBeat[]
   clips: BeatClipPlan[]
   adaptation_notes: string
+  music_path?: string
 }
 
 export interface MontagePlan {

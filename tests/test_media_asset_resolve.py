@@ -46,12 +46,14 @@ def test_clip_metadata_for_media_item() -> None:
 
 
 @pytest.mark.asyncio
-async def test_resolve_media_asset_stream_target_redirects_to_s3(tmp_path) -> None:
+async def test_resolve_media_asset_stream_target_materializes_s3(tmp_path) -> None:
     asset = SimpleNamespace(
+        id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
         local_path=str(tmp_path / "missing.jpg"),
         source="ai_image",
         segment_order=1,
         source_url=None,
+        asset_type="image",
         clip_metadata={"temp_s3_key": "cutevideo/temp/ch/p/ai/1/x.jpg"},
     )
     with (
@@ -60,12 +62,14 @@ async def test_resolve_media_asset_stream_target_redirects_to_s3(tmp_path) -> No
             return_value=True,
         ),
         patch(
-            "agent.core.media_asset_resolve.get_presigned_url",
-            new=AsyncMock(return_value="https://s3.example/presigned"),
-        ),
+            "agent.core.media_asset_resolve.download_storage_key",
+            new=AsyncMock(return_value=tmp_path / "cached.jpg"),
+        ) as mock_dl,
     ):
         target = await resolve_media_asset_stream_target(asset, {})
-    assert target == ("redirect", "https://s3.example/presigned")
+    assert target is not None
+    assert target[0] == "file"
+    mock_dl.assert_awaited_once()
 
 
 def test_find_existing_local_path(tmp_path) -> None:

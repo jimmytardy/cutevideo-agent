@@ -69,13 +69,55 @@ async def resolve_media_asset_stream_target(
 
     storage_key = storage_key_for_asset(asset, project_config)
     if storage_key and is_s3_storage_enabled():
-        url = await get_presigned_url(storage_key)
-        return ("redirect", url)
+        suffix = _suffix_for_asset(asset)
+        cached = Path(f"./tmp/media_stream_cache/{asset.id}{suffix}")
+        if cached.is_file():
+            return ("file", str(cached.resolve()))
+        try:
+            await download_storage_key(storage_key, cached)
+            return ("file", str(cached.resolve()))
+        except Exception:
+            url = await get_presigned_url(storage_key)
+            return ("redirect", url)
 
     if asset.source_url and asset.source_url.startswith("http"):
+        suffix = _suffix_for_asset(asset)
+        cached = Path(f"./tmp/media_stream_cache/{asset.id}{suffix}")
+        if cached.is_file():
+            return ("file", str(cached.resolve()))
+        downloaded = await _download_http_asset(asset.source_url, cached)
+        if downloaded is not None:
+            return ("file", str(downloaded.resolve()))
         return ("redirect", asset.source_url)
 
     return None
+
+
+def _suffix_for_asset(asset: MediaAsset) -> str:
+    for raw in (asset.local_path, asset.source_url):
+        if not raw:
+            continue
+        suffix = Path(str(raw).split("?")[0]).suffix.lower()
+        if suffix in {".jpg", ".jpeg", ".png", ".webp", ".gif", ".mp4", ".webm"}:
+            return suffix
+    if getattr(asset, "asset_type", None) == "video":
+        return ".mp4"
+    return ".jpg"
+
+
+async def _download_http_asset(url: str, dest: Path) -> Path | None:
+    import aiohttp
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=60)) as resp:
+                if resp.status != 200:
+                    return None
+                dest.write_bytes(await resp.read())
+                return dest
+    except Exception:
+        return None
 
 
 async def materialize_media_asset_local(

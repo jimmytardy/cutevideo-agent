@@ -106,6 +106,13 @@ async def run_purge_old_media() -> None:
     await purge_old_media_files(retention_days=settings.storage_retention_days)
 
 
+@track_job_run("style_director_refresh")
+async def run_style_director_refresh() -> dict[str, int]:
+    from agent.agents.style_director_agent import StyleDirectorAgent
+
+    return await StyleDirectorAgent().run_scheduled()
+
+
 JOB_REGISTRY: dict[str, Any] = {
     "content_planner_daily": run_content_planner,
     "run_pending_projects_morning": run_pending_projects_morning,
@@ -113,6 +120,7 @@ JOB_REGISTRY: dict[str, Any] = {
     "distribution_agent": run_distribution_agent,
     "engagement_agents_biweekly": run_engagement_agents,
     "purge_old_media": run_purge_old_media,
+    "style_director_refresh": run_style_director_refresh,
 }
 
 JOB_METADATA: list[dict[str, str]] = [
@@ -151,5 +159,11 @@ JOB_METADATA: list[dict[str, str]] = [
         "name": "Purge médias",
         "schedule": "3h00 UTC",
         "description": "Nettoie le stockage en supprimant les fichiers médias qui dépassent la durée de rétention.",
+    },
+    {
+        "id": "style_director_refresh",
+        "name": "Style Director",
+        "schedule": "4h00 Europe/Paris",
+        "description": "Rafraîchit le profil de montage par chaîne depuis les vidéos de référence (si refresh_days écoulés).",
     },
 ]

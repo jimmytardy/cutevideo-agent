@@ -66,7 +66,11 @@ def apply_pacing_director(
 
     max_hold = resolve_max_visual_hold_s(is_short=is_short)
 
-    long_pacing = long_pacing_config() if not is_short else {}
+    long_pacing = (
+        long_pacing_config(channel_raw_config=dict(ctx.channel.config or {}))
+        if not is_short
+        else {}
+    )
 
     mood_transitions = {
 

@@ -615,7 +615,9 @@ class ShortEditorAgent(BaseAgent):
 
                 hook_text=clip.hook,
 
-                dynamic_recut=dynamic_recut_enabled(),
+                dynamic_recut=dynamic_recut_enabled(
+                    channel_raw_config=dict(ctx.channel.config or {}),
+                ),
 
             )
 

@@ -9,6 +9,7 @@ from agent.skills.video.montage_profile import (
     inter_segment_flash_config,
     load_ken_burns_config,
     load_sfx_config,
+    long_pacing_config,
     long_sfx_config,
     short_beat_slot_s,
 )
@@ -68,3 +69,23 @@ def test_inter_segment_flash_long_only() -> None:
     assert enabled is True
     assert duration == 0.15
     assert inter_segment_flash_config(is_short=True) == (False, 0.0)
+
+
+def test_channel_montage_profile_overrides_global() -> None:
+    channel_cfg = {
+        "montage_profile": {
+            "short_montage_profile": {"beat_slot_s": 1.8},
+            "long_montage_profile": {
+                "inter_segment_flash": False,
+                "pacing": {"hook_transition": "dissolve"},
+            },
+        },
+    }
+    assert short_beat_slot_s(channel_raw_config=channel_cfg) == 1.8
+    assert long_sfx_config(channel_raw_config=channel_cfg).get("beat_cuts_enabled") is True
+    pacing = long_pacing_config(channel_raw_config=channel_cfg)
+    assert pacing.get("hook_transition") == "dissolve"
+    enabled, _ = inter_segment_flash_config(is_short=False, channel_raw_config=channel_cfg)
+    assert enabled is False
+    short_kb = load_ken_burns_config(is_short=True, channel_raw_config=channel_cfg)
+    assert float(short_kb["zoom_factor"]) == 0.08

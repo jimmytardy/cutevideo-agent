@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from agent.core.json_parse import parse_gemini_response
-from agent.core.llm_retry import retry_transient_sync
+from agent.skills.video.gemini_video_io import (
+    analyze_video_json_with_gemini,
+    call_gemini_video_json,
+    is_quota_error,
+    wait_for_active_file,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -122,43 +124,6 @@ class VideoAnalysis:
         }
 
 
-QUOTA_ERROR_KEYWORDS = ("429", "quota", "resource_exhausted", "billing", "rate limit", "out of credit")
-
-
-def _is_quota_error(exc: Exception) -> bool:
-    msg = str(exc).lower()
-    return any(kw in msg for kw in QUOTA_ERROR_KEYWORDS)
-
-
-def _call_model(client: Any, types: Any, model_name: str, video_file: Any, prompt: str) -> dict[str, Any]:
-    logger.info("Gemini : analyse avec %s", model_name)
-    response = retry_transient_sync(
-        lambda: client.models.generate_content(
-            model=model_name,
-            contents=[video_file, prompt],
-            config=types.GenerateContentConfig(
-                temperature=0.1,
-                max_output_tokens=4096,
-                response_mime_type="application/json",
-                response_schema=ANALYSIS_RESPONSE_SCHEMA,
-            ),
-        ),
-        label=f"video_analyst/{model_name}",
-    )
-    return parse_gemini_response(response, model_name)
-
-
-def _wait_for_active_file(client: Any, types: Any, uploaded: Any) -> Any:
-    for _ in range(60):
-        if uploaded.state == types.FileState.ACTIVE:
-            return uploaded
-        if uploaded.state == types.FileState.FAILED:
-            raise RuntimeError(f"Gemini File API — traitement échoué : {uploaded.name}")
-        time.sleep(5)
-        uploaded = client.files.get(name=uploaded.name)
-    raise RuntimeError("Gemini File API — timeout après 5 min de traitement")
-
-
 async def analyze_video_with_gemini(
     video_path: Path,
     channel_name: str,
@@ -194,19 +159,35 @@ async def analyze_video_with_gemini(
             file=str(video_path),
             config=types.UploadFileConfig(mime_type="video/mp4"),
         )
-        uploaded = _wait_for_active_file(client, types, uploaded)
+        uploaded = wait_for_active_file(client, types, uploaded)
 
         try:
-            return _call_model(client, types, model_name, uploaded, prompt)
+            return call_gemini_video_json(
+                client,
+                types,
+                model_name,
+                uploaded,
+                prompt,
+                response_schema=ANALYSIS_RESPONSE_SCHEMA,
+                label="video_analyst",
+            )
         except Exception as primary_exc:
-            if _is_quota_error(primary_exc) and fallback_model and fallback_model != model_name:
+            if is_quota_error(primary_exc) and fallback_model and fallback_model != model_name:
                 logger.warning(
                     "Gemini %s quota/crédit épuisé (%s) — fallback sur %s",
                     model_name,
                     primary_exc,
                     fallback_model,
                 )
-                return _call_model(client, types, fallback_model, uploaded, prompt)
+                return call_gemini_video_json(
+                    client,
+                    types,
+                    fallback_model,
+                    uploaded,
+                    prompt,
+                    response_schema=ANALYSIS_RESPONSE_SCHEMA,
+                    label="video_analyst",
+                )
             raise
         finally:
             try:

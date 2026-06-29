@@ -228,6 +228,8 @@ class MediaAsset(Base):
     iteration: Mapped[int] = mapped_column(Integer, default=1)
     duration_s: Mapped[float | None] = mapped_column(Float, nullable=True)
     clip_metadata: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    perception: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    file_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMPTZ, server_default=func.now()
     )

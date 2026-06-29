@@ -106,6 +106,7 @@ async def assemble_from_montage_plan(
     *,
     force_vertical: bool = False,
     theme: str = "",
+    channel_raw_config: dict[str, Any] | None = None,
 ) -> float:
     """Assemble une vidéo depuis un MontagePlan (chemin unique du monteur)."""
     if not montage_plan.segments:
@@ -118,7 +119,10 @@ async def assemble_from_montage_plan(
     }
     is_vertical = montage_plan.is_vertical or force_vertical
     video_segments: list[Path] = []
-    flash_enabled, flash_duration_s = inter_segment_flash_config(is_short=is_vertical)
+    flash_enabled, flash_duration_s = inter_segment_flash_config(
+        is_short=is_vertical,
+        channel_raw_config=channel_raw_config,
+    )
 
     for seg_plan in sorted(montage_plan.segments, key=lambda s: s.segment_order):
         order = seg_plan.segment_order
@@ -135,6 +139,7 @@ async def assemble_from_montage_plan(
             is_vertical=is_vertical,
             grade=grade,
             theme=theme,
+            channel_raw_config=channel_raw_config,
         )
         if flash_enabled and order > 1:
             flashed_path = tmp_dir / f"segment_{order:02d}_flash.mp4"

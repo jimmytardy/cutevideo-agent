@@ -27,6 +27,8 @@ CLIP_ANALYSIS_SCHEMA: dict[str, Any] = {
                     "start_s": {"type": "NUMBER"},
                     "end_s": {"type": "NUMBER"},
                     "reason": {"type": "STRING"},
+                    "score": {"type": "INTEGER"},
+                    "peak_s": {"type": "NUMBER"},
                 },
             },
         },
@@ -43,7 +45,8 @@ Durée fichier : {duration_s:.1f}s
 - motion_score (0-100) : dynamisme visuel
 - static_ratio (0-1) : proportion de plans statiques
 - useful_duration_s : durée réellement utile sans plan figé prolongé
-- best_segments : 1 à 3 fenêtres [start_s, end_s] les plus pertinentes pour illustrer le contexte
+- best_segments : 1 à 3 fenêtres [start_s, end_s] les plus pertinentes pour illustrer le contexte ;
+  pour chaque segment : score (0-100, pertinence pour le contexte) et peak_s (instant le plus fort en secondes)
 - summary : une phrase
 
 Retourne UNIQUEMENT le JSON demandé."""
@@ -107,6 +110,8 @@ async def analyze_clip_source(
             start_s=float(s.get("start_s", 0)),
             end_s=float(s.get("end_s", 0)),
             reason=str(s.get("reason", "")),
+            score=int(s.get("score", 0) or 0),
+            peak_s=float(s["peak_s"]) if s.get("peak_s") is not None else None,
         )
         for s in (data.get("best_segments") or [])
         if isinstance(s, dict)

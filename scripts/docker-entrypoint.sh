@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-./scripts/wait-for-redis.sh
+sh /app/scripts/wait-for-redis.sh
 
 echo "Applying database migrations..."
 alembic upgrade head

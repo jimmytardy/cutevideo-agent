@@ -294,6 +294,23 @@ async def get_runway_status(
     }
 
 
+@router.post("/{channel_id}/style/refresh")
+async def refresh_channel_style(
+    channel_id: uuid.UUID,
+    force: bool = Query(default=False),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Rafraîchit le profil de montage de la chaîne depuis des vidéos de référence."""
+    await get_user_channel(db, channel_id, current_user)
+    from agent.agents.style_director_agent import StyleDirectorAgent
+
+    try:
+        return await StyleDirectorAgent().run_for_channel(channel_id, force=force)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
 async def _get_channel_or_404(db: AsyncSession, channel_id: uuid.UUID) -> Channel:
     """Compatibilité modules externes (cost, onboarding) — préférer get_user_channel."""
     result = await db.execute(select(Channel).where(Channel.id == channel_id))

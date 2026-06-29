@@ -163,8 +163,12 @@ ensure_redis_container() {
   echo -e "${GREEN}✓ Redis (${redis_host}) créé et démarré${RESET}"
 }
 
-# Volumes persistants (ex: cache Whisper partagé app/worker) — montés sur tous les conteneurs.
-VOLUME_OPT=""
+# Volumes persistants partagés app + worker (médias tmp, rendus output).
+SHARED_TMP_VOLUME="${APP_NAME}_tmp"
+SHARED_OUTPUT_VOLUME="${APP_NAME}_output"
+VOLUME_OPT="-v ${SHARED_TMP_VOLUME}:/app/tmp -v ${SHARED_OUTPUT_VOLUME}:/app/output"
+
+# Volumes additionnels (ex: cache Whisper, secrets) via EXTRA_VOLUMES dans le .env.
 if [[ -n "$EXTRA_VOLUMES" ]]; then
   IFS=',' read -ra _vols <<< "$EXTRA_VOLUMES"
   for vol in "${_vols[@]}"; do
@@ -290,7 +294,8 @@ echo -e "  Conteneur: ${CYAN}${APP_NAME}${RESET}"
 [[ -n "$WORKER_ENTRYPOINT" ]] && echo -e "  Worker   : ${CYAN}${APP_NAME}-worker${RESET}"
 echo -e "  Réseau   : ${CYAN}${DOCKER_NETWORK}${RESET}"
 [[ -n "$EXTRA_NETWORKS" ]] && echo -e "  Réseaux+ : ${CYAN}${EXTRA_NETWORKS}${RESET}"
-[[ -n "$EXTRA_VOLUMES" ]] && echo -e "  Volumes  : ${CYAN}${EXTRA_VOLUMES}${RESET}"
+echo -e "  Volumes  : ${CYAN}${SHARED_TMP_VOLUME}:/app/tmp, ${SHARED_OUTPUT_VOLUME}:/app/output${RESET}"
+[[ -n "$EXTRA_VOLUMES" ]] && echo -e "  Volumes+ : ${CYAN}${EXTRA_VOLUMES}${RESET}"
 echo -e "  Bind     : ${CYAN}${BIND_DESC} → ${CONTAINER_PORT}${RESET}"
 [[ -n "$ENV_OPT" ]] && echo -e "  Env file : ${CYAN}${ENV_PATH}${RESET}"
 echo ""

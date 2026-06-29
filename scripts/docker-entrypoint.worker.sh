@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-./scripts/wait-for-redis.sh
+sh /app/scripts/wait-for-redis.sh
 
 # Entrypoint worker PROD : exécute le pipeline_worker sans hot-reload.
 # (La variante .worker.dev.sh utilise watchfiles pour le développement.)

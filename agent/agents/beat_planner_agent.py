@@ -73,7 +73,7 @@ class BeatPlannerAgent(BaseAgent):
             else ctx.channel_config.min_image_duration_s
         )
         slot_s = (
-            short_beat_slot_s()
+            short_beat_slot_s(channel_raw_config=dict(ctx.channel.config or {}))
             if is_short
             else beat_slot_seconds(
                 min_image_duration_s=min_img_s,
