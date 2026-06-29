@@ -42,6 +42,7 @@ import {
   clearProjectMaxIterations,
   deleteProject,
   type Project,
+  type ProjectCost,
   type AgentRun,
   type CriticReport,
   type Scenario,
@@ -101,6 +102,16 @@ export default function ProjectDetailPage({ params }: Props) {
     fetcher,
   )
   const { data: me } = useSWR<AuthUser>('/api/v1/auth/me', fetcher)
+  const { data: projectCost } = useSWR<ProjectCost>(
+    `/api/v1/projects/${id}/cost`,
+    fetcher,
+    {
+      refreshInterval: (data) => {
+        if (pipelineKickoff) return 5000
+        return ['running', 'queued'].includes(project?.status ?? '') ? 5000 : 0
+      },
+    },
+  )
 
   useEffect(() => {
     if (!pipelineKickoff || !project) return
@@ -477,6 +488,41 @@ export default function ProjectDetailPage({ params }: Props) {
           </Button>
         )}
       </Box>
+
+      {projectCost && (
+        <Box sx={{ mb: 3 }}>
+        <PageSection title="Coût LLM">
+          <Stack spacing={1}>
+            <Typography variant="body2">
+              Coût estimé : <strong>${projectCost.total_usd.toFixed(4)}</strong>
+              {' / '}
+              plafond ${projectCost.cap_usd.toFixed(2)}
+              {' · '}
+              Itérations : <strong>{projectCost.iterations_used}</strong>
+              {projectCost.max_iterations != null && ` / ${projectCost.max_iterations}`}
+              {projectCost.elapsed_s > 0 && ` · ${Math.round(projectCost.elapsed_s)} s`}
+            </Typography>
+            {projectCost.stop_reason !== 'unknown' && (
+              <Typography variant="caption" color="text.secondary">
+                Arrêt :{' '}
+                {projectCost.stop_reason === 'approved' && 'Qualité approuvée'}
+                {projectCost.stop_reason === 'max_iterations' && 'Plafond itérations atteint'}
+                {projectCost.stop_reason === 'cost_cap' && 'Plafond coût atteint'}
+              </Typography>
+            )}
+            {projectCost.by_agent.length > 0 && (
+              <Box component="ul" sx={{ m: 0, pl: 2 }}>
+                {projectCost.by_agent.slice(0, 8).map((row) => (
+                  <Typography component="li" variant="caption" key={row.agent_name}>
+                    {row.agent_name} — ${row.usd.toFixed(4)} ({row.input_tokens + row.output_tokens} tokens)
+                  </Typography>
+                ))}
+              </Box>
+            )}
+          </Stack>
+        </PageSection>
+        </Box>
+      )}
 
       {actionError && (
         <Alert severity="error" sx={{ mb: 2 }} onClose={() => setActionError(null)}>

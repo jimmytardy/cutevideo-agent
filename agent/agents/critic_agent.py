@@ -304,6 +304,7 @@ class CriticAgent(BaseAgent):
 
         structure_score = self._extract_structure_score(feedback)
         max_iterations = ctx.max_critic_iterations
+        at_iteration_cap = max_iterations is not None and iteration >= max_iterations
         decision = self._resolve_decision(
             global_score=score,
             structure_score=structure_score,
@@ -315,6 +316,7 @@ class CriticAgent(BaseAgent):
         )
         data, decision, start_from_value = self._apply_routing_overrides(
             data, decision, start_from_value, video_analysis, ctx,
+            at_iteration_cap=at_iteration_cap,
         )
         decision, start_from_value = self._apply_short_duration_override(
             ctx,
@@ -323,6 +325,13 @@ class CriticAgent(BaseAgent):
             decision=decision,
             start_from_value=start_from_value,
             data=data,
+            at_iteration_cap=at_iteration_cap,
+        )
+        decision, data = self._finalize_decision(
+            decision=decision,
+            data=data,
+            iteration=iteration,
+            max_iterations=max_iterations,
         )
         feedback["start_from"] = start_from_value
         data["feedback"] = feedback
@@ -373,12 +382,15 @@ class CriticAgent(BaseAgent):
         decision: str,
         start_from_value: str,
         data: dict,
+        at_iteration_cap: bool = False,
     ) -> tuple[str, str]:
         from agent.core.short_format import (
             effective_short_max_duration_s,
             exceeds_short_duration_limit,
         )
 
+        if at_iteration_cap:
+            return decision, start_from_value
         if not is_short or not video.duration_s:
             return decision, start_from_value
         if not exceeds_short_duration_limit(
@@ -502,8 +514,12 @@ class CriticAgent(BaseAgent):
         start_from: str,
         video_analysis: "VideoAnalysis | None",
         ctx: "PipelineContext",
+        *,
+        at_iteration_cap: bool = False,
     ) -> tuple[dict, str, str]:
         """Force reprise montage/media si plans statiques détectés."""
+        if at_iteration_cap:
+            return data, decision, start_from
         max_static = float(ctx.channel_config.max_static_shot_s)
         feedback = data.get("feedback") if isinstance(data.get("feedback"), dict) else {}
         rhythm = CriticAgent._normalize_criterion_value(feedback.get("rhythm")) or 0
@@ -539,6 +555,28 @@ class CriticAgent(BaseAgent):
 
         data["start_from"] = start_from
         return data, decision, start_from
+
+    @staticmethod
+    def _finalize_decision(
+        decision: str,
+        data: dict,
+        iteration: int,
+        max_iterations: int | None,
+    ) -> tuple[str, dict]:
+        """Dernière passe : au plafond d'itérations, force approve sans changements."""
+        if max_iterations is not None and iteration >= max_iterations and decision == "iterate":
+            logger.info(
+                "Plafond itérations (%d) — décision iterate annulée, approbation forcée",
+                max_iterations,
+            )
+            data["requested_changes"] = []
+            feedback = data.get("feedback") if isinstance(data.get("feedback"), dict) else {}
+            existing = feedback.get("comments")
+            note = f"Plafond d'itérations ({max_iterations}) atteint — meilleure version conservée."
+            feedback["comments"] = f"{existing}\n{note}" if isinstance(existing, str) else note
+            data["feedback"] = feedback
+            return "approve", data
+        return decision, data
 
     @staticmethod
     def _build_video_analysis_dict(

@@ -324,6 +324,10 @@ class AgentRun(Base):
     error: Mapped[str | None] = mapped_column(String, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
     ended_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    cost_estimate_usd: Mapped[float | None] = mapped_column(nullable=True)
+    llm_input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    llm_output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    llm_model: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class Publication(Base):

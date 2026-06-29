@@ -220,6 +220,31 @@ export interface AgentRun {
   error: string | null
   started_at: string | null
   ended_at: string | null
+  cost_estimate_usd: number | null
+  llm_input_tokens: number | null
+  llm_output_tokens: number | null
+  llm_model: string | null
+}
+
+export interface ProjectCost {
+  project_id: string
+  total_usd: number
+  cap_usd: number
+  iterations_used: number
+  max_iterations: number | null
+  stop_reason: string
+  by_agent: Array<{
+    agent_name: string
+    usd: number
+    input_tokens: number
+    output_tokens: number
+  }>
+  by_iteration: Array<{
+    iteration: number
+    usd: number
+    duration_s: number
+  }>
+  elapsed_s: number
 }
 
 export interface MediaAsset {
@@ -701,6 +726,12 @@ export async function restartFromCriticIteration(
 export async function fetchCriticReports(projectId: string): Promise<CriticReport[]> {
   const res = await fetchWithRetry(`${BASE}/projects/${projectId}/critic-reports`)
   if (!res.ok) return []
+  return res.json()
+}
+
+export async function fetchProjectCost(projectId: string): Promise<ProjectCost | null> {
+  const res = await fetchWithRetry(`${BASE}/projects/${projectId}/cost`)
+  if (!res.ok) return null
   return res.json()
 }
 

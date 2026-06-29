@@ -243,6 +243,8 @@ class ChannelRuntimeConfig(BaseModel):
     min_critic_score: int = 90
     min_short_structure_score: int = 15
     max_critic_iterations: int = 5
+    quality_max_iterations: int = 3
+    cost_max_per_video_usd: float = 8.0
     max_fact_check_iterations: int = 3
     min_image_duration_s: int = 4
     min_image_duration_short_s: int = 1
@@ -542,6 +544,8 @@ def resolve_channel_config(
             channel_overrides.setdefault("publishing", {})["default_tags"] = channel.brand_kit["default_tags"]
 
     pipeline = {**global_cfg.get("pipeline", {}), **channel_overrides.get("pipeline", {})}
+    quality_cfg = {**global_cfg.get("quality", {}), **channel_overrides.get("quality", {})}
+    cost_cfg = {**global_cfg.get("cost", {}), **channel_overrides.get("cost", {})}
     tts = {**global_cfg.get("tts", {}), **channel_overrides.get("tts", {})}
     tts_voice = str(tts.get("voice", "fr-FR-Vivienne:DragonHDLatestNeural"))
     content_language = _resolve_content_language(channel_overrides, global_cfg, tts_voice)
@@ -662,6 +666,18 @@ def resolve_channel_config(
         ),
         max_critic_iterations=int(
             pipeline.get("max_critic_iterations", global_cfg.get("pipeline", {}).get("max_critic_iterations", 3))
+        ),
+        quality_max_iterations=int(
+            quality_cfg.get(
+                "max_iterations",
+                global_cfg.get("quality", {}).get("max_iterations", 3),
+            )
+        ),
+        cost_max_per_video_usd=float(
+            cost_cfg.get(
+                "max_per_video_usd",
+                global_cfg.get("cost", {}).get("max_per_video_usd", 8.0),
+            )
         ),
         max_fact_check_iterations=int(
             pipeline.get(

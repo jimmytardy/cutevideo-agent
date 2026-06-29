@@ -12,6 +12,13 @@ from agent.core.api_keys import GcpCredentials, parse_gcp_credentials, resolve_a
 from agent.core.database import User
 from agent.core.llm_config import resolve_max_tokens, resolve_model
 from agent.core.llm_retry import retry_transient_async
+from agent.core.llm_usage import (
+    LlmUsageRecord,
+    merge_usage_records,
+    record_llm_usage,
+    usage_from_anthropic,
+    usage_from_gemini,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -289,9 +296,9 @@ async def call_llm(
             kwargs["system"] = [
                 {"type": "text", "text": system.strip(), "cache_control": {"type": "ephemeral"}}
             ]
-        return await _anthropic_complete(client, kwargs, agent_name)
+        return await _anthropic_complete(client, kwargs, agent_name, cfg.model)
 
-    return await _call_gemini_text(
+    text, usage = await _call_gemini_text(
         api_key=cfg.api_key,
         model=cfg.model,
         prompt=prompt,
@@ -302,6 +309,8 @@ async def call_llm(
         use_vertex=cfg.use_vertex,
         gcp=cfg.gcp,
     )
+    record_llm_usage(usage)
+    return text
 
 
 def _anthropic_text(response: Any) -> str:
@@ -311,16 +320,20 @@ def _anthropic_text(response: Any) -> str:
     )
 
 
-async def _anthropic_complete(client: Any, kwargs: dict[str, Any], agent_name: str) -> str:
+async def _anthropic_complete(
+    client: Any, kwargs: dict[str, Any], agent_name: str, model: str
+) -> str:
     """Appel Anthropic avec continuation automatique si coupé par max_tokens.
 
     La continuation utilise le *prefill* : on renvoie le texte déjà produit comme
     dernier tour assistant, et l'API poursuit exactement où elle s'était arrêtée.
     """
     base_messages = list(kwargs["messages"])
+    usage_records: list[LlmUsageRecord] = []
     response = await retry_transient_async(
         lambda: client.messages.create(**kwargs), label=f"{agent_name}/anthropic"
     )
+    usage_records.append(usage_from_anthropic(response, model))
     text = _anthropic_text(response)
 
     continuations = 0
@@ -342,6 +355,7 @@ async def _anthropic_complete(client: Any, kwargs: dict[str, Any], agent_name: s
         response = await retry_transient_async(
             lambda: client.messages.create(**cont_kwargs), label=f"{agent_name}/anthropic"
         )
+        usage_records.append(usage_from_anthropic(response, model))
         text += _anthropic_text(response)
 
     if response.stop_reason == "max_tokens":
@@ -350,6 +364,7 @@ async def _anthropic_complete(client: Any, kwargs: dict[str, Any], agent_name: s
             agent_name,
             MAX_CONTINUATIONS,
         )
+    record_llm_usage(merge_usage_records(usage_records))
     return text
 
 
@@ -397,7 +412,7 @@ async def _call_gemini_text(
     agent_name: str = "llm",
     use_vertex: bool = False,
     gcp: GcpCredentials | None = None,
-) -> str:
+) -> tuple[str, LlmUsageRecord]:
     from google import genai
     from google.genai import types
 
@@ -420,12 +435,14 @@ async def _call_gemini_text(
     config = types.GenerateContentConfig(**config_kwargs)
 
     user_turn = types.Content(role="user", parts=[types.Part(text=full_prompt)])
+    usage_records: list[LlmUsageRecord] = []
     response = await retry_transient_async(
         lambda: client.aio.models.generate_content(
             model=model, contents=[user_turn], config=config
         ),
         label=f"{agent_name}/gemini",
     )
+    usage_records.append(usage_from_gemini(response, model))
     text = _gemini_text(response)
 
     continuations = 0
@@ -458,6 +475,7 @@ async def _call_gemini_text(
             ),
             label=f"{agent_name}/gemini",
         )
+        usage_records.append(usage_from_gemini(response, model))
         text += _gemini_text(response)
 
     if _gemini_truncated(response):
@@ -469,7 +487,7 @@ async def _call_gemini_text(
 
     if not text.strip():
         raise RuntimeError(f"Réponse Gemini vide ({model})")
-    return text.strip()
+    return text.strip(), merge_usage_records(usage_records)
 
 
 def preferences_to_json(prefs: dict[str, AgentLlmPreference]) -> dict:

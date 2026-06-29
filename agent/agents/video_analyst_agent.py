@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from agent.core.llm_usage import LlmUsageRecord, estimate_gemini_video_cost_usd
+from agent.core.project_cost import persist_standalone_agent_run
 from agent.skills.video.gemini_video_io import (
     analyze_video_json_with_gemini,
     call_gemini_video_json,
@@ -133,7 +136,9 @@ async def analyze_video_with_gemini(
     api_key: str,
     model_name: str = "gemini-2.5-pro",
     fallback_model: str = "gemini-3.5-flash",
-) -> VideoAnalysis:
+    *,
+    prompt_override: str | None = None,
+) -> tuple[VideoAnalysis, LlmUsageRecord]:
     """Upload the video to Gemini File API and run visual analysis.
     Falls back to fallback_model if the primary model hits a quota/billing error.
     """
@@ -145,14 +150,14 @@ async def analyze_video_with_gemini(
             "google-genai non installé — run: pip install google-genai"
         )
 
-    prompt = ANALYST_PROMPT.format(
+    prompt = prompt_override or ANALYST_PROMPT.format(
         channel_name=channel_name,
         theme=theme,
         duration_s=int(duration_s),
         iteration=iteration,
     )
 
-    def _upload_and_analyze() -> dict[str, Any]:
+    def _upload_and_analyze() -> tuple[dict[str, Any], LlmUsageRecord]:
         client = genai.Client(api_key=api_key)
         logger.info("Gemini : upload vidéo %s", video_path)
         uploaded = client.files.upload(
@@ -162,7 +167,7 @@ async def analyze_video_with_gemini(
         uploaded = wait_for_active_file(client, types, uploaded)
 
         try:
-            return call_gemini_video_json(
+            data, usage = call_gemini_video_json(
                 client,
                 types,
                 model_name,
@@ -170,7 +175,9 @@ async def analyze_video_with_gemini(
                 prompt,
                 response_schema=ANALYSIS_RESPONSE_SCHEMA,
                 label="video_analyst",
+                duration_s=duration_s,
             )
+            return data, usage
         except Exception as primary_exc:
             if is_quota_error(primary_exc) and fallback_model and fallback_model != model_name:
                 logger.warning(
@@ -179,7 +186,7 @@ async def analyze_video_with_gemini(
                     primary_exc,
                     fallback_model,
                 )
-                return call_gemini_video_json(
+                data, usage = call_gemini_video_json(
                     client,
                     types,
                     fallback_model,
@@ -187,7 +194,9 @@ async def analyze_video_with_gemini(
                     prompt,
                     response_schema=ANALYSIS_RESPONSE_SCHEMA,
                     label="video_analyst",
+                    duration_s=duration_s,
                 )
+                return data, usage
             raise
         finally:
             try:
@@ -195,7 +204,7 @@ async def analyze_video_with_gemini(
             except Exception:
                 pass
 
-    data = await asyncio.to_thread(_upload_and_analyze)
+    data, usage = await asyncio.to_thread(_upload_and_analyze)
 
     return VideoAnalysis(
         score=int(data.get("score", 0)),
@@ -205,8 +214,8 @@ async def analyze_video_with_gemini(
         rhythm=int(data.get("rhythm", 0)),
         voice_expressiveness=int(data.get("voice_expressiveness", 0)),
         summary=data.get("summary", ""),
-        raw=data,
-    )
+        raw={**data, "_usage": usage.__dict__},
+    ), usage
 
 
 async def run_video_analysis(
@@ -216,6 +225,8 @@ async def run_video_analysis(
     duration_s: float,
     iteration: int,
     api_key: str,
+    *,
+    project_id: uuid.UUID | None = None,
 ) -> VideoAnalysis | None:
     """Entry point — returns None on any error so the pipeline can continue."""
     path = Path(video_path)
@@ -223,9 +234,18 @@ async def run_video_analysis(
         logger.warning("VideoAnalyst : fichier introuvable %s — analyse ignorée", path)
         return None
     try:
-        return await analyze_video_with_gemini(
+        analysis, usage = await analyze_video_with_gemini(
             path, channel_name, theme, duration_s, iteration, api_key
         )
+        if project_id is not None:
+            await persist_standalone_agent_run(
+                project_id,
+                "video_analyst_agent",
+                iteration,
+                usage,
+                output_json={"score": analysis.score, "issues_count": len(analysis.issues)},
+            )
+        return analysis
     except Exception as e:
         logger.error("VideoAnalyst Gemini échoué (%s) — critique continuera sans analyse vidéo", e)
         return None

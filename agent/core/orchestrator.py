@@ -16,8 +16,13 @@ from agent.core.learning_context import ChannelContextSnapshot, load_channel_con
 from agent.core.concurrency import can_start_pipeline
 from agent.core.subscription import (
     SubscriptionLimits,
-    resolve_effective_max_critic_iterations,
     resolve_user_limits,
+)
+from agent.core.quality_guardrails import resolve_effective_quality_iterations
+from agent.core.project_cost import (
+    persist_cost_summary,
+    project_cost_exceeded,
+    sum_project_llm_cost_usd,
 )
 from agent.core.database import (
     AsyncSessionFactory,
@@ -91,6 +96,7 @@ class PipelineContext:
     target_duration_seconds: int
     iteration: int = 1
     max_critic_iterations: int | None = None
+    cost_max_per_video_usd: float = 8.0
     learning_context: ChannelContextSnapshot | None = None
     content_plan: dict[str, Any] | None = None
     planned_shorts: list[dict[str, Any]] | None = None
@@ -176,9 +182,10 @@ class Orchestrator:
                     else SubscriptionLimits()
                 )
             channel_config = resolve_channel_config(channel, subscription_limits=limits)
-            max_critic_iterations = resolve_effective_max_critic_iterations(
+            max_critic_iterations = resolve_effective_quality_iterations(
                 project_config=project_config,
-                channel_max=channel_config.max_critic_iterations,
+                channel_quality_max=channel_config.quality_max_iterations,
+                channel_critic_max=channel_config.max_critic_iterations,
                 limits=limits,
             )
             ctx = PipelineContext(
@@ -197,6 +204,7 @@ class Orchestrator:
                     else 1800
                 ),
                 max_critic_iterations=max_critic_iterations,
+                cost_max_per_video_usd=channel_config.cost_max_per_video_usd,
                 learning_context=learning,
                 content_plan=project_config.get("content_plan"),
                 planned_shorts=project_config.get("planned_shorts"),
@@ -302,6 +310,11 @@ class Orchestrator:
         from agent.agents.subtitle_agent import SubtitleAgent
         from agent.agents.critic_agent import CriticAgent
         from agent.agents.video_analyst_agent import run_video_analysis
+        from agent.core.segment_fingerprint import compute_changed_segments
+        from agent.skills.video.segment_video_analysis import (
+            load_previous_video_analysis,
+            run_partial_video_analysis,
+        )
         from agent.agents.outline_agent import OutlineAgent
 
         _STEPS = [
@@ -370,6 +383,7 @@ class Orchestrator:
             best_score = 0
             best_video_id: uuid.UUID | None = None
             video: Video | None = None
+            stop_reason: str = "approved"
 
             loop_start_iteration = 1
             if ctx.critic_feedback is not None and ctx.resume_iteration is not None:
@@ -528,14 +542,49 @@ class Orchestrator:
                     )
                 if key_ctx.key and video.local_path:
                     if Path(video.local_path).exists():
-                        video_analysis = await run_video_analysis(
-                            video_path=video.local_path,
-                            channel_name=ctx.channel.name,
-                            theme=ctx.theme,
-                            duration_s=video.duration_s or 0,
-                            iteration=iteration,
-                            api_key=key_ctx.key,
+                        changed_segments = None
+                        if iteration > 1:
+                            changed_segments = await compute_changed_segments(
+                                ctx.project_id, iteration
+                            )
+                        total_segments = len(
+                            (scenario.segments or []) if scenario else []
                         )
+                        if iteration == 1 or changed_segments is None:
+                            video_analysis = await run_video_analysis(
+                                video_path=video.local_path,
+                                channel_name=ctx.channel.name,
+                                theme=ctx.theme,
+                                duration_s=video.duration_s or 0,
+                                iteration=iteration,
+                                api_key=key_ctx.key,
+                                project_id=ctx.project_id,
+                            )
+                        elif not changed_segments:
+                            video_analysis = await load_previous_video_analysis(
+                                ctx.project_id, iteration - 1
+                            )
+                        elif total_segments and len(changed_segments) >= total_segments:
+                            video_analysis = await run_video_analysis(
+                                video_path=video.local_path,
+                                channel_name=ctx.channel.name,
+                                theme=ctx.theme,
+                                duration_s=video.duration_s or 0,
+                                iteration=iteration,
+                                api_key=key_ctx.key,
+                                project_id=ctx.project_id,
+                            )
+                        else:
+                            video_analysis = await run_partial_video_analysis(
+                                project_id=ctx.project_id,
+                                video_path=video.local_path,
+                                changed_orders=changed_segments,
+                                channel_name=ctx.channel.name,
+                                theme=ctx.theme,
+                                duration_s=video.duration_s or 0,
+                                iteration=iteration,
+                                api_key=key_ctx.key,
+                            )
                         gemini_status = "ok" if video_analysis else "error"
                     else:
                         gemini_status = "file_not_found"
@@ -553,14 +602,34 @@ class Orchestrator:
                     best_video_id = video.id
 
                 if report.decision == "approve":
+                    stop_reason = "max_iterations" if (
+                        max_iterations is not None and iteration >= max_iterations
+                    ) else "approved"
                     break
                 await self._apply_critic_changes(ctx, report, scenario)
                 if max_iterations is not None and iteration >= max_iterations:
+                    stop_reason = "max_iterations"
+                    break
+                if await project_cost_exceeded(ctx.project_id, ctx.cost_max_per_video_usd):
+                    logger.info(
+                        "Plafond coût atteint (%.2f USD) — arrêt itérations projet %s",
+                        ctx.cost_max_per_video_usd,
+                        ctx.project_id,
+                    )
+                    stop_reason = "cost_cap"
                     break
                 iteration += 1
 
             if best_video_id and video and best_video_id != video.id:
                 await self._promote_best_video(best_video_id, video.id)
+
+            total_usd = await sum_project_llm_cost_usd(ctx.project_id)
+            await persist_cost_summary(
+                ctx.project_id,
+                stop_reason=stop_reason,  # type: ignore[arg-type]
+                total_usd=total_usd,
+                iterations_used=iteration,
+            )
 
         except asyncio.CancelledError:
             await queue.set_agent_status(pid, current_agent, "stopped")

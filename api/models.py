@@ -532,6 +532,22 @@ class AgentRunResponse(BaseModel):
     error: str | None
     started_at: datetime | None
     ended_at: datetime | None
+    cost_estimate_usd: float | None = None
+    llm_input_tokens: int | None = None
+    llm_output_tokens: int | None = None
+    llm_model: str | None = None
+
+
+class ProjectCostResponse(BaseModel):
+    project_id: str
+    total_usd: float
+    cap_usd: float
+    iterations_used: int
+    max_iterations: int | None
+    stop_reason: str = "unknown"
+    by_agent: list[dict] = Field(default_factory=list)
+    by_iteration: list[dict] = Field(default_factory=list)
+    elapsed_s: float = 0.0
 
 
 class AnalyticsResponse(BaseModel):

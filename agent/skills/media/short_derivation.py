@@ -9,6 +9,7 @@ from agent.core.short_derivation import DerivedShortPlan, derivation_iteration
 if TYPE_CHECKING:
     from agent.agents.media_agent import MediaAgent
     from agent.core.orchestrator import PipelineContext
+    from agent.skills.media.run_session import MediaRunSession
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +18,7 @@ async def run_media_for_short_derivation(
     agent: "MediaAgent",
     ctx: "PipelineContext",
     plan: DerivedShortPlan,
+    session: "MediaRunSession",
 ) -> list[MediaAsset]:
     """Recherche média pour un short dérivé : pool d'abord, sources gratuites, IA optionnelle."""
     ctx.derivation_short_index = plan.index
@@ -29,4 +31,4 @@ async def run_media_for_short_derivation(
         total_duration_s=plan.total_duration_s,
         iteration=derivation_iteration(plan.index),
     )
-    return await agent._search_all_segments_derivation(ctx, scenario)
+    return await agent._search_all_segments_derivation(ctx, scenario, session)

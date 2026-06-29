@@ -13,6 +13,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from agent.core.database import AgentRun, AsyncSessionFactory, User
 from agent.core.llm_config import compact_learning_context, resolve_max_tokens
 from agent.core.llm_resolver import call_llm
+from agent.core.llm_usage import (
+    LlmUsageRecord,
+    get_run_usage_accumulator,
+    record_llm_usage,
+    start_run_usage_tracking,
+)
 from agent.core.learning_context import load_channel_context
 
 logger = logging.getLogger(__name__)
@@ -80,6 +86,7 @@ class BaseAgent(ABC, Generic[InputT, OutputT]):
 
     async def start_run(self, project_id: uuid.UUID, input_data: Any, iteration: int = 1) -> AgentRun:
         """Enregistre le début d'un run en DB."""
+        start_run_usage_tracking()
         async with AsyncSessionFactory() as session:
             run = AgentRun(
                 project_id=project_id,
@@ -95,8 +102,27 @@ class BaseAgent(ABC, Generic[InputT, OutputT]):
             self._logger.info("Agent %s démarré — run %s", self.name, run.id)
             return run
 
+    async def _persist_run_usage(self, run: AgentRun) -> None:
+        acc = get_run_usage_accumulator()
+        if acc is None or not acc.records:
+            return
+        async with AsyncSessionFactory() as session:
+            db_run = await session.get(AgentRun, run.id)
+            if db_run is None:
+                return
+            db_run.cost_estimate_usd = acc.total_cost_usd
+            db_run.llm_input_tokens = acc.total_input_tokens
+            db_run.llm_output_tokens = acc.total_output_tokens
+            db_run.llm_model = acc.primary_model
+            session.add(db_run)
+            await session.commit()
+
+    def _record_llm_usage(self, record: LlmUsageRecord) -> None:
+        record_llm_usage(record)
+
     async def end_run(self, run: AgentRun, output_data: Any) -> None:
         """Enregistre la fin réussie d'un run en DB."""
+        await self._persist_run_usage(run)
         async with AsyncSessionFactory() as session:
             run.status = "success"
             run.output_json = self._serialize(output_data)
@@ -107,6 +133,7 @@ class BaseAgent(ABC, Generic[InputT, OutputT]):
 
     async def fail_run(self, run: AgentRun, error: Exception) -> None:
         """Enregistre l'échec d'un run en DB."""
+        await self._persist_run_usage(run)
         async with AsyncSessionFactory() as session:
             run.status = "failed"
             run.error = str(error)
@@ -117,6 +144,7 @@ class BaseAgent(ABC, Generic[InputT, OutputT]):
 
     async def stop_run(self, run: AgentRun, reason: str = _STOPPED_BY_USER) -> None:
         """Enregistre l'arrêt manuel d'un run en DB."""
+        await self._persist_run_usage(run)
         async with AsyncSessionFactory() as session:
             run.status = "stopped"
             run.error = reason

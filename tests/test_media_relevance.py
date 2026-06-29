@@ -7,13 +7,18 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from agent.agents.media_agent import MediaAgent
 from agent.skills.media.ai_image_result import AiImageResult
+from agent.skills.media.asset_resolver import anchored_keywords, build_anchored_queries, select_assets
+from agent.skills.media.run_session import MediaRunSession
+from agent.skills.media_sources.ai.routing import (
+    apply_ai_image_result,
+    generate_validated_ai_image,
+)
 from agent.skills.media_sources.relevance_scorer import MediaRelevanceScoringError, ScoredCandidate
 
 
 def test_build_anchored_queries_includes_video_subject() -> None:
-    queries = MediaAgent._build_anchored_queries(
+    queries = build_anchored_queries(
         ["rouge-gorge", "European robin"],
         "Le rouge-gorge familier",
         "Habitat",
@@ -23,7 +28,7 @@ def test_build_anchored_queries_includes_video_subject() -> None:
 
 
 def test_build_anchored_queries_fallback_to_subject_only() -> None:
-    queries = MediaAgent._build_anchored_queries([], "Napoléon à Waterloo", "La bataille")
+    queries = build_anchored_queries([], "Napoléon à Waterloo", "La bataille")
     assert queries == [["Napoléon à Waterloo"]]
 
 
@@ -35,7 +40,7 @@ def test_select_assets_prioritizes_video() -> None:
         {"asset_type": "image", "url": "img2"},
         {"asset_type": "image", "url": "img3"},
     ]
-    selected = MediaAgent._select_assets(candidates, video_target=1, total_needed=4)
+    selected = select_assets(candidates, video_target=1, total_needed=4)
     assert len(selected) == 4
     assert selected[0]["asset_type"] == "video"
 
@@ -55,12 +60,10 @@ async def test_score_media_candidates_raises_without_api_key() -> None:
         )
 
 
-def _make_agent_ctx(tmp_path: Path) -> tuple[MediaAgent, object, dict, object]:
-    agent = MediaAgent()
-    agent._relevance_log = []
-    agent._kept_temp_s3_keys = []
-    agent._gemini_api_key = "test-key"
-    agent._scoring_models = None
+def _make_agent_ctx(tmp_path: Path) -> tuple[MediaRunSession, object, dict, object]:
+    session = MediaRunSession()
+    session.gemini_api_key = "test-key"
+    session.scoring_models = None
     from types import SimpleNamespace
 
     ctx = type("Ctx", (), {
@@ -75,12 +78,12 @@ def _make_agent_ctx(tmp_path: Path) -> tuple[MediaAgent, object, dict, object]:
     })()
     segment = {"order": 1, "title": "Segment", "narration_text": "Narration"}
     ai_cfg = type("Ai", (), {"enabled": True, "plan": type("P", (), {"value": "flux_pro"})()})()
-    return agent, ctx, segment, ai_cfg
+    return session, ctx, segment, ai_cfg
 
 
 @pytest.mark.asyncio
 async def test_generate_validated_ai_image_forced_best_on_low_scores(tmp_path: Path) -> None:
-    agent, ctx, segment, ai_cfg = _make_agent_ctx(tmp_path)
+    session, ctx, segment, ai_cfg = _make_agent_ctx(tmp_path)
     ai_path = tmp_path / "ai.png"
     ai_path.write_bytes(b"png")
     ai_item = {
@@ -98,17 +101,24 @@ async def test_generate_validated_ai_image_forced_best_on_low_scores(tmp_path: P
 
     with (
         patch(
-            "agent.agents.media_agent.ai_fallback_attempt_config",
+            "agent.skills.media.scenario_media_gap.ai_fallback_attempt_config",
             return_value=("flux_2_dev", 1, 1),
         ),
         patch(
-            "agent.skills.media_sources.relevance_scorer.score_media_candidates",
+            "agent.skills.media_sources.ai.routing.score_media_candidates",
             new=AsyncMock(side_effect=fake_score),
         ),
-        patch.object(MediaAgent, "_generate_ai_fallback", new=AsyncMock(return_value=ai_item)),
-        patch.object(MediaAgent, "_upload_ai_candidate_temp", new=AsyncMock(return_value=None)),
+        patch(
+            "agent.skills.media_sources.ai.routing.generate_ai_fallback",
+            new=AsyncMock(return_value=ai_item),
+        ),
+        patch(
+            "agent.skills.media_sources.ai.routing.upload_ai_candidate_temp",
+            new=AsyncMock(return_value=None),
+        ),
     ):
-        result = await agent._generate_validated_ai_image(
+        result = await generate_validated_ai_image(
+            session,
             "prompt",
             tmp_path,
             ctx,
@@ -127,7 +137,7 @@ async def test_generate_validated_ai_image_forced_best_on_low_scores(tmp_path: P
 @pytest.mark.asyncio
 async def test_generate_validated_ai_image_below_floor_is_api_failed(tmp_path: Path) -> None:
     """P3 — un visuel IA sous le plancher qualité n'est pas expédié (→ gap)."""
-    agent, ctx, segment, ai_cfg = _make_agent_ctx(tmp_path)
+    session, ctx, segment, ai_cfg = _make_agent_ctx(tmp_path)
     ai_path = tmp_path / "junk.png"
     ai_path.write_bytes(b"png")
     ai_item = {
@@ -145,18 +155,28 @@ async def test_generate_validated_ai_image_below_floor_is_api_failed(tmp_path: P
 
     with (
         patch(
-            "agent.agents.media_agent.ai_fallback_attempt_config",
+            "agent.skills.media.scenario_media_gap.ai_fallback_attempt_config",
             return_value=("flux_2_dev", 1, 1),
         ),
         patch(
-            "agent.skills.media_sources.relevance_scorer.score_media_candidates",
+            "agent.skills.media_sources.ai.routing.score_media_candidates",
             new=AsyncMock(side_effect=fake_score),
         ),
-        patch.object(MediaAgent, "_generate_ai_fallback", new=AsyncMock(return_value=ai_item)),
-        patch.object(MediaAgent, "_upload_ai_candidate_temp", new=AsyncMock(return_value=None)),
-        patch.object(MediaAgent, "_cleanup_ai_candidates", new=AsyncMock(return_value=None)),
+        patch(
+            "agent.skills.media_sources.ai.routing.generate_ai_fallback",
+            new=AsyncMock(return_value=ai_item),
+        ),
+        patch(
+            "agent.skills.media_sources.ai.routing.upload_ai_candidate_temp",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "agent.skills.media_sources.ai.routing.cleanup_ai_candidates",
+            new=AsyncMock(return_value=None),
+        ),
     ):
-        result = await agent._generate_validated_ai_image(
+        result = await generate_validated_ai_image(
+            session,
             "prompt", tmp_path, ctx, segment, 60, ai_cfg, "16:9", brief,
         )
 
@@ -167,12 +187,12 @@ async def test_generate_validated_ai_image_below_floor_is_api_failed(tmp_path: P
 def test_anchored_keywords_prepends_english_terms() -> None:
     from agent.skills.media_sources.ai.prompt_synthesizer import SearchAnchor
 
-    agent = MediaAgent()
-    agent._search_anchor = SearchAnchor(
+    session = MediaRunSession()
+    session.search_anchor = SearchAnchor(
         anchor_en="moai easter island",
         terms_en=["rapa nui", "rano raraku"],
     )
-    out = agent._anchored_keywords(["statues", "rapa nui"])
+    out = anchored_keywords(session, ["statues", "rapa nui"])
     # L'ancre EN et ses termes passent en tête, dédupliqués (insensible à la casse).
     assert out[0] == "moai easter island"
     assert out[1:3] == ["rapa nui", "rano raraku"]
@@ -181,26 +201,29 @@ def test_anchored_keywords_prepends_english_terms() -> None:
 
 
 def test_anchored_keywords_noop_without_anchor() -> None:
-    agent = MediaAgent()
-    # Pas d'ancre résolue (ex. chemin dérivation) → keywords inchangés, pas de crash.
-    assert agent._anchored_keywords(["a", "b"]) == ["a", "b"]
+    session = MediaRunSession()
+    assert anchored_keywords(session, ["a", "b"]) == ["a", "b"]
 
 
 @pytest.mark.asyncio
 async def test_generate_validated_ai_image_api_failed(tmp_path: Path) -> None:
-    agent, ctx, segment, ai_cfg = _make_agent_ctx(tmp_path)
+    session, ctx, segment, ai_cfg = _make_agent_ctx(tmp_path)
     from agent.core.media_validation import MediaValidationBrief
 
     brief = MediaValidationBrief(min_relevance_score=60)
 
     with (
         patch(
-            "agent.agents.media_agent.ai_fallback_attempt_config",
+            "agent.skills.media.scenario_media_gap.ai_fallback_attempt_config",
             return_value=("flux_2_dev", 1, 1),
         ),
-        patch.object(MediaAgent, "_generate_ai_fallback", new=AsyncMock(return_value=None)),
+        patch(
+            "agent.skills.media_sources.ai.routing.generate_ai_fallback",
+            new=AsyncMock(return_value=None),
+        ),
     ):
-        result = await agent._generate_validated_ai_image(
+        result = await generate_validated_ai_image(
+            session,
             "prompt",
             tmp_path,
             ctx,
@@ -217,7 +240,7 @@ async def test_generate_validated_ai_image_api_failed(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_generate_validated_ai_image_validated_on_second_phase(tmp_path: Path) -> None:
-    agent, ctx, segment, ai_cfg = _make_agent_ctx(tmp_path)
+    session, ctx, segment, ai_cfg = _make_agent_ctx(tmp_path)
     ai_path = tmp_path / "ai.jpg"
     ai_path.write_bytes(b"jpg")
     ai_item = {
@@ -237,17 +260,24 @@ async def test_generate_validated_ai_image_validated_on_second_phase(tmp_path: P
 
     with (
         patch(
-            "agent.agents.media_agent.ai_fallback_attempt_config",
+            "agent.skills.media.scenario_media_gap.ai_fallback_attempt_config",
             return_value=("flux_2_dev", 1, 1),
         ),
         patch(
-            "agent.skills.media_sources.relevance_scorer.score_media_candidates",
+            "agent.skills.media_sources.ai.routing.score_media_candidates",
             new=AsyncMock(side_effect=fake_score),
         ),
-        patch.object(MediaAgent, "_generate_ai_fallback", new=AsyncMock(return_value=ai_item)),
-        patch.object(MediaAgent, "_upload_ai_candidate_temp", new=AsyncMock(return_value=None)),
+        patch(
+            "agent.skills.media_sources.ai.routing.generate_ai_fallback",
+            new=AsyncMock(return_value=ai_item),
+        ),
+        patch(
+            "agent.skills.media_sources.ai.routing.upload_ai_candidate_temp",
+            new=AsyncMock(return_value=None),
+        ),
     ):
-        result = await agent._generate_validated_ai_image(
+        result = await generate_validated_ai_image(
+            session,
             "prompt",
             tmp_path,
             ctx,
@@ -270,7 +300,7 @@ async def test_generate_validated_ai_image_diagram_blocks_forced_best_on_text_ar
     from agent.core.media_validation import MediaValidationBrief
     from agent.core.visual_beats import VisualBeat
 
-    agent, ctx, segment, ai_cfg = _make_agent_ctx(tmp_path)
+    session, ctx, segment, ai_cfg = _make_agent_ctx(tmp_path)
     ai_path = tmp_path / "ai.jpg"
     ai_path.write_bytes(b"jpg")
     ai_item = {
@@ -300,17 +330,24 @@ async def test_generate_validated_ai_image_diagram_blocks_forced_best_on_text_ar
 
     with (
         patch(
-            "agent.agents.media_agent.ai_fallback_attempt_config",
+            "agent.skills.media.scenario_media_gap.ai_fallback_attempt_config",
             return_value=("flux_2_dev", 1, 0),
         ),
         patch(
-            "agent.skills.media_sources.relevance_scorer.score_media_candidates",
+            "agent.skills.media_sources.ai.routing.score_media_candidates",
             new=AsyncMock(side_effect=fake_score),
         ),
-        patch.object(MediaAgent, "_generate_ai_fallback", new=AsyncMock(return_value=ai_item)),
-        patch.object(MediaAgent, "_upload_ai_candidate_temp", new=AsyncMock(return_value=None)),
+        patch(
+            "agent.skills.media_sources.ai.routing.generate_ai_fallback",
+            new=AsyncMock(return_value=ai_item),
+        ),
+        patch(
+            "agent.skills.media_sources.ai.routing.upload_ai_candidate_temp",
+            new=AsyncMock(return_value=None),
+        ),
     ):
-        result = await agent._generate_validated_ai_image(
+        result = await generate_validated_ai_image(
+            session,
             "prompt",
             tmp_path,
             ctx,
@@ -329,15 +366,13 @@ async def test_generate_validated_ai_image_diagram_blocks_forced_best_on_text_ar
 
 @pytest.mark.asyncio
 async def test_apply_ai_image_result_records_gap() -> None:
-    agent = MediaAgent()
-    agent._media_gaps = []
-    agent._segment_media_gaps = set()
-    agent._ai_images_used = 0
+    session = MediaRunSession()
     ctx = type("Ctx", (), {"channel_config": type("C", (), {"timezone": "Europe/Paris"})(), "channel_id": "x"})()
     segment = {"order": 2}
     selected: list[dict] = []
 
-    await agent._apply_ai_image_result(
+    await apply_ai_image_result(
+        session,
         AiImageResult(outcome="api_failed"),
         ctx=ctx,
         segment=segment,
@@ -347,6 +382,6 @@ async def test_apply_ai_image_result_records_gap() -> None:
         paid_attempts=3,
     )
 
-    assert len(agent._media_gaps) == 1
-    assert agent._media_gaps[0].segment_order == 2
+    assert len(session.media_gaps) == 1
+    assert session.media_gaps[0].segment_order == 2
     assert selected == []

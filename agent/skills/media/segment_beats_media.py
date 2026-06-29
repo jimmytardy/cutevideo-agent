@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from agent.agents.media_agent import MediaAgent
     from agent.core.media_validation import MediaValidationBrief
     from agent.core.orchestrator import PipelineContext
+    from agent.skills.media.run_session import MediaRunSession
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ _EXPLANATORY_TYPES = frozenset({
 
 
 async def synthesize_beat_ai_prompt(
-    agent: "MediaAgent",
+    session: "MediaRunSession",
     ctx: "PipelineContext",
     beat: VisualBeat,
     *,
@@ -60,7 +61,7 @@ async def synthesize_beat_ai_prompt(
         prompt_fr=beat.prompt,
         style_hint=beat.style_hint,
         phrase_anchor=beat.phrase_anchor,
-        api_key=getattr(agent, "_gemini_api_key", "") or None,
+        api_key=session.gemini_api_key or None,
         cache_dir=cache_dir,
     )
     return build_visual_prompt(
@@ -75,7 +76,7 @@ async def synthesize_beat_ai_prompt(
 
 
 async def synthesize_segment_ai_prompt(
-    agent: "MediaAgent",
+    session: "MediaRunSession",
     ctx: "PipelineContext",
     segment: dict[str, Any],
     keywords: list[str],
@@ -93,7 +94,7 @@ async def synthesize_segment_ai_prompt(
     if beats:
         beat = beats[0]
         prompt = await synthesize_beat_ai_prompt(
-            agent, ctx, beat, aspect_ratio=aspect_ratio, cache_dir=cache_dir
+            session, ctx, beat, aspect_ratio=aspect_ratio, cache_dir=cache_dir
         )
         return prompt, beat, beat.visual_type
 
@@ -111,7 +112,7 @@ async def synthesize_segment_ai_prompt(
         prompt_fr=subject_fr,
         style_hint="",
         phrase_anchor=str(segment.get("title") or ""),
-        api_key=getattr(agent, "_gemini_api_key", "") or None,
+        api_key=session.gemini_api_key or None,
         cache_dir=cache_dir,
     )
     prompt = build_visual_prompt(
@@ -151,7 +152,7 @@ class _BeatCoordination:
 
 
 async def _try_claim_pool_asset(
-    agent: "MediaAgent",
+    session: "MediaRunSession",
     *,
     beat: VisualBeat,
     segment: dict[str, Any],
@@ -176,7 +177,7 @@ async def _try_claim_pool_asset(
             video_subject=ctx.theme,
             channel_category=ctx.theme_category,
             min_score=min_score,
-            api_key=getattr(agent, "_gemini_api_key", "") or "",
+            api_key=session.gemini_api_key or "",
             output_dir=output_dir,
             segment_order=order,
         )
@@ -193,6 +194,7 @@ async def _try_claim_pool_asset(
 
 async def _process_single_beat(
     agent: "MediaAgent",
+    session: "MediaRunSession",
     ctx: "PipelineContext",
     segment: dict[str, Any],
     beat: VisualBeat,
@@ -214,12 +216,22 @@ async def _process_single_beat(
 ) -> list[MediaAsset]:
     from pathlib import Path
 
+    from agent.skills.media.asset_persistence import persist_beat_asset, persist_pool_candidate
+    from agent.skills.media.asset_resolver import anchored_keywords, search_segment_with_iterations, select_assets
+    from agent.skills.media.asset_validation import validate_single_asset
+    from agent.skills.media.segment_classic import generate_runway_clip
+    from agent.skills.media_sources.ai.routing import (
+        apply_ai_image_result,
+        can_generate_ai_image,
+        generate_validated_ai_image,
+    )
+
     beat_assets: list[MediaAsset] = []
     min_relevance = validation_brief.min_score_for_beat(order, beat)
 
     if lib_cfg.enabled and pool_assets and not getattr(ctx, "skip_media_pool_reuse", False):
         reused = await _try_claim_pool_asset(
-            agent,
+            session,
             beat=beat,
             segment=segment,
             pool_assets=pool_assets,
@@ -235,12 +247,12 @@ async def _process_single_beat(
     elif lib_cfg.enabled and pool_assets and getattr(ctx, "skip_media_pool_reuse", False):
         logger.info("Pool reuse désactivé (critique visuelle) — beat %d", beat.order)
 
-    beat_keywords = agent._anchored_keywords(_beat_keywords(beat, keywords))
+    beat_keywords = anchored_keywords(session, _beat_keywords(beat, keywords))
     video_target = _beat_video_target(ctx, beat, ms_cfg)
     allows_search = not is_derivation or getattr(ctx, "short_derivation_mode", None) != "reuse_pool_only"
     allows_ai = not is_derivation or getattr(ctx, "short_derivation_mode", None) == "full"
     source_plan = resolve_beat_sources(beat, segment, sources)
-    agent._relevance_log.append({
+    session.relevance_log.append({
         "segment_order": order,
         "beat_order": beat.order,
         "visual_type": beat.visual_type,
@@ -253,7 +265,8 @@ async def _process_single_beat(
         beat_sources = [s for s in beat_sources if s != "ai"]
     candidates: list[dict] = []
     if allows_search and not source_plan.skip_stock:
-        candidates = await agent._search_segment_with_iterations(
+        candidates = await search_segment_with_iterations(
+            session,
             ctx=ctx,
             segment={**segment, "search_keywords": beat_keywords},
             sources=sources,
@@ -269,8 +282,9 @@ async def _process_single_beat(
             validation_brief=validation_brief,
             order=order,
             beat=beat,
+            call_claude=agent._call_claude,
         )
-    selected = agent._select_assets(candidates, video_target, 1)
+    selected = select_assets(candidates, video_target, 1)
 
     runway_cfg = ctx.channel_config.runway
     is_hero_beat = beat.order == 1 and is_short_montage(ctx)
@@ -285,17 +299,18 @@ async def _process_single_beat(
         and allows_ai
     ):
         async with coord.runway_lock:
-            if agent._runway_clips_used < runway_cap:
-                agent._runway_clips_used += 1
+            if session.runway_clips_used < runway_cap:
+                session.runway_clips_used += 1
                 runway_reserved = True
         if runway_reserved:
             beat_dir = Path(output_dir) / f"beat_{beat.order:02d}"
             runway_prompt = f"{ctx.theme} — {beat.prompt[:120]}"
-            runway_item = await agent._generate_runway_clip(
-                runway_prompt, beat_dir, runway_cfg, ctx
+            runway_item = await generate_runway_clip(
+                session, runway_prompt, beat_dir, runway_cfg, ctx
             )
             if runway_item:
-                validated = await agent._validate_single_asset(
+                validated = await validate_single_asset(
+                    session,
                     runway_item,
                     ctx=ctx,
                     segment=segment,
@@ -307,27 +322,28 @@ async def _process_single_beat(
                     selected = [validated]
                 else:
                     async with coord.runway_lock:
-                        agent._runway_clips_used = max(0, agent._runway_clips_used - 1)
+                        session.runway_clips_used = max(0, session.runway_clips_used - 1)
                     runway_reserved = False
             else:
                 async with coord.runway_lock:
-                    agent._runway_clips_used = max(0, agent._runway_clips_used - 1)
+                    session.runway_clips_used = max(0, session.runway_clips_used - 1)
                 runway_reserved = False
 
     if not selected and ms_cfg.enable_ai_fallback and ai_cfg.enabled and allows_ai:
         beat_dir = Path(output_dir) / f"beat_{beat.order:02d}"
         ai_prompt = await synthesize_beat_ai_prompt(
-            agent, ctx, beat, aspect_ratio=aspect_ratio,
+            session, ctx, beat, aspect_ratio=aspect_ratio,
             cache_dir=beat_dir / "prompt_cache",
         )
         ai_slot_acquired = False
         async with coord.ai_lock:
-            if await agent._can_generate_ai_image(ctx, ai_cfg):
-                agent._ai_images_used += 1
+            if await can_generate_ai_image(session, ctx, ai_cfg):
+                session.ai_images_used += 1
                 ai_slot_acquired = True
         if ai_slot_acquired:
             try:
-                ai_result = await agent._generate_validated_ai_image(
+                ai_result = await generate_validated_ai_image(
+                    session,
                     ai_prompt,
                     beat_dir,
                     ctx,
@@ -341,7 +357,8 @@ async def _process_single_beat(
                     visual_type=beat.visual_type,
                 )
                 pending: list[dict] = []
-                await agent._apply_ai_image_result(
+                await apply_ai_image_result(
+                    session,
                     ai_result,
                     ctx=ctx,
                     segment=segment,
@@ -354,36 +371,46 @@ async def _process_single_beat(
                 selected = pending
                 if not pending:
                     async with coord.ai_lock:
-                        agent._ai_images_used = max(0, agent._ai_images_used - 1)
+                        session.ai_images_used = max(0, session.ai_images_used - 1)
             except Exception:
                 async with coord.ai_lock:
-                    agent._ai_images_used = max(0, agent._ai_images_used - 1)
+                    session.ai_images_used = max(0, session.ai_images_used - 1)
                 raise
 
     if selected:
         item = selected[0]
-        asset = await agent._persist_beat_asset(
-            ctx=ctx,
+        asset = await persist_beat_asset(
+            session,
+            ctx,
             item=item,
             segment_order=order,
             beat=beat,
             output_dir=Path(output_dir) / f"beat_{beat.order:02d}",
             generation_prompt=item.get("_generation_prompt") or beat.prompt,
+            media_iteration=agent._media_iteration(ctx),
         )
         beat_assets.append(asset)
         for extra in selected[1:]:
-            await agent._persist_pool_candidate(
-                ctx, extra, order, beat, Path(output_dir), lib_cfg.pool_min_score
+            await persist_pool_candidate(
+                session,
+                ctx,
+                extra,
+                order,
+                beat,
+                Path(output_dir),
+                lib_cfg.pool_min_score,
+                media_iteration=agent._media_iteration(ctx),
             )
     else:
         logger.warning("Beat %d segment %d : aucun média trouvé", beat.order, order)
-        agent._segment_media_gaps.add(order)
+        session.segment_media_gaps.add(order)
 
     return beat_assets
 
 
 async def process_segment_beats(
     agent: MediaAgent,
+    session: MediaRunSession,
     ctx: PipelineContext,
     segment: dict[str, Any],
     sources: list[str],
@@ -418,6 +445,7 @@ async def process_segment_beats(
     async def _run_beat(beat: VisualBeat) -> list[MediaAsset]:
         return await _process_single_beat(
             agent,
+            session,
             ctx,
             segment,
             beat,
@@ -453,7 +481,7 @@ async def process_segment_beats(
         for beat, result in zip(beats, results):
             if isinstance(result, Exception):
                 logger.warning("Beat %d segment %d échoué : %s", beat.order, order, result)
-                agent._segment_media_gaps.add(order)
+                session.segment_media_gaps.add(order)
                 continue
             assets.extend(result)
         assets.sort(key=lambda a: (a.segment_order or 0, a.beat_index or 0))

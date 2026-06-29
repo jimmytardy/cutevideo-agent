@@ -37,6 +37,7 @@ from api.models import (
     PipelineQueueStatusResponse,
     SegmentMontagePlanResponse,
     ProjectConfigUpdate,
+    ProjectCostResponse,
     ProjectCreate,
     ProjectResponse,
     PublishRequest,
@@ -424,6 +425,45 @@ async def list_critic_reports(
         .order_by(CriticReport.created_at.asc())
     )
     return [CriticReportResponse.model_validate(r) for r in result.scalars().all()]
+
+
+@router.get("/{project_id}/cost", response_model=ProjectCostResponse)
+async def get_project_cost(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ProjectCostResponse:
+    from agent.core.channel_config import resolve_channel_config
+    from agent.core.project_cost import project_cost_breakdown
+    from agent.core.quality_guardrails import resolve_effective_quality_iterations
+    from agent.core.subscription import get_user_subscription_limits
+
+    project = await get_user_project(db, project_id, current_user)
+    channel = await get_user_channel(db, project.channel_id, current_user)
+    limits = await get_user_subscription_limits(db, current_user.id)
+    cfg = resolve_channel_config(channel, subscription_limits=limits)
+    max_iterations = resolve_effective_quality_iterations(
+        project_config=project.config or {},
+        channel_quality_max=cfg.quality_max_iterations,
+        channel_critic_max=cfg.max_critic_iterations,
+        limits=limits,
+    )
+    breakdown = await project_cost_breakdown(
+        project_id,
+        cap_usd=cfg.cost_max_per_video_usd,
+        max_iterations=max_iterations,
+    )
+    return ProjectCostResponse(
+        project_id=breakdown.project_id,
+        total_usd=breakdown.total_usd,
+        cap_usd=breakdown.cap_usd,
+        iterations_used=breakdown.iterations_used,
+        max_iterations=breakdown.max_iterations,
+        stop_reason=breakdown.stop_reason,
+        by_agent=[row.model_dump() for row in breakdown.by_agent],
+        by_iteration=[row.model_dump() for row in breakdown.by_iteration],
+        elapsed_s=breakdown.elapsed_s,
+    )
 
 
 @router.post("/{project_id}/stop", status_code=status.HTTP_202_ACCEPTED)

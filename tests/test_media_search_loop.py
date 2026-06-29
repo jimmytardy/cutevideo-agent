@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from agent.agents.media_agent import MediaAgent
+from agent.skills.media.asset_resolver import dedupe_and_filter, select_assets
 from agent.core.media_validation import MediaValidationBrief
 
 
@@ -12,7 +12,7 @@ def test_dedupe_and_filter_excludes_rejected_urls() -> None:
         {"url": "http://b.jpg", "asset_type": "image"},
         {"url": "http://c.jpg", "asset_type": "image"},
     ]
-    filtered = MediaAgent._dedupe_and_filter(
+    filtered = dedupe_and_filter(
         candidates, 0, exclude_urls={"http://b.jpg"}
     )
     assert len(filtered) == 2
@@ -25,7 +25,7 @@ def test_select_assets_prioritizes_video() -> None:
         {"asset_type": "video", "url": "vid1"},
         {"asset_type": "image", "url": "img2"},
     ]
-    selected = MediaAgent._select_assets(candidates, video_target=1, total_needed=2)
+    selected = select_assets(candidates, video_target=1, total_needed=2)
     assert selected[0]["asset_type"] == "video"
     assert len(selected) == 2
 

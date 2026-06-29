@@ -733,6 +733,39 @@
       }
     ]
   },
+  "quality": {
+    "max_iterations": 3
+  },
+  "cost": {
+    "max_per_video_usd": 8.0
+  },
+  "pricing": {
+    "claude-opus-4-5": {
+      "input_per_mtok_usd": 15.0,
+      "output_per_mtok_usd": 75.0
+    },
+    "claude-sonnet-4-5": {
+      "input_per_mtok_usd": 3.0,
+      "output_per_mtok_usd": 15.0
+    },
+    "gemini-2.5-pro": {
+      "input_per_mtok_usd": 1.25,
+      "output_per_mtok_usd": 10.0
+    },
+    "gemini-2.5-flash": {
+      "input_per_mtok_usd": 0.15,
+      "output_per_mtok_usd": 0.6
+    },
+    "gemini-2.5-flash-lite": {
+      "input_per_mtok_usd": 0.075,
+      "output_per_mtok_usd": 0.3
+    },
+    "gemini-3.5-flash": {
+      "input_per_mtok_usd": 0.15,
+      "output_per_mtok_usd": 0.6
+    },
+    "gemini-video-per-minute-usd": 0.05
+  },
   "audio_mastering": {
     "enabled": true,
     "preset": "voice-studio",

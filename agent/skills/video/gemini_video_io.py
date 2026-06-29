@@ -8,6 +8,7 @@ from typing import Any
 
 from agent.core.json_parse import parse_gemini_response
 from agent.core.llm_retry import retry_transient_sync
+from agent.core.llm_usage import LlmUsageRecord, estimate_gemini_video_cost_usd, usage_from_gemini
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,8 @@ def call_gemini_video_json(
     *,
     response_schema: dict[str, Any],
     label: str,
-) -> dict[str, Any]:
+    duration_s: float = 0.0,
+) -> tuple[dict[str, Any], LlmUsageRecord]:
     logger.info("Gemini : analyse vidéo avec %s (%s)", model_name, label)
     response = retry_transient_sync(
         lambda: client.models.generate_content(
@@ -54,7 +56,15 @@ def call_gemini_video_json(
         ),
         label=f"{label}/{model_name}",
     )
-    return parse_gemini_response(response, model_name)
+    usage = usage_from_gemini(response, model_name)
+    if usage.cost_usd <= 0 and duration_s > 0:
+        usage = LlmUsageRecord(
+            model=model_name,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            cost_usd=estimate_gemini_video_cost_usd(duration_s, model_name),
+        )
+    return parse_gemini_response(response, model_name), usage
 
 
 async def analyze_video_json_with_gemini(
@@ -76,7 +86,7 @@ async def analyze_video_json_with_gemini(
             "google-genai non installé — run: pip install google-genai"
         ) from exc
 
-    def _upload_and_analyze() -> dict[str, Any]:
+    def _upload_and_analyze() -> tuple[dict[str, Any], LlmUsageRecord]:
         client = genai.Client(api_key=api_key)
         logger.info("Gemini : upload vidéo %s", video_path)
         uploaded = client.files.upload(
@@ -94,6 +104,7 @@ async def analyze_video_json_with_gemini(
                 prompt,
                 response_schema=response_schema,
                 label=label,
+                duration_s=0.0,
             )
         except Exception as primary_exc:
             if is_quota_error(primary_exc) and fallback_model and fallback_model != model_name:
@@ -111,6 +122,7 @@ async def analyze_video_json_with_gemini(
                     prompt,
                     response_schema=response_schema,
                     label=label,
+                    duration_s=0.0,
                 )
             raise
         finally:
@@ -119,4 +131,5 @@ async def analyze_video_json_with_gemini(
             except Exception:
                 pass
 
-    return await asyncio.to_thread(_upload_and_analyze)
+    data, _usage = await asyncio.to_thread(_upload_and_analyze)
+    return data
