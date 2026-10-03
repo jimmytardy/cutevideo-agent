@@ -15,6 +15,7 @@ from agent.core.short_derivation import (
     derivation_iteration,
     native_video_type,
 )
+from agent.core.subscription import SubscriptionLimits
 
 
 def test_short_derivation_config_defaults() -> None:
@@ -68,7 +69,7 @@ async def test_mixed_hybrid_runs_native_and_crop_pipelines() -> None:
     ), patch(
         "agent.core.orchestrator._raise_if_cancelled", new_callable=AsyncMock
     ), patch(
-        "agent.core.orchestrator.resolve_user_limits", new_callable=AsyncMock, return_value=None
+        "agent.core.orchestrator.resolve_user_limits", new_callable=AsyncMock, return_value=SubscriptionLimits()
     ), patch(
         "agent.core.orchestrator.can_start_pipeline", new_callable=AsyncMock, return_value=True
     ), patch(

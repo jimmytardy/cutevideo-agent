@@ -53,6 +53,7 @@ async def test_run_ffmpeg_kills_subprocess_on_cancel() -> None:
             [
                 "ffmpeg",
                 "-y",
+                "-re",
                 "-f",
                 "lavfi",
                 "-i",

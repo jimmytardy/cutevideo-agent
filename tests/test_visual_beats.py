@@ -128,6 +128,11 @@ def test_registry_has_many_types() -> None:
     assert is_known_visual_type("meme_template")
 
 
+class _LongCtx:
+    is_short_project = False
+    derivation_short_index = None
+
+
 class _MsCfg:
     def __init__(self, prefer_video: bool) -> None:
         self.prefer_video = prefer_video
@@ -142,8 +147,8 @@ def test_beat_video_target_prefers_stock_video_for_documentary() -> None:
         visual_type="documentary_photo",
         prompt="bird in rainforest",
     )
-    assert _beat_video_target(beat, _MsCfg(prefer_video=True)) == 1
-    assert _beat_video_target(beat, _MsCfg(prefer_video=False)) == 0
+    assert _beat_video_target(_LongCtx(), beat, _MsCfg(prefer_video=True)) == 1
+    assert _beat_video_target(_LongCtx(), beat, _MsCfg(prefer_video=False)) == 0
 
 
 def test_beat_video_target_skips_diagrams() -> None:
@@ -155,4 +160,4 @@ def test_beat_video_target_skips_diagrams() -> None:
         visual_type="scientific_diagram",
         prompt="feather cross section",
     )
-    assert _beat_video_target(beat, _MsCfg(prefer_video=True)) == 0
+    assert _beat_video_target(_LongCtx(), beat, _MsCfg(prefer_video=True)) == 0

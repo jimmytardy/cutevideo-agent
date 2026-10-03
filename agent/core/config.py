@@ -113,7 +113,7 @@ class Settings(BaseSettings):
     pipeline_queue_dequeue_max_attempts: int = 50
     pipeline_queue_blocked_backoff_seconds: int = 30
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
     @field_validator("google_gemini_api_key")
     @classmethod

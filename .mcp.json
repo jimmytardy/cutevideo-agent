@@ -2,8 +2,11 @@
   "mcpServers": {
     "graphify": {
       "type": "stdio",
-      "command": "/home/jimmy/Perso/cutevideo-agent/.venv/bin/python3",
-      "args": ["-m", "graphify.serve", "graphify-out/graph.json"]
+      "command": "uv",
+      "args": [
+        "tool", "run", "--from", "graphifyy", "--with", "mcp",
+        "python", "-m", "graphify.serve", "graphify-out/graph.json"
+      ]
     }
   }
 }
