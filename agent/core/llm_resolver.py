@@ -23,10 +23,27 @@ from agent.core.llm_usage import (
 logger = logging.getLogger(__name__)
 
 # Nombre de relances de continuation lorsqu'une réponse est coupée par max_tokens.
-# Chaque continuation reprend là où le modèle s'est arrêté (prefill Anthropic /
-# tour de continuation Gemini) ; au-delà du cap on renvoie le texte accumulé en
+# Chaque continuation reprend là où le modèle s'est arrêté (tour de continuation
+# utilisateur Anthropic / Gemini) ; au-delà du cap on renvoie le texte accumulé en
 # best-effort (le filet de réparation JSON côté agent prend le relais).
 MAX_CONTINUATIONS = 4
+
+# Claude Opus 5.x / Sonnet 5.x / Fable 5.x réfléchissent toujours (réflexion
+# adaptative non désactivable) et cette réflexion consomme `max_tokens`. Les
+# budgets de `agent_config.json` sont calibrés pour la seule réponse : on ajoute
+# cette marge pour que la réflexion ne tronque pas la sortie.
+ANTHROPIC_THINKING_HEADROOM_TOKENS = 16000
+_ALWAYS_THINKING_PREFIXES = ("claude-opus-5", "claude-sonnet-5", "claude-fable-5")
+# Modèles acceptant le repli serveur sur refus des classifieurs (`fallbacks: "default"`).
+_SERVER_FALLBACK_MODELS = frozenset(
+    {"claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-fable-5-1"}
+)
+SERVER_FALLBACK_BETA = "server-side-fallback-2026-07-01"
+CONTINUATION_PROMPT = (
+    "Ta réponse précédente a été interrompue (limite de longueur atteinte). "
+    "Reprends exactement à l'endroit où elle s'arrête, sans rien répéter ni ajouter "
+    "de préambule : ta sortie sera concaténée telle quelle à la précédente."
+)
 
 LlmProvider = Literal["gemini", "anthropic"]
 LlmTier = Literal["free", "paid"]
@@ -320,26 +337,45 @@ def _anthropic_text(response: Any) -> str:
     )
 
 
+def _anthropic_request_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Adapte la requête au modèle : marge de réflexion et repli serveur sur refus."""
+    model = str(kwargs["model"])
+    out = dict(kwargs)
+    if model.startswith(_ALWAYS_THINKING_PREFIXES):
+        out["max_tokens"] = int(kwargs["max_tokens"]) + ANTHROPIC_THINKING_HEADROOM_TOKENS
+    if model in _SERVER_FALLBACK_MODELS:
+        out["betas"] = [SERVER_FALLBACK_BETA]
+        out["fallbacks"] = "default"
+    return out
+
+
+async def _anthropic_create(client: Any, kwargs: dict[str, Any]) -> Any:
+    """Appel en streaming (évite les timeouts HTTP avec les gros `max_tokens`)."""
+    async with client.beta.messages.stream(**kwargs) as stream:
+        return await stream.get_final_message()
+
+
 async def _anthropic_complete(
     client: Any, kwargs: dict[str, Any], agent_name: str, model: str
 ) -> str:
     """Appel Anthropic avec continuation automatique si coupé par max_tokens.
 
-    La continuation utilise le *prefill* : on renvoie le texte déjà produit comme
-    dernier tour assistant, et l'API poursuit exactement où elle s'était arrêtée.
+    Le prefill assistant est refusé (400) par les modèles actuels : la
+    continuation renvoie le texte déjà produit comme tour assistant, suivi d'un
+    tour utilisateur demandant de reprendre exactement où il s'arrête.
     """
+    kwargs = _anthropic_request_kwargs(kwargs)
     base_messages = list(kwargs["messages"])
     usage_records: list[LlmUsageRecord] = []
     response = await retry_transient_async(
-        lambda: client.messages.create(**kwargs), label=f"{agent_name}/anthropic"
+        lambda: _anthropic_create(client, kwargs), label=f"{agent_name}/anthropic"
     )
     usage_records.append(usage_from_anthropic(response, model))
     text = _anthropic_text(response)
 
     continuations = 0
     while response.stop_reason == "max_tokens" and continuations < MAX_CONTINUATIONS:
-        text = text.rstrip()  # le contenu assistant prefill ne peut finir par un blanc
-        if not text:
+        if not text.strip():
             break
         continuations += 1
         logger.warning(
@@ -350,15 +386,26 @@ async def _anthropic_complete(
         )
         cont_kwargs = {
             **kwargs,
-            "messages": [*base_messages, {"role": "assistant", "content": text}],
+            "messages": [
+                *base_messages,
+                {"role": "assistant", "content": text},
+                {"role": "user", "content": CONTINUATION_PROMPT},
+            ],
         }
         response = await retry_transient_async(
-            lambda: client.messages.create(**cont_kwargs), label=f"{agent_name}/anthropic"
+            lambda: _anthropic_create(client, cont_kwargs), label=f"{agent_name}/anthropic"
         )
         usage_records.append(usage_from_anthropic(response, model))
         text += _anthropic_text(response)
 
-    if response.stop_reason == "max_tokens":
+    if response.stop_reason == "refusal":
+        details = getattr(response, "stop_details", None)
+        logger.error(
+            "Réponse %s refusée par les classifieurs (catégorie=%s) — texte partiel renvoyé",
+            agent_name,
+            getattr(details, "category", None),
+        )
+    elif response.stop_reason == "max_tokens":
         logger.error(
             "Réponse %s toujours tronquée après %d continuations — texte best-effort renvoyé",
             agent_name,

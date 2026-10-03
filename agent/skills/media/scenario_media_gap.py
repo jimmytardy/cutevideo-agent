@@ -126,7 +126,7 @@ async def adapt_scenario_for_media_gaps(
             prompt,
             system=ADAPT_SYSTEM,
             max_tokens=resolve_max_tokens("scenario_agent"),
-            model_override="claude-sonnet-4-5",
+            model_override="claude-sonnet-5-5",
         )
     try:
         data = parse_json_text(raw, "scenario_media_gap", repair_fn=None)

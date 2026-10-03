@@ -18,8 +18,8 @@ from agent.core.llm_resolver import (
 def test_resolve_gemini_model_rejects_claude_override() -> None:
     model = _resolve_gemini_model(
         "scenario_media_gap",
-        pref=AgentLlmPreference(provider="gemini", model="claude-sonnet-4-5", tier="free"),
-        model_override="claude-sonnet-4-5",
+        pref=AgentLlmPreference(provider="gemini", model="claude-sonnet-5-5", tier="free"),
+        model_override="claude-sonnet-5-5",
         tier="free",
     )
     assert model.startswith("gemini-")
@@ -78,12 +78,12 @@ async def test_resolve_llm_call_claude_override_with_gemini_user_key() -> None:
                 session,
                 fake_user,  # type: ignore[arg-type]
                 "scenario_media_gap",
-                model_override="claude-sonnet-4-5",
+                model_override="claude-sonnet-5-5",
             )
 
     assert cfg.provider == "gemini"
     assert cfg.model.startswith("gemini-")
-    assert cfg.model != "claude-sonnet-4-5"
+    assert cfg.model != "claude-sonnet-5-5"
 
 
 @pytest.mark.asyncio
@@ -116,8 +116,8 @@ async def test_resolve_llm_call_claude_override_with_anthropic_key() -> None:
                 session,
                 FakeUser(),  # type: ignore[arg-type]
                 "scenario_media_gap",
-                model_override="claude-sonnet-4-5",
+                model_override="claude-sonnet-5-5",
             )
 
     assert cfg.provider == "anthropic"
-    assert cfg.model == "claude-sonnet-4-5"
+    assert cfg.model == "claude-sonnet-5-5"

@@ -59,7 +59,7 @@ Tests are in `tests/` and use `pytest-asyncio`. No mocking of the database — t
 ### God nodes (most connected abstractions)
 
 - `Channel` — top-level entity; every pipeline, publication, and config is scoped to a channel
-- `BaseAgent` — abstract base for all 12 agents; holds the Anthropic client, AgentRun DB logging, and learning context injection
+- `BaseAgent` — abstract base for all 27 agents (`agent/agents/`); AgentRun DB logging, LLM calls via `call_llm()`, and learning context injection
 - `Orchestrator` — sequences the creation pipeline for one project; calls agents in order and gates on `CriticAgent` score
 - `ChannelRuntimeConfig` — Pydantic model resolved by `resolve_channel_config()` from `Channel.config` JSON + `data/agent_config.json` defaults; consumed by every agent
 - `resolve_channel_config()` (agent/core/channel_config.py:181) — the single merge point between per-channel DB config and global defaults
@@ -92,12 +92,14 @@ ResearchAgent → OutlineAgent → ScenarioAgent → [FactCheckerAgent, HookOpti
 ### Agent structure
 
 Every agent extends `BaseAgent` (agent/core/base_agent.py):
-- Constructor instantiates `anthropic.AsyncAnthropic`
+- LLM calls go through `_call_claude()` → `call_llm()` (agent/core/llm_resolver.py), which picks the provider per user: **Gemini by default** (platform Vertex AI / API key), Anthropic only when the user has saved their own Anthropic key and chose a `claude-*` model
 - `start_run()` / `end_run()` / `fail_run()` record an `AgentRun` row in DB
 - `run(input_data)` is the only abstract method
 - Learning context is injected via `load_channel_context()` and compacted via `compact_learning_context()`
 
-LLM model and token limits are resolved per-agent from `data/agent_config.json` → `llm.agent_models` by `resolve_model()` / `resolve_max_tokens()` in `agent/core/llm_config.py`. Default model: `claude-opus-4-5`; economy tier: `claude-sonnet-4-5`.
+LLM model and token limits are resolved per-agent from `data/agent_config.json` → `llm.agent_models` by `resolve_model()` / `resolve_max_tokens()` in `agent/core/llm_config.py`. Default model: `claude-opus-5-5`; economy tier: `claude-sonnet-5-5`. The selectable Anthropic models live in `ANTHROPIC_TEXT_MODELS` (agent/core/agent_llm_constraints.py) and `dashboard/lib/agentLlm.ts`; stored user preferences naming a model outside that list fall back to its first entry.
+
+Anthropic calls (`_anthropic_complete()` in llm_resolver.py) stream via `client.beta.messages.stream`. Opus/Sonnet/Fable 5.x always think and thinking consumes `max_tokens`, so `ANTHROPIC_THINKING_HEADROOM_TOKENS` is added on top of the per-agent budget; those models also get the server-side refusal fallback (`fallbacks: "default"`). **Never use an assistant prefill** (400 on current models) — truncated answers are continued with a user turn (`CONTINUATION_PROMPT`). No `temperature`/`top_p` on current Claude models either (the `temperature=` calls in the codebase are all Gemini).
 
 ### Channel config layering
 

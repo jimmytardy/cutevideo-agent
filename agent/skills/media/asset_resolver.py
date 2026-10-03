@@ -207,7 +207,7 @@ async def llm_refined_keywords(
         'Retourne UNIQUEMENT JSON : {"queries": [["kw1","kw2"], ...]}'
     )
     try:
-        raw = await call_claude(prompt, model="claude-sonnet-4-5", max_tokens=256)
+        raw = await call_claude(prompt, model="claude-sonnet-5-5", max_tokens=256)
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
         data = json.loads(raw)
@@ -236,7 +236,7 @@ async def llm_alternative_keywords(
         'Retourne UNIQUEMENT JSON : {"queries": [["kw1","kw2"], ...]}'
     )
     try:
-        raw = await call_claude(prompt, model="claude-sonnet-4-5", max_tokens=256)
+        raw = await call_claude(prompt, model="claude-sonnet-5-5", max_tokens=256)
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
         data = json.loads(raw)

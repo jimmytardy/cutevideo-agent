@@ -279,8 +279,8 @@ export const GEMINI_SEARCH_FREE_MODELS = [
 export const GEMINI_SEARCH_PAID_MODELS = GEMINI_PAID_MODELS
 
 export const ANTHROPIC_MODELS = [
-  { value: 'claude-opus-4-5', label: 'Claude Opus 4.5' },
-  { value: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5' },
+  { value: 'claude-opus-5-5', label: 'Claude Opus 5.5' },
+  { value: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5' },
   { value: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5' },
 ] as const
 

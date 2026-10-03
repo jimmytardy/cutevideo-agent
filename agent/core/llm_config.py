@@ -10,8 +10,8 @@ from agent.core.config import load_agent_config
 if TYPE_CHECKING:
     from agent.core.learning_context import ChannelContextSnapshot
 
-DEFAULT_MODEL = "claude-opus-4-5"
-ECONOMY_MODEL = "claude-sonnet-4-5"
+DEFAULT_MODEL = "claude-opus-5-5"
+ECONOMY_MODEL = "claude-sonnet-5-5"
 DEFAULT_MAX_TOKENS = 4096
 DEFAULT_ENGAGEMENT_WEEKDAYS = [0, 3]
 DEFAULT_PLANNER_LLM_WEEKDAYS = [0, 3]
