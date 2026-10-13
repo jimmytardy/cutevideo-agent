@@ -11,6 +11,7 @@ sous-titres refaits, charte d'animation + 5 modèles, prompts recalibrés. Gén�
 | # | Sujet | Version | Score | Analyse | Durée | Rendu | Mémoire min | Chemin |
 |---|---|---|---|---|---|---|---|---|
 | baseline | Pourquoi la Lune s'éloigne de la Terre | v1 → v2 | 79 → 85 (approuvée, ancienne grille) | critique Claude (frames) | 30,9 s | ~6 min | 1,13 Go | `~/.cache/cutevideo/optim/baseline_lune/renders/v2.mp4` |
+| g4 | Pourquoi la Lune s'éloigne de la Terre (2e passage, correctifs 1-16) | v1 → v2 | 80 → **85** (approuvée) | `analyze` claude | 42,1 s | 41 min au total | 2,8 Go dispo | `~/.cache/cutevideo/optim/runs/g4_lune/renders/v2.mp4` |
 | g3 | Les 10 jours qui n'ont jamais existé (1582, histoire + chiffre) | v1 → v2 | 81 → **86** (approuvée) | `analyze` claude | 43,5 s | 43 min au total | 2,7 Go dispo | `~/.cache/cutevideo/optim/runs/g3_1582/renders/v2.mp4` |
 | g2 | Le paradoxe des anniversaires (concept abstrait) | v1 → v2 | 77 → **85** (approuvée) | `analyze` claude | 41,8 s | 57 min au total | 2,8 Go dispo | `~/.cache/cutevideo/optim/runs/g2_anniv/renders/v2.mp4` |
 | g1 | Pourquoi la Lune s'éloigne de la Terre (nouvelle chaîne) | v1 → v2 | 81 → **86** (approuvée, grille virale) | `analyze` claude | 42,5 s | 42 min au total (rendu 2 min) | 1,9 Go dispo | `~/.cache/cutevideo/optim/runs/g1_lune/renders/v2.mp4` |
@@ -49,6 +50,14 @@ lendemain, le 15 ! » (Thérèse d'Avila, exact), Jules César et ses 11 minutes
 « À votre avis… comment ? » (emphase vocale utilisée), carte (France décembre 1582, Angleterre 1752), fin en
 boucle sur le calendrier. v1 : icônes trop petites et grands vides (encore) → ajout d'une alerte chiffrée
 « scène vide » / « icône petite » dans le kit (changement 16).
+
+g4 en clair : nouvel angle (fin des éclipses totales, journées de 22 h il y a 400 Ma), 14 plans (3,1 coupes/10 s
+contre 0,9-1,6 en g1), objets nettement plus grands, -14,4 LUFS. Le 1er jet ne progresse pas en score (80 contre
+81 pour g1) : la critique relève des défauts plus fins (zoom caméra qui sort le contenu, étiquette « up » qui
+traverse les sous-titres, boucle visuelle moins exacte). **Les scores de la critique sont relatifs** (même modèle,
+exigence qui suit la qualité) : les mesures `analyze` et la lecture des planches sont plus fiables pour comparer.
+Le journal de g4 montre aussi que le monteur **recevait les `zone_warnings` mais en corrigeait peu**, et que les
+titres du kit débordaient à x 1020 par construction (ajustés à 960 px centrés) → correctifs 18-20.
 
 ## Changements (quoi, pourquoi, effet mesuré)
 1. **`python -m studio.tools analyze`** (`studio/analyze.py`) — Gemini d'abord, repli Claude automatique :
@@ -100,6 +109,14 @@ boucle sur le calendrier. v1 : icônes trop petites et grands vides (encore) →
     par les éléments (< 28 % → alerte) et signale les icônes isolées < 170 px. C'était le défaut n° 1 des
     critiques v1 de g1, g2 et g3 malgré la règle écrite « remplir l'écran ».
 17. Voix : nombres en chiffres dans `subtitles.txt` (« 23 », « 50,7 % ») — l'alignement Whisper le gère.
+
+18. Kit : titres, textes et compteurs ajustés à 820 px de large (débordaient jusqu'à x 1020) ; alerte « droite »
+    dès x 970 (règle x ≤ 960) ; faux positif « icône 0 px » retiré ; alerte texte recouvert par une icône.
+19. Contrôle des zones **échantillonné toutes les 0,5 s** pendant le rendu (et plus seulement à la dernière
+    image) : les zooms caméra et entrées « up » sortaient le contenu en cours de route.
+20. Monteur : chaque `zone_warnings` se corrige avant le plan suivant ; hook en 2 plans (1re coupe vers
+    1,5-2,2 s, contre 3,4-4,1 s mesurés sur g1-g4 et 2,4 s dans les références).
+21. Sous-titres : espace élargie entre mots (`\h`, les mots se collaient) et espace insécable avant ? ! : ;.
 
 ## Choix rejetés
 - Capture d'écran CDP (`Page.captureScreenshot optimizeForSpeed`) pour accélérer le rendu des animations :
