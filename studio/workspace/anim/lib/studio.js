@@ -40,6 +40,13 @@
     return n;
   }
 
+  // Image d'icône : une icône inconnue fait échouer le rendu avec un message clair (au lieu d'un vide).
+  function iconImage(name, size, parent, extra) {
+    const img = el("image", Object.assign({href: `lib/icons/${name}.svg`, x: -size / 2, y: -size / 2, width: size, height: size}, extra || {}), parent);
+    img.addEventListener("error", () => { throw new Error(`icone inconnue : ${name} (liste : lib/icons/INDEX.txt)`); });
+    return img;
+  }
+
   function injectFonts() {
     if (document.getElementById("studio-fonts")) return;
     const st = document.createElement("style");
@@ -176,7 +183,7 @@
     icon(name, o = {}) {
       const g = el("g", {});
       const size = o.size || 400;
-      el("image", {href: `lib/icons/${name}.svg`, x: -size / 2, y: -size / 2, width: size, height: size, filter: o.shadow === false ? "" : "url(#shadow)"}, g);
+      iconImage(name, size, g, {filter: o.shadow === false ? "" : "url(#shadow)"});
       if (o.flip) g.firstChild.setAttribute("transform", "scale(-1 1)");
       return this._add(g, o);
     }
@@ -241,7 +248,7 @@
       const len = (this.defs.appendChild(path), path.getTotalLength());
       const g = el("g", {});
       const size = o.size || 160;
-      el("image", {href: `lib/icons/${name}.svg`, x: -size / 2, y: -size / 2, width: size, height: size}, g);
+      iconImage(name, size, g);
       const it = this._add(g, Object.assign({enter: "fade", dur: o.dur || 1.5}, o), (t, it) => {
         const k = E.inOut((t - it.at) / it.dur);
         const pt = path.getPointAtLength(len * k);
@@ -350,7 +357,7 @@
       for (let i = 0; i < count; i++) {
         const cx = -w / 2 + (i % cols) * (size + gap) + size / 2, cy = -h / 2 + Math.floor(i / cols) * (size + gap) + size / 2;
         const c = el("g", {}, g);
-        el("image", {href: `lib/icons/${name}.svg`, x: -size / 2, y: -size / 2, width: size, height: size}, c);
+        iconImage(name, size, c);
         cells.push({c, cx, cy, on: i < lit});
       }
       const stagger = o.stagger === undefined ? Math.min(0.08, 1.6 / Math.max(count, 1)) : o.stagger;

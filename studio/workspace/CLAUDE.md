@@ -57,10 +57,12 @@ lit})` (tableau d'unités : 25 crânes = 25 morts), `gauge({label, from, to})` (
 permanent ; descends alors le titre à `y: 430`), `circle`, `rect`, `map({center: [lon, lat], mapScale,
 highlight: {"France": "accent"}, points: [{lon, lat, label}], route: [[lon, lat], …]})` (inclure avant studio.js :
 `lib/d3.min.js`, `lib/topojson-client.min.js`, `lib/world-110m.js`), `custom((g, el, theme) => update)` pour du
-SVG libre. **Icônes** (`lib/icons/<nom>.svg`, ~200, Glob pour la liste) : earth, moon, sun, volcano, rocket,
+SVG libre. **Icônes** (`lib/icons/<nom>.svg`, ~350 : **liste complète en un seul Read de
+`anim/lib/icons/INDEX.txt`**, pas de Glob ; une icône inconnue fait échouer le rendu) : earth, moon, sun, volcano, rocket,
 atom, dna, brain, heart, skull, person, scientist, king, soldier, money, chart_up, clock, calendar, factory,
 radioactive, fire, drop, wave, snowflake, tree, house, car, ship, plane, bike, fish, whale, bacteria, virus,
-thinking, shocked, mind_blown, warning, check, cross, question, bomb, explosion, lightning, magnifier…
+thinking, shocked, mind_blown, warning, check, cross, question, bomb, explosion, lightning, magnifier, hand,
+ruler, scissors, mirror, cake, dice, balance, chain, thought, speech…
 Polices : Poppins (déjà chargée). `window.renderFrame` est posé par la scène : rien d'autre à faire.
 
 ## Droits des médias

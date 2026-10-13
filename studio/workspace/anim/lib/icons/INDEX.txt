@@ -1,0 +1,26 @@
+# Icônes du kit (Noto Emoji, Apache 2.0) : Studio.icon("<nom>") / s.units("<nom>", n) / s.travel("<nom>", …)
+abacus alien ambulance anatomical_heart anchor angry ant apple astronaut atom axe baby bacteria balance 
+balloon banana bandage bank bar_chart bat battery beach bear bee beer bell bike biohazard bird blood bomb 
+bone book books boy brain bread brick bridge briefcase broccoli bulb burger butterfly cactus cake calendar 
+camel camera candle candy car carrot castle cat chain chart_down chart_up check cheese chicken child church 
+cigarette city clap classical_building clipboard clock cloud coffee coin cold collision comet compass 
+computer construction cook cool corn cow crab credit_card crescent crocodile cross crowd crown crying 
+crystal_ball dashing desert detective dice dinosaur dizzy dna doctor dog dollar door down_arrow drop eagle 
+ear earth earth_americas earth_asia egg elephant euro exclamation explosion eye eyes factory family farmer 
+fire fireworks first_quarter fish flag flashlight flower fog footprints fox frog fuel gamepad gear gem ghost 
+gift giraffe girl globe glowing_star graduation green_circle guitar hammer hand handshake headphones heart 
+helicopter hole honey horse hospital hot hourglass hourglass_done house hundred hut ice infinity island 
+jellyfish judge key king lab_coat ladder leaf lightning lightning_cloud link lion lizard lock lungs 
+magic_wand magnet magnifier mail man map mask meat medal megaphone memo microbe microphone microscope milk 
+milky_way mind_blown mirror moai money monkey moon mosquito mountain mountain_snow mouse muscle mushroom 
+music nail_polish national_park new_moon newspaper night_city no_entry nose ocean_wave octopus oil old_man 
+old_woman owl package palm party pencil penguin person petri phone pig pill pill_bottle pilot pin pizza plane 
+plant plug point_right point_up police_car poop prohibited pushpin puzzle pyramid question rabbit radioactive 
+rain rainbow rat receipt recycle red_circle rice right_arrow ring robot rock rocket rose ruler runner 
+sailboat salt satellite satellite_dish saturn sauropod school scientist scissors scroll seedling shark sheep 
+shield ship shocked shopping sick skull sleep sleeping_bed smile snail snake snowflake snowman soap soccer 
+soda soldier sos sparkles speaker speech spider stadium star statue stethoscope stopwatch sun sun_cloud 
+sunflower sunrise sweat swimmer sword syringe target teacher telescope tent test_tube thermometer 
+thermometer_face thinking thought thumbs_down thumbs_up ticket tiger toilet tokyo_tower tooth tornado train 
+tree trex triangle_ruler trophy truck turtle tv ufo umbrella up_arrow virus volcano warning watch water_drop 
+water_wave wave wave_hand whale wind wine wolf woman wood worker worm wrench x_ray zzz 
