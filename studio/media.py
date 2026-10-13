@@ -328,7 +328,7 @@ async def loudness(path: Path) -> float | None:
 # Repères des zones (planches d'animation) : bande des sous-titres et colonne d'icônes TikTok, à l'échelle tuile.
 _GUIDES = (
     f"drawbox=x=0:y={int(1220 * TILE_H / 1920)}:w=iw:h={int(140 * TILE_H / 1920)}:color=red@0.25:t=fill,"
-    f"drawbox=x={int(990 * TILE_W / 1080)}:y=0:w=2:h=ih:color=red@0.6:t=fill,"
+    f"drawbox=x={int(960 * TILE_W / 1080)}:y=0:w=2:h=ih:color=red@0.6:t=fill,"
 )
 
 

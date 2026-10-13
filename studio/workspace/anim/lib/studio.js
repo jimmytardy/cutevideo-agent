@@ -105,7 +105,7 @@
     }
 
     // Contrôle des zones (appelé par le moteur de rendu après la dernière image) : contenu hors de
-    // y 140-1200 (sous-titres puis interface TikTok en dessous) ou de x 40-990 (icônes TikTok à droite).
+    // y 140-1200 (sous-titres puis interface TikTok en dessous) ou de x 40-970 (icônes TikTok à droite).
     check() {
       const out = [];
       const describe = (it) => {
@@ -119,7 +119,7 @@
         if (!r.width || !r.height) continue;
         const pb = [];
         if (r.bottom > 1205) pb.push(`descend à y ${Math.round(r.bottom)} (sous-titres dès 1220)`);
-        if (r.right > 995) pb.push(`déborde à droite x ${Math.round(r.right)} (interface après 990)`);
+        if (r.right > 970) pb.push(`déborde à droite x ${Math.round(r.right)} (icônes TikTok après 960)`);
         if (r.left < 35) pb.push(`colle au bord gauche x ${Math.round(r.left)}`);
         if (r.top < 130) pb.push(`monte à y ${Math.round(r.top)}`);
         if (pb.length) out.push(`${describe(it)} ${pb.join(", ")}`);
