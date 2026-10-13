@@ -173,17 +173,25 @@ async def mix_short_audio(
         *thread_args(), "-c:a", "pcm_s16le", "-ar", str(SR), str(pre),
     ], error_prefix="Mixage voix/musique/bruitages")
 
+    # Gain puis limiteur : le limiteur rogne les crêtes et fait perdre ~1 dB, d'où une passe de recalage.
     mix_lufs, _ = await _measure(pre)
     gain = TARGET_LUFS - mix_lufs if mix_lufs is not None else 0.0
-    await run_ffmpeg([
-        "ffmpeg", "-y", "-i", str(pre),
-        "-af", f"volume={gain:.2f}dB,alimiter=limit=0.84:attack=3:release=60:level=disabled",
-        *thread_args(), "-c:a", "aac", "-b:a", "192k", "-ar", str(SR), str(out),
-    ], error_prefix="Normalisation loudness")
+    final_lufs = None
+    for _ in range(3):
+        await run_ffmpeg([
+            "ffmpeg", "-y", "-i", str(pre),
+            "-af", f"volume={gain:.2f}dB,alimiter=limit=0.84:attack=3:release=60:level=disabled",
+            *thread_args(), "-c:a", "aac", "-b:a", "192k", "-ar", str(SR), str(out),
+        ], error_prefix="Normalisation loudness")
+        final_lufs, _ = await _measure(out)
+        if final_lufs is None or abs(final_lufs - TARGET_LUFS) <= 0.3:
+            break
+        gain += min(4.0, TARGET_LUFS - final_lufs)
     pre.unlink(missing_ok=True)
     return {
         "voice_lufs": voice_lufs,
         "music_gain_db": round(music_gain_db, 1) if music_gain_db is not None else None,
         "sfx": len(sfx_events or []),
         "gain_db": round(gain, 1),
+        "lufs": final_lufs,
     }
