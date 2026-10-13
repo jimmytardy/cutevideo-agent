@@ -134,7 +134,7 @@
         const h = Math.max(0, Math.min(r.bottom, uy1) - Math.max(r.top, uy0));
         covered += w * h;
         const imgs = it.node.querySelectorAll(":scope > image");
-        if (imgs.length === 1 && r.width < 170) out.push(`icône ${describe(it)} petite (${Math.round(r.width)} px, viser ≥ 250)`);
+        if (imgs.length === 1 && r.width >= 1 && r.width < 170) out.push(`icône ${describe(it)} petite (${Math.round(r.width)} px, viser ≥ 250)`);
       }
       // Texte recouvert par une icône (ou l'inverse) : illisible.
       const vis = this.items.filter((it) => !it.bleed && +it.node.getAttribute("opacity") >= 0.05);
@@ -209,7 +209,7 @@
         sub.textContent = o.sub.toUpperCase();
       }
       // Le mot-clé est là dès la coupe (la coupe fait le mouvement) : pas d'écran vide en début de plan.
-      return this._add(g, Object.assign({x: 540, y: o.y || 330, enter: "none", layer: "overlay", fit: [t1, sub], maxW: 960}, o));
+      return this._add(g, Object.assign({x: 540, y: o.y || 330, enter: "none", layer: "overlay", fit: [t1, sub], maxW: 820}, o));
     }
 
     text(text, o = {}) {
@@ -220,7 +220,7 @@
         const n = el("text", {x: 0, y: i * size * 1.12, "text-anchor": o.anchor || "middle", "dominant-baseline": "middle", "font-weight": o.weight || 800, "font-size": size, fill: this.color(o.color || "ink")}, g);
         n.textContent = ln;
       });
-      return this._add(g, Object.assign({fit: Array.from(g.childNodes), maxW: o.maxW || 960}, o));
+      return this._add(g, Object.assign({fit: Array.from(g.childNodes), maxW: o.maxW || 820}, o));
     }
 
     tag(text, o = {}) {
@@ -265,7 +265,7 @@
       }
       const from = +o.from || 0, to = +o.to || 0, dec = o.decimals || 0, cd = o.countDur || 1.4;
       const fmt = (v) => (o.prefix || "") + v.toLocaleString("fr-FR", {minimumFractionDigits: dec, maximumFractionDigits: dec}) + (o.suffix || "");
-      const it = this._add(g, Object.assign({fit: [n], maxW: 940}, o), (t, it) => {
+      const it = this._add(g, Object.assign({fit: [n], maxW: 820}, o), (t, it) => {
         n.textContent = fmt(from + (to - from) * E.out((t - it.at) / cd));
       });
       n.textContent = fmt(to);

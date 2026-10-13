@@ -22,7 +22,9 @@ toutes les ~2 s** calé sur les mots (`at` = temps du mot − début du plan) : 
 - sinon un script `anim/<NN>_<nom>.html` avec le kit (`Studio.scene`, `title` = `on_screen_text` du beat,
   icônes, `counter`, `arrow`, `units`, `map`, `gauge`, `camera`…). Garde le contenu dans y 170-1180.
 - durée de l'animation = durée du plan + 0,3 s ; `animate` puis **Read sur la planche** ; corrige si texte coupé,
-  élément hors zone, chevauchement, vide (2 essais max par plan).
+  élément hors zone, chevauchement, vide (2 essais max par plan). **Chaque `zone_warnings` se corrige avant de
+  passer au plan suivant** (déplacer, réduire, agrandir), sauf faux positif évident que tu justifies : un élément
+  sous y 1200 sera caché par les sous-titres, un élément au-delà de x 960 par les icônes TikTok.
 - **plan 1 (hook)** : la toute première image est déjà pleine et lisible (mot-clé + objet-héros visibles à t = 0 :
   `at: 0, enter: "none"`), puis ça bouge avant 0,5 s (zoom caméra, secousse, apparition) ; c'est elle qui arrête
   le scroll et sert d'aperçu dans le fil. Le hook se découpe en **2 plans** (coupe vers 1,5-2,2 s, sur un début
