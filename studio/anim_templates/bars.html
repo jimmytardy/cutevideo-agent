@@ -1,33 +1,18 @@
 <!doctype html>
-<!-- Modèle « bars » : comparaison en barres horizontales. PARAMS : items [{label, value}], title?, unit?, accent?, background? -->
-<html><head><meta charset="utf-8"><style>
-html,body{margin:0;width:1080px;height:1920px;overflow:hidden}
-body{background:var(--bg);font-family:"DejaVu Sans","Liberation Sans",sans-serif;color:#fff;padding:260px 80px 0;box-sizing:border-box}
-#title{font-size:76px;font-weight:800;line-height:1.1;margin-bottom:70px;opacity:0}
-.row{margin-bottom:46px;opacity:0}
-.lab{font-size:50px;font-weight:700;margin-bottom:14px;display:flex;justify-content:space-between}
-.val{color:var(--accent);font-variant-numeric:tabular-nums}
-.track{height:70px;background:rgba(255,255,255,.08);border-radius:16px;overflow:hidden}
-.fill{height:100%;width:0;background:var(--accent);border-radius:16px}
-</style></head><body><div id="title"></div><div id="rows"></div>
+<!-- Modèle « bars » : comparaison en barres horizontales. PARAMS : items [{label, value}] (≤ 6), title?, unit?, theme?, accent? -->
+<html><head><meta charset="utf-8"></head><body>
+<script src="lib/studio.js"></script>
 <script>
 const P = /*PARAMS*/{};
-document.documentElement.style.setProperty("--accent", P.accent || "#FFD400");
-document.documentElement.style.setProperty("--bg", P.background || "linear-gradient(180deg, #1c2033 0%, #0b0c14 100%)");
-const items = (P.items || []).slice(0, 6), max = Math.max(...items.map(i => Number(i.value) || 0), 1), D = P.duration || 4;
-document.getElementById("title").textContent = P.title || "";
-const rows = items.map(it => { const r = document.createElement("div"); r.className = "row";
-  r.innerHTML = `<div class="lab"><span></span><span class="val"></span></div><div class="track"><div class="fill"></div></div>`;
-  r.querySelector("span").textContent = it.label; document.getElementById("rows").appendChild(r); return r; });
-const ease = x => 1 - Math.pow(1 - Math.min(Math.max(x, 0), 1), 3);
-const step = Math.min(0.35, (D * 0.45) / Math.max(items.length, 1));
-window.renderFrame = (t) => {
-  const tt = document.getElementById("title"), k0 = ease(t / 0.4); tt.style.opacity = k0;
-  tt.style.transform = `translateY(${(1 - k0) * 30}px)`;
-  rows.forEach((r, i) => { const k = ease((t - 0.3 - i * step) / 0.8), v = Number(items[i].value) || 0;
-    r.style.opacity = Math.min(1, k * 3);
-    r.querySelector(".fill").style.width = `${(v / max) * 100 * k}%`;
-    const shown = v * k; r.querySelector(".val").textContent =
-      shown.toLocaleString("fr-FR", {maximumFractionDigits: Number.isInteger(v) ? 0 : 1}) + (P.unit ? " " + P.unit : ""); });
-};
+const s = Studio.scene({theme: P.theme || "night", accent: P.accent});
+const D = P.duration || 3.5, items = (P.items || []).slice(0, 6);
+if (P.title) s.title(P.title, {at: 0.05});
+const max = Math.max(...items.map((i) => +i.value || 0)) || 1, n = items.length || 1;
+const y0 = 600, gap = Math.min(190, 620 / Math.max(n - 1, 1)), stagger = Math.min(0.35, (D * 0.5) / n);
+const fmt = (v) => Number(v).toLocaleString("fr-FR") + (P.unit ? " " + P.unit : "");
+items.forEach((it, i) => {
+  const best = +it.value === max;
+  s.bar({x: 540, y: y0 + i * gap, w: 880, h: 84, labelSize: 62, value: (+it.value || 0) / max, label: it.label, valueText: fmt(it.value),
+    color: best ? "accent" : "accent2", at: 0.3 + i * stagger, fillDur: 0.8});
+});
 </script></body></html>

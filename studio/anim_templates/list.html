@@ -1,29 +1,16 @@
 <!doctype html>
-<!-- Modèle « list » : points ou étapes de chronologie révélés un à un. PARAMS : items [str], title?, numbered?, accent?, background? -->
-<html><head><meta charset="utf-8"><style>
-html,body{margin:0;width:1080px;height:1920px;overflow:hidden}
-body{background:var(--bg);font-family:"DejaVu Sans","Liberation Sans",sans-serif;color:#fff;padding:250px 90px 0;box-sizing:border-box}
-#title{font-size:78px;font-weight:800;line-height:1.1;margin-bottom:60px;opacity:0}
-.it{display:flex;align-items:flex-start;gap:34px;margin-bottom:44px;opacity:0}
-.dot{flex:0 0 92px;height:92px;border-radius:50%;background:var(--accent);color:#111;font-size:50px;font-weight:800;
-  display:flex;align-items:center;justify-content:center}
-.txt{font-size:56px;font-weight:700;line-height:1.15;padding-top:10px}
-</style></head><body><div id="title"></div><div id="items"></div>
+<!-- Modèle « list » : points ou étapes de chronologie révélés un à un. PARAMS : items [str] (≤ 6), title?, numbered?, theme?, accent? -->
+<html><head><meta charset="utf-8"></head><body>
+<script src="lib/studio.js"></script>
 <script>
 const P = /*PARAMS*/{};
-document.documentElement.style.setProperty("--accent", P.accent || "#FFD400");
-document.documentElement.style.setProperty("--bg", P.background || "linear-gradient(180deg, #1c2033 0%, #0b0c14 100%)");
-const items = (P.items || []).slice(0, 6), D = P.duration || 4, numbered = P.numbered !== false;
-document.getElementById("title").textContent = P.title || "";
-const els = items.map((txt, i) => { const e = document.createElement("div"); e.className = "it";
-  e.innerHTML = `<div class="dot"></div><div class="txt"></div>`; e.querySelector(".dot").textContent = numbered ? i + 1 : "•";
-  e.querySelector(".txt").textContent = txt; document.getElementById("items").appendChild(e); return e; });
-const ease = x => 1 - Math.pow(1 - Math.min(Math.max(x, 0), 1), 3);
-const step = Math.min(0.7, (D * 0.7) / Math.max(items.length, 1));
-window.renderFrame = (t) => {
-  const tt = document.getElementById("title"), k0 = ease(t / 0.4); tt.style.opacity = k0;
-  tt.style.transform = `translateY(${(1 - k0) * 30}px)`;
-  els.forEach((e, i) => { const k = ease((t - 0.35 - i * step) / 0.45);
-    e.style.opacity = k; e.style.transform = `translateX(${(1 - k) * -80}px)`; });
-};
+const s = Studio.scene({theme: P.theme || "night", accent: P.accent});
+const D = P.duration || 3.5, items = (P.items || []).slice(0, 6), n = Math.max(items.length, 1);
+if (P.title) s.title(P.title, {at: 0.05});
+const y0 = 560, gap = Math.min(150, 640 / Math.max(n - 1, 1)), step = Math.min(0.5, (D * 0.7) / n);
+items.forEach((txt, i) => {
+  const y = y0 + i * gap, at = 0.3 + i * step;
+  s.tag(P.numbered ? String(i + 1) : "•", {x: 140, y, at, fill: "accent", size: 60, enter: "pop"});
+  s.text(String(txt), {x: 220, y, anchor: "start", size: n > 4 ? 62 : 74, maxW: 760, at: at + 0.08, enter: "left"});
+});
 </script></body></html>

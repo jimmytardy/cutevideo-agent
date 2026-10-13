@@ -1,31 +1,14 @@
 <!doctype html>
-<!-- Modèle « counter » : chiffre qui défile jusqu'à sa valeur. PARAMS : to, from?, prefix?, suffix?, label?, decimals?, accent?, background? -->
-<html><head><meta charset="utf-8"><style>
-html,body{margin:0;width:1080px;height:1920px;overflow:hidden}
-body{background:var(--bg);font-family:"DejaVu Sans","Liberation Sans",sans-serif;color:#fff;display:flex;flex-direction:column;
-  justify-content:center;align-items:center;padding:0 70px 520px;box-sizing:border-box;text-align:center}
-#n{font-size:200px;font-weight:800;color:var(--accent);letter-spacing:-4px;font-variant-numeric:tabular-nums;white-space:nowrap}
-#l{margin-top:30px;font-size:64px;font-weight:700;line-height:1.15;opacity:0}
-#c{position:relative;display:flex;align-items:center;justify-content:center;width:820px;height:820px}
-#ring{position:absolute;inset:0;border-radius:50%;border:10px solid var(--accent);opacity:.18}
-</style></head><body><div id="c"><div id="ring"></div><div id="n"></div></div><div id="l"></div>
+<!-- Modèle « counter » : chiffre qui défile jusqu'à sa valeur. PARAMS : to, from?, prefix?, suffix?, label?, decimals?, icon?, theme?, accent? -->
+<html><head><meta charset="utf-8"></head><body>
+<script src="lib/studio.js"></script>
 <script>
 const P = /*PARAMS*/{};
-document.documentElement.style.setProperty("--accent", P.accent || "#FFD400");
-document.documentElement.style.setProperty("--bg", P.background || "radial-gradient(circle at 50% 35%, #2a2f4a 0%, #0b0c14 75%)");
-const from = Number(P.from || 0), to = Number(P.to || 0), dec = Number(P.decimals || 0), D = P.duration || 3;
-const fmt = v => (P.prefix || "") + v.toLocaleString("fr-FR", {minimumFractionDigits: dec, maximumFractionDigits: dec}) + (P.suffix || "");
-const n = document.getElementById("n"), l = document.getElementById("l"), ring = document.getElementById("ring");
-l.textContent = P.label || "";
-// Taille du chiffre adaptée à sa longueur finale.
-n.style.fontSize = Math.min(200, Math.floor(1250 / Math.max(fmt(to).length, 1))) + "px";
-const ease = x => 1 - Math.pow(1 - Math.min(Math.max(x, 0), 1), 4);
-window.renderFrame = (t) => {
-  const k = ease(t / Math.max(D * 0.65, 0.5));
-  n.textContent = fmt(from + (to - from) * k);
-  n.style.transform = `scale(${0.85 + 0.15 * ease(t / 0.4)})`;
-  ring.style.transform = `scale(${0.6 + 0.4 * k})`;
-  const kl = ease((t - D * 0.45) / 0.5);
-  l.style.opacity = kl; l.style.transform = `translateY(${(1 - kl) * 40}px)`;
-};
+const s = Studio.scene({theme: P.theme || "night", accent: P.accent});
+const D = P.duration || 3;
+if (P.icon) s.icon(P.icon, {x: 540, y: 470, size: 320, at: 0.05, enter: "pop", idle: "float"});
+s.circle({x: 540, y: P.icon ? 860 : 760, r: 380, stroke: "accent", width: 10, opacity: 0.25, at: 0, enter: "grow", dur: Math.max(0.6, D * 0.6)});
+s.counter({x: 540, y: P.icon ? 860 : 760, from: P.from || 0, to: P.to || 0, prefix: P.prefix, suffix: P.suffix, decimals: P.decimals || 0,
+  size: 190, at: 0.1, countDur: Math.max(0.6, D * 0.65), enter: "pop"});
+if (P.label) s.text(P.label, {x: 540, y: P.icon ? 1130 : 1050, size: 64, at: D * 0.45, enter: "up", maxW: 940});
 </script></body></html>
