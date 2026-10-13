@@ -11,6 +11,7 @@ sous-titres refaits, charte d'animation + 5 modèles, prompts recalibrés. Gén�
 | # | Sujet | Version | Score | Analyse | Durée | Rendu | Mémoire min | Chemin |
 |---|---|---|---|---|---|---|---|---|
 | baseline | Pourquoi la Lune s'éloigne de la Terre | v1 → v2 | 79 → 85 (approuvée, ancienne grille) | critique Claude (frames) | 30,9 s | ~6 min | 1,13 Go | `~/.cache/cutevideo/optim/baseline_lune/renders/v2.mp4` |
+| g3 | Les 10 jours qui n'ont jamais existé (1582, histoire + chiffre) | v1 → v2 | 81 → **86** (approuvée) | `analyze` claude | 43,5 s | 43 min au total | 2,7 Go dispo | `~/.cache/cutevideo/optim/runs/g3_1582/renders/v2.mp4` |
 | g2 | Le paradoxe des anniversaires (concept abstrait) | v1 → v2 | 77 → **85** (approuvée) | `analyze` claude | 41,8 s | 57 min au total | 2,8 Go dispo | `~/.cache/cutevideo/optim/runs/g2_anniv/renders/v2.mp4` |
 | g1 | Pourquoi la Lune s'éloigne de la Terre (nouvelle chaîne) | v1 → v2 | 81 → **86** (approuvée, grille virale) | `analyze` claude | 42,5 s | 42 min au total (rendu 2 min) | 1,9 Go dispo | `~/.cache/cutevideo/optim/runs/g1_lune/renders/v2.mp4` |
 
@@ -42,6 +43,12 @@ g2 en clair : « Un match de foot sur deux cache deux personnes nées le même j
 (contenu sous les sous-titres dans 8 plans, icône calendrier marquée « July », musique de 40 s à intro muette) →
 corrigés dans l'outillage pendant l'itération 2 (voir changements 12-14). Mesures v1 → v2 : 2,92 → 2,96 mots/s,
 -14,4 / -14,5 LUFS (recalage efficace), voix/fond 13,6 → 17,0 dB.
+
+g3 en clair : thème « paper » + accent rouge, hook « Cette femme est morte le 4 octobre… et enterrée le
+lendemain, le 15 ! » (Thérèse d'Avila, exact), Jules César et ses 11 minutes, « Mais attendez… », Grégoire XIII
+« À votre avis… comment ? » (emphase vocale utilisée), carte (France décembre 1582, Angleterre 1752), fin en
+boucle sur le calendrier. v1 : icônes trop petites et grands vides (encore) → ajout d'une alerte chiffrée
+« scène vide » / « icône petite » dans le kit (changement 16).
 
 ## Changements (quoi, pourquoi, effet mesuré)
 1. **`python -m studio.tools analyze`** (`studio/analyze.py`) — Gemini d'abord, repli Claude automatique :
@@ -88,6 +95,11 @@ corrigés dans l'outillage pendant l'itération 2 (voir changements 12-14). Mesu
     choisie plus longue que la voix + 6 s (fin de vidéo sans musique). Icône calendrier (texte « JUL ») retirée.
 15. Sous-titres : ponctuation isolée rattachée au mot (« : » seul à l'écran) ; kit : mot-clé affiché dès la coupe
     (débuts de plan presque vides relevés par la critique dans g1 et g2).
+
+16. **Alerte « scène vide »** : à la fin de chaque animation, le kit mesure la part de la zone utile couverte
+    par les éléments (< 28 % → alerte) et signale les icônes isolées < 170 px. C'était le défaut n° 1 des
+    critiques v1 de g1, g2 et g3 malgré la règle écrite « remplir l'écran ».
+17. Voix : nombres en chiffres dans `subtitles.txt` (« 23 », « 50,7 % ») — l'alignement Whisper le gère.
 
 ## Choix rejetés
 - Capture d'écran CDP (`Page.captureScreenshot optimizeForSpeed`) pour accélérer le rendu des animations :
