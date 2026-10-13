@@ -219,6 +219,7 @@ async def download_candidate(run_dir: Path, cid: str, name: str) -> dict[str, An
 
 async def generate_ai_image(run_dir: Path, prompt: str, name: str, aspect: str = "9:16") -> dict[str, Any]:
     from agent.core.channel_config import AiFallbackConfig
+    from agent.core.config import settings
     from agent.skills.media_sources.ai_image import generate_image
 
     credits = _read_json(_credits_path(run_dir), {})
@@ -236,9 +237,14 @@ async def generate_ai_image(run_dir: Path, prompt: str, name: str, aspect: str =
         plan_override="flux_2_dev",
         use_prompt_as_is=True,
         visual_type="custom",
+        # generate_image ne lit pas la clé globale (user_resolved_keys) : on la passe explicitement.
+        fal_api_key=settings.fal_key or None,
     )
     if not result or not result.get("local_generated"):
-        raise RuntimeError("génération IA échouée")
+        raise RuntimeError(
+            "génération IA indisponible (clé FAL absente ou refusée) : illustre ce plan avec une animation "
+            "du kit (anim/lib/studio.js) ou une banque d'images"
+        )
     src = Path(result["local_generated"])
     dest = run_dir / "media" / f"{name}{src.suffix or '.png'}"
     shutil.copy2(src, dest)
