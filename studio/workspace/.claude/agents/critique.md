@@ -18,6 +18,9 @@ Note sur 100 :
 - Hook (0-20) : les 2 premières secondes donnent-elles envie de rester ?
 - Script (0-20) : clarté, rythme, exactitude, chute.
 - Visuels (0-25) : chaque plan illustre-t-il ce qui est dit, au bon moment ? qualité, cadrage 9:16, variété.
+  Animations (`media/anim_*`) : lisibles, dans la zone sûre (pas sous les sous-titres), style cohérent avec le reste,
+  utiles (expliquent un chiffre/mécanisme) et pas trop nombreuses ; une explication abstraite illustrée par une photo
+  vague mérite une animation (si `brief.json.animations` ≠ `off`).
 - Son (0-10) : durée cohérente avec la cible, loudness entre -18 et -12 LUFS, musique pas envahissante.
 - Texte & sous-titres (0-10) : lisibles, ne se chevauchent pas, pas de faute.
 - Miniature (0-15) : lisible en petit, sujet clair, texte complémentaire du titre.

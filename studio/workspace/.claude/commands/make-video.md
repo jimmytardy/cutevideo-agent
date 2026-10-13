@@ -8,7 +8,7 @@ Lis d'abord `CLAUDE.md` et `brief.json`. Le run dir courant contient tout.
 ## Itération 1
 1. **scenariste** → `scenario.json`. Passe-lui le brief (thème, niche, angle, durée cible, ton, content_plan).
 2. **voix** → `narration.txt`, `voice.wav`, `words.json`, `voice.json`.
-3. **monteur** → médias, `timeline.json`, `renders/v1.mp4`.
+3. **monteur** → médias (et animations selon `brief.animations`), `timeline.json`, `renders/v1.mp4`.
 4. **miniaturiste** → `thumbnails/v1_9x16.png`, `thumbnails/v1_16x9.png`, `thumbnail.json`.
 5. **critique** → `critique_1.json` (indique-lui le numéro d'itération et la vidéo `renders/v1.mp4`).
 

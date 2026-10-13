@@ -1,4 +1,4 @@
-export type LlmProvider = 'gemini' | 'anthropic'
+export type LlmProvider = 'gemini' | 'anthropic' | 'claude_cli'
 export type LlmTier = 'free' | 'paid'
 export type AgentTaskKind = 'text' | 'vision' | 'gemini_search'
 
@@ -15,6 +15,7 @@ export interface AgentLlmConfig {
   recommendations: Record<string, string>
   has_gemini_key: boolean
   has_anthropic_key: boolean
+  has_claude_cli?: boolean
 }
 
 export const AGENT_LLM_LINKED_TO: Record<string, string> = {}
@@ -150,6 +151,13 @@ export const ANTHROPIC_MODELS = [
   { value: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5' },
 ] as const
 
+// Claude Code CLI : abonnement Claude, aucune clé API requise.
+export const CLAUDE_CLI_MODELS = [
+  { value: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5' },
+  { value: 'claude-opus-5-5', label: 'Claude Opus 5.5' },
+  { value: 'claude-haiku-5-5', label: 'Claude Haiku 5.5' },
+] as const
+
 const AGENT_TASK_KIND: Record<string, AgentTaskKind> = {}
 
 export function agentTaskKind(agentName: string): AgentTaskKind {
@@ -162,7 +170,7 @@ export function allowedProvidersFor(agentName: string): readonly LlmProvider[] {
   if (kind === 'vision' || kind === 'gemini_search') {
     return ['gemini']
   }
-  return ['gemini', 'anthropic']
+  return ['gemini', 'anthropic', 'claude_cli']
 }
 
 function geminiModelsForTask(kind: AgentTaskKind, tier: LlmTier) {
@@ -180,12 +188,18 @@ export function modelOptionsForAgent(agentName: string, provider: LlmProvider, t
   if (provider === 'anthropic') {
     return kind === 'text' ? ANTHROPIC_MODELS : []
   }
+  if (provider === 'claude_cli') {
+    return kind === 'text' ? CLAUDE_CLI_MODELS : []
+  }
   return geminiModelsForTask(kind, tier)
 }
 
 export function modelOptionsFor(provider: LlmProvider, tier: LlmTier) {
   if (provider === 'anthropic') {
     return ANTHROPIC_MODELS
+  }
+  if (provider === 'claude_cli') {
+    return CLAUDE_CLI_MODELS
   }
   return tier === 'paid' ? GEMINI_PAID_MODELS : GEMINI_FREE_MODELS
 }
@@ -218,11 +232,11 @@ export function normalizePreference(
   agentName?: string,
 ): AgentLlmPreference {
   const sourceAgent = agentName ? resolvePreferenceAgent(agentName) : undefined
-  const providers = sourceAgent ? allowedProvidersFor(sourceAgent) : (['gemini', 'anthropic'] as const)
+  const providers = sourceAgent ? allowedProvidersFor(sourceAgent) : (['gemini', 'anthropic', 'claude_cli'] as const)
   const provider: LlmProvider = providers.includes(pref.provider as LlmProvider)
     ? pref.provider
     : providers[0]
-  const tier: LlmTier = provider === 'anthropic' ? 'paid' : pref.tier === 'paid' ? 'paid' : 'free'
+  const tier: LlmTier = provider === 'anthropic' ? 'paid' : provider === 'claude_cli' ? 'free' : pref.tier === 'paid' ? 'paid' : 'free'
   const options = sourceAgent
     ? modelOptionsForAgent(sourceAgent, provider, tier)
     : modelOptionsFor(provider, tier)

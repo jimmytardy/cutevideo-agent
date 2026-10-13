@@ -27,6 +27,12 @@ ANTHROPIC_TEXT_MODELS: tuple[str, ...] = (
     "claude-sonnet-5-5",
     "claude-haiku-4-5-20251001",
 )
+# Claude Code CLI (abonnement Claude, sans clé) : alternative à Gemini pour le texte.
+CLAUDE_CLI_MODELS: tuple[str, ...] = (
+    "claude-sonnet-5-5",
+    "claude-opus-5-5",
+    "claude-haiku-5-5",
+)
 
 GEMINI_VISION_FREE_MODELS: tuple[str, ...] = ("gemini-2.5-flash",)
 GEMINI_VISION_PAID_MODELS: tuple[str, ...] = (
@@ -65,7 +71,7 @@ def agent_llm_constraint(agent_name: str) -> AgentLlmConstraint:
     kind = agent_task_kind(agent_name)
     if kind in ("vision", "gemini_search"):
         return AgentLlmConstraint(task_kind=kind, allowed_providers=("gemini",))
-    return AgentLlmConstraint(task_kind="text", allowed_providers=("gemini", "anthropic"))
+    return AgentLlmConstraint(task_kind="text", allowed_providers=("gemini", "anthropic", "claude_cli"))
 
 
 def gemini_models_for_task(kind: AgentTaskKind, *, tier: str) -> tuple[str, ...]:
@@ -86,6 +92,8 @@ def allowed_models_for_agent(
     kind = agent_task_kind(agent_name)
     if provider == "anthropic":
         return ANTHROPIC_TEXT_MODELS if kind == "text" else ()
+    if provider == "claude_cli":
+        return CLAUDE_CLI_MODELS if kind == "text" else ()
     if provider == "gemini":
         return gemini_models_for_task(kind, tier=tier)
     return ()
@@ -106,6 +114,8 @@ def normalize_agent_preference(agent_name: str, pref: AgentLlmPreference) -> Age
     provider = pref.provider if pref.provider in constraint.allowed_providers else constraint.allowed_providers[0]
     if provider == "anthropic":
         tier = "paid"
+    elif provider == "claude_cli":
+        tier = "free"
     else:
         tier = pref.tier if pref.tier in ("free", "paid") else "free"
     models = allowed_models_for_agent(agent_name, provider=provider, tier=tier)

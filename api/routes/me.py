@@ -17,6 +17,7 @@ from agent.core.api_key_validation import ApiKeyValidationError, validate_api_ke
 from agent.core.database import User, UserApiKey, get_db
 from agent.core.agent_llm_constraints import normalize_agent_preference, normalize_preferences_map
 from agent.core.agent_llm_recommendations import all_agent_llm_recommendations
+from agent.core.claude_cli_llm import claude_cli_available
 from agent.core.llm_resolver import (
     CONFIGURABLE_AGENTS,
     LLM_PREFERENCE_ALIAS,
@@ -70,6 +71,7 @@ class AgentLlmConfigResponse(BaseModel):
     recommendations: dict[str, str]
     has_gemini_key: bool
     has_anthropic_key: bool
+    has_claude_cli: bool = False
 
 
 class AgentLlmUpdateRequest(BaseModel):
@@ -194,6 +196,7 @@ async def get_agent_llm_config(
         recommendations=all_agent_llm_recommendations(display_agents),
         has_gemini_key=has_gemini,
         has_anthropic_key=has_anthropic,
+        has_claude_cli=claude_cli_available(),
     )
 
 
@@ -204,10 +207,12 @@ async def update_agent_llm_config(
     db: AsyncSession = Depends(get_db),
 ) -> AgentLlmConfigResponse:
     has_gemini = await get_user_api_key_row(db, user.id, "gemini") is not None
-    if not has_gemini and body.preferences:
+    # Claude CLI passe par l'abonnement Claude : pas besoin de clé Gemini.
+    needs_gemini_key = any(pref.provider != "claude_cli" for pref in body.preferences.values())
+    if not has_gemini and needs_gemini_key:
         raise HTTPException(
             status_code=400,
-            detail="Configurez d'abord une clé Gemini pour personnaliser les modèles par agent.",
+            detail="Configurez d'abord une clé Gemini (ou choisissez Claude CLI) pour personnaliser les modèles.",
         )
     parsed = {
         name: normalize_agent_preference(

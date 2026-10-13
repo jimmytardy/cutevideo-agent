@@ -56,9 +56,11 @@ Tests are in `tests/` and use `pytest-asyncio`. No mocking of the database — t
 
 **Full video generation is covered at three levels** (keep them green when touching `studio/`, `agent/core/claude_studio.py` or the orchestrator):
 
-1. `tests/test_studio_generation.py` — always runs (~1-2 min): generates a complete Short through the real launcher, `studio.tools` and ffmpeg render; only the `claude` CLI is replaced by `tests/fixtures/fake_claude.py` (deterministic producer, 2 iterations). Also checks the workspace prompts only cite existing tools.
+1. `tests/test_studio_generation.py` — always runs (~1-2 min): generates a complete Short through the real launcher, `studio.tools` and ffmpeg render (iteration 2 adds a template and a disposable-script animation when Chromium + bwrap are available); only the `claude` CLI is replaced by `tests/fixtures/fake_claude.py` (deterministic producer, 2 iterations). Also checks the workspace prompts only cite existing tools.
 2. `tests/test_studio_pipeline_db.py` — same flow through `Orchestrator` → `ClaudeStudioRunner` → Postgres/Redis (S3 stubbed). Skipped unless `CUTEVIDEO_TEST_DATABASE_URL` / `CUTEVIDEO_TEST_REDIS_URL` point to **throwaway** infra (docker commands in the module docstring).
 3. `tests/test_studio_live.py` — real `claude -p /make-video`, real image banks and TTS (~10-15 min, uses quota): `CUTEVIDEO_LIVE_TESTS=1 pytest tests/test_studio_live.py -s`.
+
+`tests/test_studio_animate.py` covers the animation policy, templates, scripts, the bwrap isolation (no secrets / repo / network) and the container file-queue protocol.
 
 If you change a run-dir contract or a tool's CLI, update `fake_claude.py` accordingly.
 
@@ -88,15 +90,17 @@ Orchestrator.run_pipeline → ClaudeStudioRunner
 ```
 
 - `studio/workspace/` — the Claude workspace copied into each run dir: `CLAUDE.md` (Short rules + file contracts), `.claude/commands/make-video.md` (producer/loop), `.claude/agents/*.md` (the 5 roles)
-- `studio/tools.py` — the **only** commands the agents may run (`python -m studio.tools <cmd>`, JSON output): `search-media`, `preview` (contact sheet Claude looks at), `download`, `ai-image` (Flux, capped by `STUDIO_MAX_AI_IMAGES`), `music`, `tts` (Azure → Gemini → edge fallback), `transcribe` (Whisper timings, script spelling via `studio/align.py`), `render`, `frames`, `thumbnail`, `probe`, `validate`. It `chdir`s to the repo root before importing `agent.*` (relative `.env` / `data/`).
+- `studio/tools.py` — the **only** commands the agents may run (`python -m studio.tools <cmd>`, JSON output): `search-media`, `preview` (contact sheet Claude looks at), `download`, `ai-image` (Flux, capped by `STUDIO_MAX_AI_IMAGES`), `music`, `tts` (Azure → Gemini → edge fallback), `transcribe` (Whisper timings, script spelling via `studio/align.py`), `render`, `frames`, `thumbnail`, `animate-template`, `animate`, `probe`, `validate`. It `chdir`s to the repo root before importing `agent.*` (relative `.env` / `data/`).
 - `studio/contracts.py` — Pydantic contracts of every run-dir file (brief, scenario, timeline, critique, thumbnail, result); validated by tools and by the runner
 - `studio/render.py` — timeline → Short (Ken Burns / video crop per clip, concat, voice+music mix, karaoke ASS subtitles); `studio/media.py` — search/download/credits/previews/frames; `studio/thumbnail.py`, `studio/textfx.py`
 - `studio/launcher.py` — builds the CLI command (permissions passed as `--allowedTools`: Bash restricted to `python -m studio.tools:*`; project settings files are ignored in untrusted dirs), parses stream-json into `agent_start` / `agent_end` / `tool` / `result` events, kills the process on cancel/timeout
-- `studio/run.py` — local run without DB: `python -m studio.run "sujet" [--duration 45] [--interactive]`
+- **Animations** (`studio/animate.py`): `animate-template` (built-in HTML templates `studio/anim_templates/`: title, counter, bars, list) and `animate` (disposable HTML/JS or Python scripts Claude writes in `anim/`, local libs `studio/workspace/anim/lib/{gsap,d3}.min.js`) → `media/anim_<name>.mp4`, used as a normal video clip in `timeline.json`. Policy `off | templates | scripts`: `data/agent_config.json → studio.animations` (default `scripts`), per channel `Channel.config.studio.animations` (dashboard channel settings) → `Brief.animations` → `STUDIO_ANIMATIONS` env set by the launcher (the tools trust only this, not `brief.json`).
+- **Sandbox** (`studio/sandbox.py`, `STUDIO_SANDBOX=auto|bwrap|container|none`): scripts run without network, secrets or repo access. Host: bubblewrap. Docker: `studio-sandbox` container (`Dockerfile.sandbox`, `network_mode: none`, no `env_file`, non-root) fed through a file queue on the shared `studio_runs` volume (`studio/sandbox_worker.py`); `studio/sandbox_exec.py` runs inside and must stay self-contained. Rendering is frame by frame (`window.renderFrame(t)` or a paused Playwright clock driving CSS/WAAPI/GSAP). Locally: `playwright install --only-shell chromium`.
+- `studio/run.py` — local run without DB: `python -m studio.run "sujet" [--duration 45] [--animations off|templates|scripts] [--interactive]`
 - Step names kept for the dashboard/AgentRun: `scenario_agent`, `narrator_agent`, `editor_agent`, `thumbnail_agent`, `critic_agent` (`ROLE_AGENT_NAMES`)
 - Auth: by default `ANTHROPIC_API_KEY` is **not** passed to the CLI (Claude subscription: CLI login or `CLAUDE_CODE_OAUTH_TOKEN`); `CLAUDE_STUDIO_AUTH=api_key` to bill the API. Other knobs: `CLAUDE_STUDIO_MODEL`, `CLAUDE_STUDIO_TIMEOUT_S`, `CLAUDE_STUDIO_MAX_TURNS`, `CLAUDE_STUDIO_MAX_BUDGET_USD`, `STUDIO_WHISPER_MODEL` (default `small`)
 
-**Remaining Python agents** (`agent/agents/`, extend `BaseAgent`): `ContentPlannerAgent` (creates tomorrow's `pending` projects) and `DistributionAgent` (schedules/publishes approved videos). Their LLM calls go through `call_llm()` (agent/core/llm_resolver.py).
+**Remaining Python agents** (`agent/agents/`, extend `BaseAgent`): `ContentPlannerAgent` (creates tomorrow's `pending` projects) and `DistributionAgent` (schedules/publishes approved videos). Their LLM calls go through `call_llm()` (agent/core/llm_resolver.py): Gemini, Anthropic API key, or `claude_cli` (Claude subscription via `claude -p`, `agent/core/claude_cli_llm.py`; also the fallback when no Gemini key exists).
 
 **Scheduler jobs** (APScheduler, `agent/scheduler/jobs.py`, wired in `agent/scheduler/service.py`): content planner (06:00 Paris), pending-project launch (06:30 + hourly), distribution (every 15 min), S3/media purge (03:00).
 

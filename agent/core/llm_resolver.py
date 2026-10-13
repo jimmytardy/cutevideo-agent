@@ -9,6 +9,7 @@ from typing import Any, Literal
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.core.api_keys import GcpCredentials, parse_gcp_credentials, resolve_api_key
+from agent.core.claude_cli_llm import call_claude_cli, claude_cli_available
 from agent.core.database import User
 from agent.core.llm_config import resolve_max_tokens, resolve_model
 from agent.core.llm_retry import retry_transient_async
@@ -45,7 +46,7 @@ CONTINUATION_PROMPT = (
     "de préambule : ta sortie sera concaténée telle quelle à la précédente."
 )
 
-LlmProvider = Literal["gemini", "anthropic"]
+LlmProvider = Literal["gemini", "anthropic", "claude_cli"]
 LlmTier = Literal["free", "paid"]
 
 FREE_GEMINI_MODEL = "gemini-2.5-flash-lite"
@@ -98,7 +99,7 @@ def parse_agent_preferences(raw: dict | None) -> dict[str, AgentLlmPreference]:
         if not isinstance(cfg, dict):
             continue
         provider = cfg.get("provider", "gemini")
-        if provider not in ("gemini", "anthropic"):
+        if provider not in ("gemini", "anthropic", "claude_cli"):
             provider = "gemini"
         tier = cfg.get("tier", "free")
         if tier not in ("free", "paid"):
@@ -164,6 +165,18 @@ def _resolve_gemini_model(
     return normalized.model
 
 
+def _claude_cli_config(agent_name: str, model: str | None) -> LlmCallConfig:
+    from agent.core.agent_llm_constraints import CLAUDE_CLI_MODELS
+
+    return LlmCallConfig(
+        provider="claude_cli",
+        model=model if model in CLAUDE_CLI_MODELS else CLAUDE_CLI_MODELS[0],
+        api_key="",
+        tier="free",
+        source="claude_cli",
+    )
+
+
 async def resolve_llm_call(
     session: AsyncSession,
     user: User | None,
@@ -177,6 +190,9 @@ async def resolve_llm_call(
     config_agent = preference_agent_name(agent_name)
     prefs = parse_agent_preferences(user.agent_llm_preferences if user else None)
     pref = prefs.get(config_agent)
+
+    if pref is not None and pref.provider == "claude_cli":
+        return _claude_cli_config(config_agent, pref.model)
 
     has_anthropic = user_id is not None and await _has_user_key(session, user_id, "anthropic")
     has_gemini_user = user_id is not None and await _has_user_key(session, user_id, "gemini")
@@ -243,6 +259,8 @@ async def resolve_llm_call(
             gcp=gcp,
         )
     ctx = await resolve_api_key(session, user_id, "gemini", purpose="llm_agent", tier="free")
+    if not ctx.key and claude_cli_available():
+        return _claude_cli_config(config_agent, None)
     if not ctx.key:
         raise RuntimeError(
             "Aucune clé Gemini disponible. Configurez Vertex AI (GCP_PROJECT_ID + "
@@ -271,6 +289,15 @@ async def call_llm(
 ) -> str:
     cfg = await resolve_llm_call(session, user, agent_name, model_override=model_override)
     resolved_max = resolve_max_tokens(agent_name, max_tokens)
+
+    if cfg.provider == "claude_cli":
+        return await call_claude_cli(
+            model=cfg.model,
+            prompt=prompt,
+            system=system,
+            cacheable_context=cacheable_context,
+            agent_name=agent_name,
+        )
 
     if cfg.provider == "anthropic":
         import anthropic

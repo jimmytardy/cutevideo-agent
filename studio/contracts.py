@@ -35,6 +35,8 @@ class Brief(BaseModel):
     min_score: int = Field(default=75, ge=0, le=100)
     editorial_tone: str = ""
     content_plan: dict | None = None
+    # Animations autorisées : off | templates (modèles intégrés) | scripts (scripts jetables + modèles).
+    animations: Literal["off", "templates", "scripts"] = "scripts"
 
 
 class ScenarioBeat(BaseModel):

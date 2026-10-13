@@ -241,6 +241,8 @@ class ChannelRuntimeConfig(BaseModel):
     format_rotation: EditorialFormatRotationConfig = Field(default_factory=EditorialFormatRotationConfig)
     creative_brief: str = ""
     min_critic_score: int = 90
+    # Animations Claude Studio : off | templates | scripts (data/agent_config.json → studio, surcharge chaîne).
+    studio_animations: Literal["off", "templates", "scripts"] = "scripts"
     min_short_structure_score: int = 15
     max_critic_iterations: int = 5
     quality_max_iterations: int = 3
@@ -552,6 +554,10 @@ def resolve_channel_config(
     publishing = {**global_cfg.get("publishing", {}), **channel_overrides.get("publishing", {})}
     engagement = {**global_cfg.get("engagement", {}), **channel_overrides.get("engagement", {})}
     production = channel_overrides.get("production", {})
+    studio_cfg = {**global_cfg.get("studio", {}), **channel_overrides.get("studio", {})}
+    studio_animations = str(studio_cfg.get("animations", "scripts"))
+    if studio_animations not in ("off", "templates", "scripts"):
+        studio_animations = "scripts"
     editorial = channel_overrides.get("editorial", {})
     media_global = global_cfg.get("media_sources", {})
     media_channel = channel_overrides.get("media_sources", {})
@@ -632,6 +638,7 @@ def resolve_channel_config(
         platform_slots=platform_slots,
         enabled_platforms=enabled_platforms,
         production_mode=production_mode,  # type: ignore[arg-type]
+        studio_animations=studio_animations,  # type: ignore[arg-type]
         short_duration_s=int(production.get("short_duration_s", global_cfg.get("content_planning", {}).get("default_short_duration_s", 60))),
         min_short_duration_s=int(
             production.get(

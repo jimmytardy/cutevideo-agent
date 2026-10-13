@@ -1,0 +1,36 @@
+<!doctype html>
+<!-- Modèle « title » : titre qui apparaît mot par mot. PARAMS : text, subtitle?, accent?, background? -->
+<html><head><meta charset="utf-8"><style>
+html,body{margin:0;width:1080px;height:1920px;overflow:hidden}
+body{background:var(--bg);font-family:"DejaVu Sans","Liberation Sans",sans-serif;color:#fff;display:flex;flex-direction:column;
+  justify-content:center;align-items:center;padding:0 90px 520px;box-sizing:border-box;text-align:center}
+#t{font-size:118px;font-weight:800;line-height:1.08;letter-spacing:-2px}
+#t span{display:inline-block;margin:0 14px;opacity:0}
+#t span.hl{color:var(--accent)}
+#s{margin-top:48px;font-size:54px;font-weight:600;color:#d8d8e0;opacity:0}
+#bar{height:14px;background:var(--accent);border-radius:7px;margin-top:40px;width:0}
+</style></head><body><div id="t"></div><div id="bar"></div><div id="s"></div>
+<script>
+const P = /*PARAMS*/{};
+const accent = P.accent || "#FFD400";
+document.documentElement.style.setProperty("--accent", accent);
+document.documentElement.style.setProperty("--bg", P.background || "radial-gradient(circle at 50% 35%, #2a2f4a 0%, #0b0c14 75%)");
+const t = document.getElementById("t");
+// Les mots entre *astérisques* (un ou plusieurs) sont mis en couleur d'accent.
+const words = [];
+String(P.text || "").split("*").forEach((part, i) =>
+  part.split(/\s+/).filter(Boolean).forEach(w => words.push({w, hl: i % 2 === 1})));
+const spans = words.map(({w, hl}) => { const s = document.createElement("span");
+  s.textContent = w; if (hl) s.className = "hl"; t.appendChild(s); return s; });
+document.getElementById("s").textContent = P.subtitle || "";
+const ease = x => 1 - Math.pow(1 - Math.min(Math.max(x, 0), 1), 3);
+const D = P.duration || 3, step = Math.min(0.22, (D * 0.5) / Math.max(words.length, 1));
+window.renderFrame = (time) => {
+  spans.forEach((s, i) => { const k = ease((time - i * step) / 0.35);
+    s.style.opacity = k; s.style.transform = `translateY(${(1 - k) * 60}px) scale(${0.9 + 0.1 * k})`; });
+  const end = words.length * step + 0.2;
+  document.getElementById("bar").style.width = `${ease((time - end) / 0.5) * 320}px`;
+  const s = document.getElementById("s"); const k = ease((time - end - 0.2) / 0.5);
+  s.style.opacity = k; s.style.transform = `translateY(${(1 - k) * 30}px)`;
+};
+</script></body></html>

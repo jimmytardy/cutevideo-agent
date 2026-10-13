@@ -15,15 +15,44 @@ pour lire, écrire ou lister des fichiers utilise Read, Write, Edit et Glob.
 - Fin : chute ou relance (question, révélation, CTA court), pas de résumé.
 
 ## Droits des médias
-- Seuls les médias obtenus via `search-media` + `download`, `ai-image` ou `music` sont autorisés : leurs licences
+- Seuls les médias obtenus via `search-media` + `download`, `ai-image`, `music`, `animate-template` ou `animate` sont autorisés : leurs licences
   sont vérifiées et tracées dans `media/credits.json` (crédits ajoutés automatiquement à la description).
 - `ai-image` coûte de l'argent et est plafonné : dernier recours quand aucune banque n'a de visuel pertinent.
 - Jamais de logo de marque, de visage de célébrité identifiable ni de texte incrusté illisible dans un visuel.
 
+## Animations (selon `brief.json.animations`)
+- `off` : aucune animation. `templates` : seulement `animate-template`. `scripts` : modèles **et** scripts jetables
+  que tu écris toi-même (comme sur claude.ai) — le niveau est imposé côté outils, inutile d'essayer plus.
+- Quand animer : chiffres et ordres de grandeur, comparaisons, schémas/mécanismes, chronologies, trajectoires/cartes
+  simples, hook textuel fort. Pas pour remplacer une vraie image disponible : **≤ 30 % de la durée** en animations.
+- Format 1080×1920, contenu dans la zone sûre **y 200-1350 px** (le bas est réservé aux sous-titres), texte ≥ 48 px,
+  fort contraste, 1 idée par animation, 2-5 s. Style cohérent dans la vidéo (même accent de couleur, même police).
+- Une animation devient `media/anim_<name>.mp4` (vidéo sans son, crédit « original ») → à utiliser dans
+  `timeline.json` comme n'importe quelle vidéo (`motion: "static"`, `video_offset: 0`). Toujours lire sa planche
+  `review/anim_<name>/sheet.png` avant de l'utiliser.
+
+**Modèles** (`animate-template --template <t> --params '<json>' --duration 3 --name 04_chiffre`) — option commune
+`accent` (couleur CSS), `background` (CSS) :
+- `title` : `{"text": "La Lune *s'éloigne* de nous", "subtitle": "…"}` (mots entre `*` en couleur d'accent)
+- `counter` : `{"to": 384400, "from": 0, "suffix": " km", "prefix": "", "decimals": 0, "label": "…"}`
+- `bars` : `{"title": "…", "unit": "cm", "items": [{"label": "Lune", "value": 3.8}, …]}` (≤ 6)
+- `list` : `{"title": "…", "items": ["étape 1", "…"], "numbered": true}` (≤ 6, aussi pour une chronologie)
+
+**Scripts jetables** (`scripts` uniquement) : écris `anim/<NN>_<nom>.html` ou `.py`, puis
+`animate --script anim/05_orbite.html --duration 4 --name 05_orbite`. Exécutés dans un bac à sable **sans réseau**
+(pas de CDN, pas d'API) : seuls les fichiers de `anim/` sont accessibles.
+- HTML/CSS/JS/SVG/Canvas, page 1080×1920 (`html,body{margin:0;width:1080px;height:1920px;overflow:hidden}`).
+  Libs locales : `<script src="lib/gsap.min.js">`, `<script src="lib/d3.min.js">`. Rendu image par image :
+  le plus fiable est de définir `window.renderFrame = (t) => {…}` (t en secondes) qui dessine l'état à l'instant t ;
+  sinon animations CSS, Web Animations et GSAP sont pilotés par une horloge simulée.
+- Python (numpy, matplotlib, Pillow) : lis `OUT_DIR`, `WIDTH`, `HEIGHT`, `FPS`, `DURATION` dans l'environnement
+  et écris `OUT_DIR/frame_00000.png`, `frame_00001.png`… (`FPS × DURATION` images).
+- En cas d'erreur, l'outil renvoie le message (erreur JS, traceback Python) : corrige le script et relance.
+
 ## Fichiers (contrats validés par `python -m studio.tools validate --kind <kind> --path <fichier>`)
 
 `brief.json` (fourni, lecture seule) : `theme`, `niche`, `angle`, `language`, `target_duration_s`, `voice`,
-`tts_engine`, `max_iterations`, `min_score`, `editorial_tone`, `content_plan`.
+`tts_engine`, `max_iterations`, `min_score`, `editorial_tone`, `content_plan`, `animations` (off | templates | scripts).
 
 `scenario.json` (scénariste) :
 ```json
@@ -71,4 +100,6 @@ Clips contigus de 0 à la durée de `voice.wav` (±0,5 s). `motion` ∈ zoom, pa
 | `render --out renders/v1.mp4` | rend `timeline.json` (plusieurs minutes : normal) |
 | `frames --video renders/v1.mp4 [--every 2]` | frames + `review/v1/sheet.png` + loudness |
 | `thumbnail --background media/x.jpg --text "MOT|CHOC" --out thumbnails/v1_9x16.png [--aspect 16:9] [--position top\|center\|bottom] [--color yellow]` | miniature |
+| `animate-template --template title\|counter\|bars\|list --params '{…}' --duration 3 --name 04_x` | animation prête → `media/anim_04_x.mp4` |
+| `animate --script anim/05_x.html\|.py --duration 4 --name 05_x` | rend un script jetable (bac à sable) → `media/anim_05_x.mp4` |
 | `probe --path … [--loudness]` / `validate --kind … --path …` | contrôle |

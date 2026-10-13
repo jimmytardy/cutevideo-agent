@@ -49,6 +49,7 @@ def prepare_run_dir(run_dir: Path, brief: Brief) -> Path:
     run_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy2(WORKSPACE_TEMPLATE / "CLAUDE.md", run_dir / "CLAUDE.md")
     shutil.copytree(WORKSPACE_TEMPLATE / ".claude", run_dir / ".claude", dirs_exist_ok=True)
+    shutil.copytree(WORKSPACE_TEMPLATE / "anim", run_dir / "anim", dirs_exist_ok=True)
     (run_dir / "brief.json").write_text(
         brief.model_dump_json(indent=2, exclude_none=True), encoding="utf-8"
     )
@@ -89,12 +90,22 @@ def build_command(cfg: LaunchConfig, prompt: str = "/make-video") -> list[str]:
     return cmd
 
 
+def _brief_animations(run_dir: Path) -> str:
+    try:
+        return Brief.model_validate_json((run_dir / "brief.json").read_text(encoding="utf-8")).animations
+    except (OSError, ValueError):
+        return "off"
+
+
 def build_env(run_dir: Path) -> dict[str, str]:
     env = dict(os.environ)
     python_bin = str(Path(sys.executable).parent)
     env["PATH"] = f"{python_bin}{os.pathsep}{env.get('PATH', '')}"
     env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(REPO_ROOT), env.get("PYTHONPATH")]))
     env["STUDIO_RUN_DIR"] = str(run_dir)
+    # Niveau d'animation lu ici, avant que Claude ne puisse toucher brief.json : les outils
+    # `animate*` ne font confiance qu'à cette variable.
+    env["STUDIO_ANIMATIONS"] = _brief_animations(run_dir)
     # Rendus et transcriptions dépassent les 2 min par défaut du Bash de Claude Code.
     env.setdefault("BASH_DEFAULT_TIMEOUT_MS", "1200000")
     env.setdefault("BASH_MAX_TIMEOUT_MS", "1800000")

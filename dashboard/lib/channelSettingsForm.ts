@@ -40,6 +40,7 @@ export function channelToFormState(channel: Channel): ChannelSettingsForm {
   const mediaValidation = (cfg.media_validation as Record<string, unknown>) || {}
   const ai = (media.ai_fallback as Record<string, unknown>) || {}
   const runway = (cfg.runway as Record<string, unknown>) || {}
+  const studio = (cfg.studio as Record<string, unknown>) || {}
 
   return {
     theme_category: channel.theme_category || '',
@@ -53,6 +54,8 @@ export function channelToFormState(channel: Channel): ChannelSettingsForm {
     target_audience: editorial.target_audience || '',
     differentiator: editorial.differentiator || '',
     production_mode: prod.mode || 'mixed',
+    // '' = hérite du défaut plateforme (data/agent_config.json → studio.animations).
+    animations: studio.animations || '',
     short_duration_s: prod.short_duration_s || 60,
     min_short_duration_s: prod.min_short_duration_s || 60,
     max_short_duration_s: prod.max_short_duration_s || 120,
@@ -96,6 +99,7 @@ export function normalizeFormForCompare(form: ChannelSettingsForm): ChannelSetti
     target_audience: String(form.target_audience || ''),
     differentiator: String(form.differentiator || ''),
     production_mode: String(form.production_mode || 'mixed'),
+    animations: String(form.animations || ''),
     short_duration_s: Number(form.short_duration_s),
     min_short_duration_s: Number(form.min_short_duration_s),
     max_short_duration_s: Number(form.max_short_duration_s),
@@ -137,6 +141,9 @@ export function buildChannelUpdatePayload(
   config: Record<string, unknown>
 } {
   const existingConfig = (channel.config || {}) as Record<string, unknown>
+  const { animations: _previousAnimations, ...existingStudio } =
+    (existingConfig.studio as Record<string, unknown>) || {}
+  const studio = form.animations ? { ...existingStudio, animations: form.animations } : existingStudio
 
   return {
     theme_category: form.theme_category,
@@ -145,6 +152,7 @@ export function buildChannelUpdatePayload(
     creative_brief: form.creative_brief ? String(form.creative_brief) : null,
     config: {
       ...existingConfig,
+      studio,
       editorial: {
         ...((existingConfig.editorial as Record<string, unknown>) || {}),
         tone: form.tone,

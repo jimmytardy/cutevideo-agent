@@ -51,6 +51,13 @@ import { useUnsavedChangesWarning } from '@/lib/useUnsavedChangesWarning'
 
 const PLATFORMS = ['youtube', 'tiktok', 'instagram']
 
+const ANIMATION_MODES = [
+  { value: '', label: 'Par défaut de la plateforme (scripts libres)' },
+  { value: 'scripts', label: 'Scripts libres + modèles' },
+  { value: 'templates', label: 'Modèles prêts seulement (titre, compteur, barres, liste)' },
+  { value: 'off', label: 'Désactivées (photos et vidéos uniquement)' },
+]
+
 const MODES = [
 
   { value: 'mixed', label: 'Mixte (long + shorts)' },
@@ -442,6 +449,12 @@ export default function ChannelSettingsPage({ params }: Props) {
 
           {MODES.map((m) => <MenuItem key={m.value} value={m.value}>{m.label}</MenuItem>)}
 
+        </TextField>
+
+        <TextField select fullWidth label="Animations (Claude Studio)" value={String(form.animations || '')} sx={{ mb: 2 }}
+          helperText="Scripts libres : Claude écrit ses propres animations (HTML/JS, Python) dans un bac à sable isolé, comme sur claude.ai."
+          onChange={(e) => setForm({ ...form, animations: e.target.value })}>
+          {ANIMATION_MODES.map((m) => <MenuItem key={m.value} value={m.value}>{m.label}</MenuItem>)}
         </TextField>
 
 

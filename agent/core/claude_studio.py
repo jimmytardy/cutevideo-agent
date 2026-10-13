@@ -75,6 +75,7 @@ def build_brief(ctx: "PipelineContext") -> Brief:
         min_score=cfg.min_critic_score,
         editorial_tone=cfg.editorial_tone,
         content_plan=plan or None,
+        animations=cfg.studio_animations,
     )
 
 

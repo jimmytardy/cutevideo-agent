@@ -22,8 +22,12 @@ import pytest
 from studio.contracts import Brief, Critique, Scenario, StudioResult, Thumbnail, Timeline, load_contract
 from studio.launcher import ROLES, WORKSPACE_TEMPLATE, LaunchConfig, prepare_run_dir, run_claude
 from studio.media import probe_media
+from studio.sandbox import scripts_supported
 from studio.tools import build_parser
-from tests.studio_fakes import install_fake_claude
+from tests.studio_fakes import install_fake_claude, playwright_chromium_available
+
+# Le faux producteur ajoute des plans animés à l'itération 2 quand le bac à sable est disponible.
+ANIMATIONS = "scripts" if playwright_chromium_available() and scripts_supported() else "off"
 
 
 @pytest.fixture(scope="module")
@@ -33,7 +37,8 @@ def generated(tmp_path_factory: pytest.TempPathFactory) -> dict:
     claude_bin = install_fake_claude(root / "bin")
     run_dir = prepare_run_dir(
         root / "run",
-        Brief(theme="Pourquoi les flamants roses sont roses", target_duration_s=15, max_iterations=2),
+        Brief(theme="Pourquoi les flamants roses sont roses", target_duration_s=15, max_iterations=2,
+              animations=ANIMATIONS),
     )
     events: list[tuple[str, dict]] = []
 
@@ -97,9 +102,16 @@ def test_final_video_is_a_vertical_short_with_audio(generated: dict) -> None:
     assert info["duration_s"] == pytest.approx(3.0, abs=0.25)
     summary = json.loads((run_dir / "renders" / "v2.render.json").read_text(encoding="utf-8"))
     assert summary["subtitles"] is True
-    assert [c["media"] for c in summary["credits"]] == [
-        "media/01_poussin.png", "media/02_repas.mp4", "media/03_silhouette.png",
-    ]
+    if ANIMATIONS == "scripts":
+        # v2 : plan 2 = script jetable, plan 3 = modèle « counter » (crédits « original »).
+        assert [c["media"] for c in summary["credits"]] == [
+            "media/01_poussin.png", "media/anim_02_schema.mp4", "media/anim_03_chiffre.mp4",
+        ]
+        assert [c["license"] for c in summary["credits"][1:]] == ["original", "original"]
+    else:
+        assert [c["media"] for c in summary["credits"]] == [
+            "media/01_poussin.png", "media/02_repas.mp4", "media/03_silhouette.png",
+        ]
     # Les deux itérations ont été rendues et revues par la critique.
     assert (run_dir / "renders" / "v1.mp4").is_file()
     assert (run_dir / "review" / "v2" / "sheet.png").is_file()

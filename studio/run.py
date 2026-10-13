@@ -71,6 +71,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--voice", default="")
     parser.add_argument("--run-dir", type=Path, help=f"défaut : {default_runs_dir()}/<date>-<slug>")
     parser.add_argument("--model", help="modèle Claude (défaut CLAUDE_STUDIO_MODEL ou claude-opus-5-5)")
+    parser.add_argument("--animations", choices=["off", "templates", "scripts"], default="scripts",
+                        help="animations autorisées (défaut : scripts jetables + modèles)")
     parser.add_argument("--interactive", action="store_true", help="ouvre Claude Code au lieu du mode headless")
     args = parser.parse_args(argv)
 
@@ -83,6 +85,7 @@ def main(argv: list[str] | None = None) -> int:
         voice=args.voice,
         max_iterations=args.max_iterations,
         min_score=args.min_score,
+        animations=args.animations,
     )
     run_dir = args.run_dir or default_runs_dir() / f"{time.strftime('%Y%m%d-%H%M%S')}-{_slug(args.theme)}"
     run_dir = prepare_run_dir(run_dir, brief)

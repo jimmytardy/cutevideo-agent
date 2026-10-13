@@ -167,6 +167,24 @@ async def cmd_thumbnail(args: argparse.Namespace, run_dir: Path) -> Any:
     )
 
 
+async def cmd_animate_template(args: argparse.Namespace, run_dir: Path) -> Any:
+    from studio.animate import animate_template
+
+    try:
+        params = json.loads(args.params or "{}")
+    except json.JSONDecodeError as exc:
+        raise ContractError(f"--params doit être un objet JSON : {exc}") from exc
+    if not isinstance(params, dict):
+        raise ContractError("--params doit être un objet JSON")
+    return await animate_template(run_dir, args.template, params, args.duration, args.name)
+
+
+async def cmd_animate(args: argparse.Namespace, run_dir: Path) -> Any:
+    from studio.animate import animate_script
+
+    return await animate_script(run_dir, args.script, args.duration, args.name)
+
+
 async def cmd_probe(args: argparse.Namespace, run_dir: Path) -> Any:
     path = _inside(run_dir, args.path)
     info = await media.probe_media(path)
@@ -264,6 +282,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--position", choices=["top", "center", "bottom"], default="center")
     p.add_argument("--color", default="yellow", help="couleur ffmpeg (yellow, white, #FF3B30…)")
     p.set_defaults(func=cmd_thumbnail)
+
+    p = sub.add_parser("animate-template", help="animation prête (title, counter, bars, list) → media/anim_<name>.mp4")
+    p.add_argument("--template", required=True)
+    p.add_argument("--params", default="{}", help="objet JSON des paramètres du modèle")
+    p.add_argument("--duration", type=float, required=True)
+    p.add_argument("--name", required=True)
+    p.set_defaults(func=cmd_animate_template)
+
+    p = sub.add_parser("animate", help="rend un script jetable anim/<x>.html|.py (bac à sable) → media/anim_<name>.mp4")
+    p.add_argument("--script", required=True)
+    p.add_argument("--duration", type=float, required=True)
+    p.add_argument("--name", required=True)
+    p.set_defaults(func=cmd_animate)
 
     p = sub.add_parser("probe", help="durée, résolution, audio d'un fichier")
     p.add_argument("--path", required=True)

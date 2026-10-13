@@ -1,0 +1,20 @@
+# Bac à sable des animations Claude Studio (scripts jetables HTML/JS et Python).
+# Aucun secret, aucun réseau (docker-compose : network_mode none, pas d'env_file),
+# utilisateur non-root ; ne voit que le volume des runs. Voir studio/sandbox.py.
+FROM python:3.11-slim-bookworm
+
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    PYTHONUNBUFFERED=1 \
+    MPLBACKEND=Agg
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        fonts-dejavu-core fonts-liberation fonts-noto-color-emoji \
+    && pip install --no-cache-dir playwright==1.63.0 matplotlib==3.11.2 numpy==2.4.6 pillow==12.3.0 \
+    && playwright install --with-deps --only-shell chromium \
+    && rm -rf /var/lib/apt/lists/* /root/.cache
+
+RUN useradd --uid 1000 --create-home sandbox
+COPY studio/sandbox_exec.py studio/sandbox_worker.py /opt/sandbox/
+
+USER sandbox
+CMD ["python", "/opt/sandbox/sandbox_worker.py"]

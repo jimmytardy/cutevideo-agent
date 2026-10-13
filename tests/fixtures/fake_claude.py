@@ -28,6 +28,18 @@ BEATS = ["Un flamant rose naît gris.", "Il mange sa couleur.", "Et toi, tu es d
 _counter = 0
 
 
+# Script jetable « écrit par Claude » : rendu image par image via renderFrame(t).
+ANIM_SCRIPT = """<!doctype html><html><body style="margin:0;width:1080px;height:1920px;background:#102">
+<canvas id="c" width="1080" height="1920"></canvas><script>
+const ctx = document.getElementById("c").getContext("2d");
+window.renderFrame = (t) => {
+  ctx.fillStyle = "#102"; ctx.fillRect(0, 0, 1080, 1920);
+  ctx.fillStyle = "#ff6fae"; ctx.beginPath(); ctx.arc(540, 700, 80 + 300 * Math.min(t, 1), 0, 2 * Math.PI); ctx.fill();
+};
+</script></body></html>
+"""
+
+
 def emit(payload: dict) -> None:
     print(json.dumps(payload, ensure_ascii=False), flush=True)
 
@@ -62,6 +74,11 @@ def check_invocation(argv: list[str]) -> None:
             fail(f"workspace incomplet : {rel}")
     if Path(os.environ.get("STUDIO_RUN_DIR", "")).resolve() != RUN_DIR.resolve():
         fail("STUDIO_RUN_DIR doit pointer sur le run dir")
+    brief = json.loads((RUN_DIR / "brief.json").read_text(encoding="utf-8"))
+    if os.environ.get("STUDIO_ANIMATIONS") != brief.get("animations", "scripts"):
+        fail("STUDIO_ANIMATIONS doit refléter brief.animations (posé par le launcher)")
+    if not (RUN_DIR / "anim" / "lib" / "gsap.min.js").is_file():
+        fail("libs d'animation absentes du run dir (anim/lib)")
     if os.environ.get("ANTHROPIC_API_KEY") and os.environ.get("CLAUDE_STUDIO_AUTH") != "api_key":
         fail("ANTHROPIC_API_KEY ne doit pas être transmise en mode abonnement")
 
@@ -155,14 +172,24 @@ def monteur(iteration: int) -> None:
                               "requires_attribution": False}
             for name in ("01_poussin.png", "02_repas.mp4", "03_silhouette.png")
         })
+    clips = [
+        {"media": "media/01_poussin.png", "start": 0.0, "end": 1.0,
+         "motion": "zoom" if iteration == 1 else "pan_left", "text": "NÉ GRIS"},
+        {"media": "media/02_repas.mp4", "start": 1.0, "end": 2.0, "video_offset": 0.2},
+        {"media": "media/03_silhouette.png", "start": 2.0, "end": VOICE_S, "motion": "pan_right"},
+    ]
+    # Itération 2 (correction demandée par la critique) : plans animés selon brief.animations.
+    animations = json.loads((RUN_DIR / "brief.json").read_text(encoding="utf-8")).get("animations", "off")
+    if iteration == 2 and animations == "scripts":
+        (RUN_DIR / "anim" / "02_schema.html").write_text(ANIM_SCRIPT, encoding="utf-8")
+        anim = tool(agent.id, "animate", "--script", "anim/02_schema.html", "--duration", "1", "--name", "02_schema")
+        clips[1] = {"media": anim["media"], "start": 1.0, "end": 2.0, "motion": "static", "video_offset": 0}
+    if iteration == 2 and animations in ("templates", "scripts"):
+        anim = tool(agent.id, "animate-template", "--template", "counter", "--duration", "1.2", "--name", "03_chiffre",
+                    "--params", json.dumps({"to": 3, "suffix": " ans", "label": "pour devenir roses"}))
+        clips[2] = {"media": anim["media"], "start": 2.0, "end": VOICE_S, "motion": "static", "video_offset": 0}
     write_json("timeline.json", {
-        "voice": "voice.wav", "words": "words.json", "music": None, "subtitles": True,
-        "clips": [
-            {"media": "media/01_poussin.png", "start": 0.0, "end": 1.0,
-             "motion": "zoom" if iteration == 1 else "pan_left", "text": "NÉ GRIS"},
-            {"media": "media/02_repas.mp4", "start": 1.0, "end": 2.0, "video_offset": 0.2},
-            {"media": "media/03_silhouette.png", "start": 2.0, "end": VOICE_S, "motion": "pan_right"},
-        ],
+        "voice": "voice.wav", "words": "words.json", "music": None, "subtitles": True, "clips": clips,
     })
     tool(agent.id, "validate", "--kind", "timeline", "--path", "timeline.json")
     tool(agent.id, "render", "--out", f"renders/v{iteration}.mp4")

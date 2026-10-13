@@ -1,4 +1,7 @@
 {
+  "studio": {
+    "animations": "scripts"
+  },
   "pipeline": {
     "min_free_disk_bytes": 10737418240,
     "queue_dequeue_max_attempts": 50,
