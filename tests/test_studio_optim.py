@@ -99,3 +99,22 @@ def test_kit_icons_cited_in_workspace_exist() -> None:
     assert len(names) > 30
     for name in names:
         assert (WORKSPACE_LIB / "icons" / f"{name}.svg").exists(), name
+
+
+def test_emphasis_tags_are_parsed_per_line() -> None:
+    text = "Le plus fou ?\n[rate=-4% pitch=+12Hz] Nous !\n\n[bidon] La Terre freine."
+    lines = voicefx.parse_emphasis(text)
+    assert lines == [("Le plus fou ?", {}), ("Nous !", {"rate": "-4%", "pitch": "+12Hz"}), ("La Terre freine.", {})]
+    assert voicefx.has_emphasis(text)
+    assert not voicefx.has_emphasis("Phrase simple.\nAutre phrase.")
+
+
+def test_concat_wavs_inserts_short_gaps(tmp_path: Path) -> None:
+    sr = 48000
+    parts = []
+    for i in range(3):
+        p = tmp_path / f"p{i}.wav"
+        sf.write(p, 0.2 * np.ones(sr // 2), sr, subtype="PCM_16")
+        parts.append(p)
+    dur = voicefx.concat_wavs(parts, tmp_path / "out.wav", gap_s=0.1)
+    assert dur == pytest.approx(1.5 + 0.2, abs=0.01)

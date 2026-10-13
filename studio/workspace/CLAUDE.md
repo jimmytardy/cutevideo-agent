@@ -149,7 +149,7 @@ d'affilée**. `music_volume` 0.08 ≈ musique 17 dB sous la voix (0.06-0.12). So
 | `download --id c4 --name 03_lave` | → `media/03_lave.<ext>` + crédits |
 | `ai-image --prompt "…" --name 05_carte` | image IA 9:16 (dernier recours) |
 | `music --mood dramatique` | musique libre → `media/music/…` |
-| `tts --text-file narration.txt [--mood …] [--rate +8%] [--pitch -2Hz] [--max-pause 0.4]` | → `voice.wav` (Azure → Gemini → edge ; silences > 0,4 s raccourcis) |
+| `tts --text-file narration.txt [--mood …] [--rate +8%] [--pitch -2Hz] [--max-pause 0.4]` | → `voice.wav` (Azure → Gemini → edge ; silences > 0,4 s raccourcis ; ligne préfixée `[rate=-4% pitch=+12Hz]` = emphase) |
 | `transcribe --text-file subtitles.txt` | `voice.wav` → `words.json` (timings Whisper, orthographe du script) |
 | `render --out renders/v1.mp4` | rend `timeline.json` (plusieurs minutes : normal) |
 | `frames --video renders/v1.mp4 [--every 2]` | frames + `review/v1/sheet.png` + loudness |

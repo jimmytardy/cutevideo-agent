@@ -86,23 +86,36 @@ async def cmd_tts(args: argparse.Namespace, run_dir: Path) -> Any:
         "gemini": tts_cfg.get("gemini", {}).get("voice", "Leda"),
         "edge": tts_cfg.get("fallback_voice", "fr-FR-DeniseNeural"),
     }
+    from studio.voicefx import concat_wavs, has_emphasis, parse_emphasis
+
+    # Emphase par ligne (`[rate=+12% pitch=+4Hz] Nous !`) : chaque ligne est synthétisée avec ses réglages
+    # puis recollée (edge-tts n'accepte pas de SSML).
+    segments = parse_emphasis(text) if has_emphasis(text) else [(text, {})]
     errors: dict[str, str] = {}
     for engine in chain:
         voice = args.voice if (args.voice and engine == primary) else voices.get(engine, "")
         try:
-            duration, used = await generate_tts(
-                text,
-                out,
-                voice=voice,
-                engine=engine,
-                tts_style=args.style or "narration-professional",
-                tts_rate=args.rate,
-                tts_pitch=args.pitch,
-                mood=args.mood or "",
-            )
+            parts: list[Path] = []
+            for i, (seg_text, opts) in enumerate(segments):
+                part = out if len(segments) == 1 else out.with_name(f".{out.stem}_part{i:02d}.wav")
+                _dur, used = await generate_tts(
+                    seg_text,
+                    part,
+                    voice=voice,
+                    engine=engine,
+                    tts_style=args.style or "narration-professional",
+                    tts_rate=opts.get("rate", args.rate),
+                    tts_pitch=opts.get("pitch", args.pitch),
+                    mood=args.mood or "",
+                )
+                parts.append(part)
+            duration = _dur if len(parts) == 1 else concat_wavs(parts, out)
         except Exception as exc:
             errors[engine] = str(exc)[:200]
             continue
+        finally:
+            for p in out.parent.glob(f".{out.stem}_part*.wav"):
+                p.unlink(missing_ok=True)
         tightened = None
         if args.max_pause > 0:
             from studio.voicefx import tighten_pauses

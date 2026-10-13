@@ -7,6 +7,7 @@ par énergie, relative au niveau de la voix, et ramenés à `max_pause_s` avec u
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import numpy as np
@@ -72,3 +73,47 @@ def tighten_pauses(path: Path, *, max_pause_s: float = 0.4, threshold_db: float 
         "after_s": round(len(out) / sr, 3),
         "removed_s": round((len(audio) - len(out)) / sr, 3),
     }
+
+
+_TAG = re.compile(r"^\s*\[(?P<body>[^\]]*)\]\s*")
+
+
+def parse_emphasis(text: str) -> list[tuple[str, dict[str, str]]]:
+    """Lignes de narration avec réglages optionnels en tête : `[rate=+12% pitch=+4Hz] Nous !`."""
+    lines: list[tuple[str, dict[str, str]]] = []
+    for raw in text.splitlines():
+        if not raw.strip():
+            continue
+        opts: dict[str, str] = {}
+        m = _TAG.match(raw)
+        if m:
+            for part in m.group("body").replace(",", " ").split():
+                key, _, value = part.partition("=")
+                if key in ("rate", "pitch") and value:
+                    opts[key] = value
+            raw = raw[m.end():]
+        lines.append((raw.strip(), opts))
+    return lines
+
+
+def has_emphasis(text: str) -> bool:
+    return any(opts for _, opts in parse_emphasis(text))
+
+
+def concat_wavs(parts: list[Path], out: Path, *, gap_s: float = 0.12) -> float:
+    """Concatène des WAV (même format) avec un court silence entre eux. Renvoie la durée."""
+    import soundfile as sf
+
+    chunks, sr = [], None
+    for p in parts:
+        data, rate = sf.read(str(p), always_2d=False)
+        if sr is None:
+            sr = rate
+        elif rate != sr:
+            raise ValueError(f"fréquences différentes : {p.name}")
+        if chunks:
+            chunks.append(np.zeros((int(sr * gap_s),) + data.shape[1:], dtype=data.dtype))
+        chunks.append(data)
+    audio = np.concatenate(chunks)
+    sf.write(str(out), audio, sr, subtype="PCM_16")
+    return len(audio) / sr
