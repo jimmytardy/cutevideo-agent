@@ -169,8 +169,10 @@ async def cmd_analyze(args: argparse.Namespace, run_dir: Path) -> Any:
         raise FileNotFoundError(f"{args.video} introuvable")
     out_dir = _inside(run_dir, args.out or f"review/{video.stem}/analysis")
     words = _inside(run_dir, args.words) if args.words else None
+    timeline = _inside(run_dir, args.timeline) if args.timeline else None
     return await analyze_video(
-        run_dir, video, out_dir, engine=args.engine, words_file=words, every_s=args.every, context=args.context or ""
+        run_dir, video, out_dir, engine=args.engine, words_file=words, timeline_file=timeline,
+        every_s=args.every, context=args.context or "",
     )
 
 
@@ -305,6 +307,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", help="dossier (défaut review/<nom>/analysis)")
     p.add_argument("--engine", choices=["auto", "gemini", "claude"], default="auto")
     p.add_argument("--words", help="words.json existant (évite une transcription Whisper)")
+    p.add_argument("--timeline", help="timeline.json du rendu : coupes exactes (sinon détectées à l'image)")
     p.add_argument("--every", type=float, default=1.0, help="pas de la planche chronologique (s)")
     p.add_argument("--context", help="contexte pour Gemini (sujet, cible)")
     p.set_defaults(func=cmd_analyze)

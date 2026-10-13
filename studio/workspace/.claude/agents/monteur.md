@@ -23,6 +23,9 @@ toutes les ~2 s** calé sur les mots (`at` = temps du mot − début du plan) : 
   icônes, `counter`, `arrow`, `units`, `map`, `gauge`, `camera`…). Garde le contenu dans y 170-1180.
 - durée de l'animation = durée du plan + 0,3 s ; `animate` puis **Read sur la planche** ; corrige si texte coupé,
   élément hors zone, chevauchement, vide (2 essais max par plan).
+- **plan 1 (hook)** : la toute première image est déjà pleine et lisible (mot-clé + objet-héros visibles à t = 0 :
+  `at: 0, enter: "none"`), puis ça bouge avant 0,5 s (zoom caméra, secousse, apparition) ; c'est elle qui arrête
+  le scroll et sert d'aperçu dans le fil ;
 - dernier plan : rappelle visuellement le premier (même objet-héros, même cadrage) pour la boucle.
 **`mixed` / `footage`** : pour les beats marqués « PHOTO : » / « VIDÉO : », `search-media` (anglais, concret ;
 `--type video` pour l'action) → `preview` → **Read** → `download --name <NN>_<mot>`. Pertinence au mot près,

@@ -215,7 +215,7 @@ def miniaturiste() -> None:
 
 def critique(iteration: int) -> None:
     agent = Subagent("critique", iteration)
-    analysis = tool(agent.id, "analyze", "--video", f"renders/v{iteration}.mp4", "--words", "words.json",
+    analysis = tool(agent.id, "analyze", "--video", f"renders/v{iteration}.mp4", "--words", "words.json", "--timeline", "timeline.json",
                     "--engine", "claude")
     approve = iteration >= 2
     write_json(f"critique_{iteration}.json", {

@@ -93,7 +93,8 @@
       this.glow = el("ellipse", {cx: 540, cy: opts.glowY || 760, rx: 620, ry: 620, fill: "url(#accGlow)"}, svg);
       this.world = el("g", {}, svg);      // couche soumise à la caméra
       this.overlay = el("g", {}, svg);    // titres (fixes)
-      this.flashRect = el("rect", {x: 0, y: 0, width: W, height: H, fill: "#fff", opacity: 0}, svg);
+      // Flash teinté de l'accent, en mode « screen » : éclaire sans délaver les noirs.
+      this.flashRect = el("rect", {x: 0, y: 0, width: W, height: H, fill: this.th.accent, opacity: 0, style: "mix-blend-mode:screen"}, svg);
       // Vignettage léger pour la finition.
       const vg = el("radialGradient", {id: "vign", cx: "50%", cy: "45%", r: "75%"}, defs);
       el("stop", {offset: "60%", "stop-color": "#000", "stop-opacity": 0}, vg);
@@ -400,7 +401,7 @@
     // ── effets globaux ──
     camera(o = {}) { this.cams.push(Object.assign({at: 0, dur: 1.2, zoom: 1.25, x: 540, y: 900}, o)); return this; }
     shake(o = {}) { this.shakes.push(Object.assign({at: 0, dur: 0.4, amp: 18}, o)); return this; }
-    flash(o = {}) { this.flashes.push(Object.assign({at: 0, dur: 0.25}, o)); return this; }
+    flash(o = {}) { this.flashes.push(Object.assign({at: 0, dur: 0.18}, o)); return this; }
 
     _fit() {
       for (const it of this.items) {
@@ -443,7 +444,7 @@
       }
       this.world.setAttribute("transform", `translate(${540 + sx} ${960 + sy}) scale(${z}) translate(${-cx} ${-cy})`);
       let f = 0;
-      for (const fl of this.flashes) if (t >= fl.at && t < fl.at + fl.dur) f = Math.max(f, 0.7 * (1 - (t - fl.at) / fl.dur));
+      for (const fl of this.flashes) if (t >= fl.at && t < fl.at + fl.dur) f = Math.max(f, 0.35 * (1 - (t - fl.at) / fl.dur));
       this.flashRect.setAttribute("opacity", f);
     }
   }

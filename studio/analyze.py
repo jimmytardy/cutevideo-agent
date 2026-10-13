@@ -394,6 +394,7 @@ async def analyze_video(
     *,
     engine: str = "auto",
     words_file: Path | None = None,
+    timeline_file: Path | None = None,
     every_s: float = 1.0,
     context: str = "",
 ) -> dict[str, Any]:
@@ -423,6 +424,16 @@ async def analyze_video(
     # ── images ──
     frames = await _decode_frames(video, work / "frames")
     cuts, diffs = _detect_cuts(frames)
+    cuts_source = "image"
+    # Coupes connues par la timeline (les coupes entre animations au même fond échappent à la détection).
+    if timeline_file and timeline_file.exists():
+        try:
+            clips = json.loads(timeline_file.read_text(encoding="utf-8"))["clips"]
+            if abs(float(clips[-1]["end"]) - duration) <= 0.6:
+                cuts = [round(float(c["start"]), 2) for c in clips[1:]]
+                cuts_source = "timeline"
+        except (KeyError, ValueError, TypeError, IndexError):
+            pass
     bounds = [0.0, *cuts, duration]
     shots = [round(b - a, 2) for a, b in zip(bounds, bounds[1:])]
     longest = int(np.argmax(shots)) if shots else 0
@@ -436,6 +447,7 @@ async def analyze_video(
                 static_spans.append({"at": round(_frame_time(run_start), 1), "s": round((i - run_start) / ANALYSIS_FPS, 1)})
             run_start = None
     result["visual"] = {
+        "cuts_source": cuts_source,
         "cuts": cuts,
         "shots": len(shots),
         "mean_shot_s": round(float(np.mean(shots)), 2) if shots else duration,

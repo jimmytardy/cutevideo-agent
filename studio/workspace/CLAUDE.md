@@ -33,6 +33,9 @@ pour lire, écrire ou lister des fichiers utilise Read, Write, Edit et Glob.
   partout ; un objet-héros récurrent ; un enjeu visible (jauge) si le récit a une tension.
 - **Zones** (1080×1920) : contenu utile y **170-1180**, x 60-960 ; sous-titres centrés à y ≈ 1290 ; tout ce qui est
   sous y 1400 et la colonne x > 960 est masqué par l'interface TikTok / Shorts.
+- **Remplir l'écran** (vu sur un téléphone, le petit disparaît) : objet principal 450-700 px de large, éléments
+  secondaires ≥ 180 px, étiquettes ≥ 44 px, deux objets côte à côte occupent toute la largeur utile ; préférer
+  un zoom caméra sur la zone active plutôt que des éléments minuscules.
 - Texte ≥ 48 px, fort contraste. Les animations n'ont pas de son : les bruitages se posent dans la timeline (`sfx`).
 
 ## Kit d'animation `anim/lib/studio.js` (à utiliser pour toutes les animations scriptées)
@@ -150,7 +153,7 @@ d'affilée**. `music_volume` 0.08 ≈ musique 17 dB sous la voix (0.06-0.12). So
 | `transcribe --text-file subtitles.txt` | `voice.wav` → `words.json` (timings Whisper, orthographe du script) |
 | `render --out renders/v1.mp4` | rend `timeline.json` (plusieurs minutes : normal) |
 | `frames --video renders/v1.mp4 [--every 2]` | frames + `review/v1/sheet.png` + loudness |
-| `analyze --video renders/v1.mp4 [--words words.json]` | analyse multimodale : avis Gemini si dispo, sinon planches hook/chronologie/coupes, débit, pauses, loudness, rapport voix/fond, intonation, spectrogramme + alertes |
+| `analyze --video renders/v1.mp4 [--words words.json] [--timeline timeline.json]` | analyse multimodale : avis Gemini si dispo, sinon planches hook/chronologie/coupes, débit, pauses, loudness, rapport voix/fond, intonation, spectrogramme + alertes |
 | `thumbnail --background media/x.jpg --text "MOT\|CHOC" --out thumbnails/v1_9x16.png [--aspect 16:9] [--position top\|center\|bottom] [--color yellow]` | miniature |
 | `animate-template --template <modèle> --params '{…}' --duration 3 --name 04_x` | animation prête → `media/anim_04_x.mp4` |
 | `animate --script anim/05_x.html\|.py --duration 4 --name 05_x` | rend un script jetable (bac à sable) |
