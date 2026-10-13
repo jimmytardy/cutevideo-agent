@@ -11,10 +11,29 @@ sous-titres refaits, charte d'animation + 5 modèles, prompts recalibrés. Gén�
 | # | Sujet | Version | Score | Analyse | Durée | Rendu | Mémoire min | Chemin |
 |---|---|---|---|---|---|---|---|---|
 | baseline | Pourquoi la Lune s'éloigne de la Terre | v1 → v2 | 79 → 85 (approuvée, ancienne grille) | critique Claude (frames) | 30,9 s | ~6 min | 1,13 Go | `~/.cache/cutevideo/optim/baseline_lune/renders/v2.mp4` |
+| g1 | Pourquoi la Lune s'éloigne de la Terre (nouvelle chaîne) | v1 → v2 | 81 → **86** (approuvée, grille virale) | `analyze` claude | 42,5 s | 42 min au total (rendu 2 min) | 1,9 Go dispo | `~/.cache/cutevideo/optim/runs/g1_lune/renders/v2.mp4` |
 
 Mesures `analyze` de la baseline v2 : 2,38 mots/s, 13 silences de 0,4-0,9 s (un après chaque phrase), musique
 quasi inaudible (fond -49 dBFS, voix/fond +33 dB), -16,2 LUFS, plan le plus long 9 s, sous-titres sous la ligne
 d'interface TikTok, karaoké qui colore toute la ligne d'emblée.
+
+Mesures `analyze` (mêmes outils pour tous) :
+
+| mesure | baseline v2 | g1 v2 | réf. Pise (1,4 M vues) |
+|---|---|---|---|
+| mots/s | 2,38 | 2,97 | 3,44 |
+| pause max | 0,98 s | 0,60 s | 0,86 s |
+| silences francs | 12 | 0 | 0 |
+| loudness | -16,2 LUFS | -15,1 (→ -14,4 avec le recalage ajouté ensuite) | -13,1 |
+| voix / fond | +33 dB (musique inaudible) | +17,7 dB | +14,4 dB |
+| alertes `analyze` | 13 | 2 | 1 |
+
+g1 en clair : 11 plans 100 % animés avec le kit (thème space, accent cyan), mot-clé en haut de chaque plan,
+hook « La Lune s'éloigne de nous à la vitesse où poussent vos ongles ! », « Aucun rapport ? Sauf que… »,
+« Mais attendez… », « À votre avis, qui ? — Nous ! », fin « Alors la prochaine fois que vous vous coupez les
+ongles, dites-vous que… » qui reboucle sur la 1re image. Critique v1 (81) très précise grâce aux planches :
+voile gris des flashs, scènes trop petites, étiquette sur les sous-titres, prosodie « Au… temps » ; v2 corrige.
+Défauts restants : éléments encore petits sur certains plans, étiquettes secondaires < 48 px.
 
 ## Changements (quoi, pourquoi, effet mesuré)
 1. **`python -m studio.tools analyze`** (`studio/analyze.py`) — Gemini d'abord, repli Claude automatique :
@@ -45,6 +64,13 @@ d'interface TikTok, karaoké qui colore toute la ligne d'emblée.
    ~2 s, sfx, mots-clés), critique (grille virale 100 pts sur `analyze`), miniaturiste (fond tiré d'animation).
 9. **`ai-image`** : la clé FAL du `.env` n'était jamais transmise (`generate_image` force `user_resolved_keys`) —
    corrigé ; la clé elle-même est refusée (401). Message d'erreur qui oriente vers le kit d'animation.
+
+10. Après g1 : flash du kit teinté (mode screen, 0,35) au lieu d'un voile blanc ; `analyze --timeline` (coupes
+    exactes, la détection à l'image ratait les coupes entre animations au même fond) ; règles « image 1 pleine à
+    t = 0 » et « remplir l'écran » ; recalage loudness après limiteur (-15,1 → -14,4 LUFS) ; icônes passées à 356
+    avec `INDEX.txt` (le monteur perdait du temps en Glob) et erreur explicite sur icône inconnue ; miniatures et
+    textes incrustés en Poppins ; `thumbnail` borne `@t` à la durée de la vidéo (erreur obscure avant).
+11. Modèles title / counter / bars / list refaits sur le kit (même charte que les scripts).
 
 ## Choix rejetés
 - **Pollinations.ai** comme repli IA gratuit : filigrane imposé, 576×1024, rendu médiocre.
