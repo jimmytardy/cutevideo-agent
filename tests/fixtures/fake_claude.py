@@ -185,11 +185,16 @@ def monteur(iteration: int) -> None:
         anim = tool(agent.id, "animate", "--script", "anim/02_schema.html", "--duration", "1", "--name", "02_schema")
         clips[1] = {"media": anim["media"], "start": 1.0, "end": 2.0, "motion": "static", "video_offset": 0}
     if iteration == 2 and animations in ("templates", "scripts"):
-        anim = tool(agent.id, "animate-template", "--template", "counter", "--duration", "1.2", "--name", "03_chiffre",
-                    "--params", json.dumps({"to": 3, "suffix": " ans", "label": "pour devenir roses"}))
+        anim = tool(agent.id, "animate-template", "--template", "compare", "--duration", "1.2", "--name", "03_chiffre",
+                    "--params", json.dumps({"title": "GRIS → ROSE", "left": {"label": "Poussin", "value": "0 an",
+                                            "icon": "bird"}, "right": {"label": "Adulte", "value": "3 ans"}}))
         clips[2] = {"media": anim["media"], "start": 2.0, "end": VOICE_S, "motion": "static", "video_offset": 0}
+    if iteration == 2:
+        clips[1]["sfx"] = "whoosh"
+        clips[2]["sfx"] = "pop"
     write_json("timeline.json", {
         "voice": "voice.wav", "words": "words.json", "music": None, "subtitles": True, "clips": clips,
+        "subtitle_keywords": ["flamant"],
     })
     tool(agent.id, "validate", "--kind", "timeline", "--path", "timeline.json")
     tool(agent.id, "render", "--out", f"renders/v{iteration}.mp4")
@@ -210,7 +215,8 @@ def miniaturiste() -> None:
 
 def critique(iteration: int) -> None:
     agent = Subagent("critique", iteration)
-    tool(agent.id, "frames", "--video", f"renders/v{iteration}.mp4", "--every", "1")
+    analysis = tool(agent.id, "analyze", "--video", f"renders/v{iteration}.mp4", "--words", "words.json",
+                    "--engine", "claude")
     approve = iteration >= 2
     write_json(f"critique_{iteration}.json", {
         "iteration": iteration, "video": f"renders/v{iteration}.mp4",
@@ -218,6 +224,8 @@ def critique(iteration: int) -> None:
         "summary": "ok" if approve else "Plan 1 trop statique.",
         "strengths": ["rythme"], "issues": [] if approve else ["plan 1 statique"],
         "changes": [] if approve else [{"role": "monteur", "instruction": "plan 1 : panoramique"}],
+        "scores": {"hook": 16 if approve else 12, "retention": 12, "valeur": 12},
+        "analysis": {"source": analysis["source"], "path": analysis["analysis"], "flags": analysis["flags"][:3]},
     })
     tool(agent.id, "validate", "--kind", "critique", "--path", f"critique_{iteration}.json")
     agent.done(f"Score {86 if approve else 70}.")

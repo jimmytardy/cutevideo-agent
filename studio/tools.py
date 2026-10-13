@@ -97,14 +97,22 @@ async def cmd_tts(args: argparse.Namespace, run_dir: Path) -> Any:
                 engine=engine,
                 tts_style=args.style or "narration-professional",
                 tts_rate=args.rate,
+                tts_pitch=args.pitch,
                 mood=args.mood or "",
             )
         except Exception as exc:
             errors[engine] = str(exc)[:200]
             continue
+        tightened = None
+        if args.max_pause > 0:
+            from studio.voicefx import tighten_pauses
+
+            tightened = tighten_pauses(out, max_pause_s=args.max_pause)
+            duration = tightened["after_s"]
         return {
             "path": args.out,
             "duration_s": round(duration, 3),
+            **({"pauses_removed_s": tightened["removed_s"]} if tightened else {}),
             "engine": used,
             "voice": voice,
             "chars": len(text),
@@ -151,6 +159,19 @@ async def cmd_frames(args: argparse.Namespace, run_dir: Path) -> Any:
     video = _inside(run_dir, args.video)
     out_dir = _inside(run_dir, args.out or f"review/{video.stem}")
     return await media.extract_frames(run_dir, video, args.every, out_dir)
+
+
+async def cmd_analyze(args: argparse.Namespace, run_dir: Path) -> Any:
+    from studio.analyze import analyze_video
+
+    video = _inside(run_dir, args.video)
+    if not video.exists():
+        raise FileNotFoundError(f"{args.video} introuvable")
+    out_dir = _inside(run_dir, args.out or f"review/{video.stem}/analysis")
+    words = _inside(run_dir, args.words) if args.words else None
+    return await analyze_video(
+        run_dir, video, out_dir, engine=args.engine, words_file=words, every_s=args.every, context=args.context or ""
+    )
 
 
 async def cmd_thumbnail(args: argparse.Namespace, run_dir: Path) -> Any:
@@ -252,6 +273,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--engine", choices=["azure", "gemini", "edge"])
     p.add_argument("--style", help="style Azure (narration-professional, cheerful, excited…)")
     p.add_argument("--rate", default="+0%", help="débit, ex. +8%%")
+    p.add_argument("--pitch", default="+0Hz", help="hauteur, ex. -2Hz (edge, Azure)")
+    p.add_argument(
+        "--max-pause", type=float, default=0.4,
+        help="raccourcit les silences plus longs (s) ; 0 = laisser tel quel",
+    )
     p.add_argument("--mood", help="ambiance (dramatique, mysterieux, energique…)")
     p.set_defaults(func=cmd_tts)
 
@@ -273,6 +299,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--every", type=float, default=2.0, help="intervalle en secondes")
     p.add_argument("--out", help="dossier (défaut review/<nom>)")
     p.set_defaults(func=cmd_frames)
+
+    p = sub.add_parser("analyze", help="analyse multimodale d'une vidéo (Gemini, sinon matériaux pour Claude)")
+    p.add_argument("--video", required=True)
+    p.add_argument("--out", help="dossier (défaut review/<nom>/analysis)")
+    p.add_argument("--engine", choices=["auto", "gemini", "claude"], default="auto")
+    p.add_argument("--words", help="words.json existant (évite une transcription Whisper)")
+    p.add_argument("--every", type=float, default=1.0, help="pas de la planche chronologique (s)")
+    p.add_argument("--context", help="contexte pour Gemini (sujet, cible)")
+    p.set_defaults(func=cmd_analyze)
 
     p = sub.add_parser("thumbnail", help="compose une miniature avec texte")
     p.add_argument("--background", required=True, help="media/x.jpg ou renders/v1.mp4@3.5")

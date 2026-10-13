@@ -34,7 +34,7 @@
   "tts": {
     "engine": "azure",
     "voice": "fr-FR-Vivienne:DragonHDLatestNeural",
-    "fallback_voice": "fr-FR-DeniseNeural",
+    "fallback_voice": "fr-FR-RemyMultilingualNeural",
     "default_style": "narration-relaxed",
     "default_rate": "+0%",
     "insert_pauses": true,

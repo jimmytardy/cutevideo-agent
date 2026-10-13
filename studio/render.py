@@ -11,7 +11,6 @@ import logging
 import shutil
 from pathlib import Path
 
-from agent.skills.audio.audio_mixer import mix_narration_with_music
 from agent.skills.audio.whisper_utils import WordSegment
 from agent.skills.video.ffmpeg_runtime import (
     ffmpeg_preset,
@@ -26,11 +25,7 @@ from agent.skills.video.ken_burns import (
     _build_static_filter,
     _build_zoom_filter,
 )
-from agent.skills.video.viral_subtitles import (
-    SubtitleStyleConfig,
-    group_words_into_lines,
-    write_ass_file,
-)
+from studio.audiomix import mix_short_audio
 from studio.contracts import (
     TIMELINE_DURATION_TOLERANCE_S,
     ContractError,
@@ -39,6 +34,7 @@ from studio.contracts import (
     load_contract,
 )
 from studio.media import probe_media
+from studio.subtitles import SubtitleStyle, ass_filter, write_ass
 from studio.textfx import drawtext_chain, fit_fontsize, wrap_lines
 
 logger = logging.getLogger(__name__)
@@ -163,20 +159,16 @@ async def render_timeline(run_dir: Path, timeline_path: Path, output_path: Path)
     if music is not None and not music.exists():
         raise ContractError(f"musique introuvable : {timeline.music}")
     audio = work / "audio.m4a"
-    if music is None:
-        await run_ffmpeg(
-            ["ffmpeg", "-y", "-i", str(voice), *thread_args(), "-c:a", "aac", "-ar", "48000", str(audio)],
-            error_prefix="Encodage voix",
-        )
-    else:
-        await mix_narration_with_music(voice, music, audio, music_volume=timeline.music_volume)
+    sfx_events = [(clip.start, clip.sfx) for clip in timeline.clips if clip.sfx]
+    mix = await mix_short_audio(
+        voice, music, audio, music_volume=timeline.music_volume, sfx_events=sfx_events, work=work
+    )
 
     words = _load_words(_resolve(run_dir, timeline.words)) if timeline.subtitles else []
     vf_args: list[str] = []
     if words:
-        ass = write_ass_file(group_words_into_lines(words), SubtitleStyleConfig(font_size=80, margin_v=220), work / "subs.ass")
-        ass_escaped = str(ass).replace("\\", "/").replace(":", "\\:")
-        vf_args = ["-vf", f"ass={ass_escaped}"]
+        style = SubtitleStyle(position=timeline.subtitle_position, keywords=timeline.subtitle_keywords)
+        vf_args = ["-vf", ass_filter(write_ass(words, style, work / "subs.ass"))]
 
     # Durée explicite plutôt que `-shortest` : sa file de synchronisation garde en mémoire des
     # images brutes 1080×1920 (pic mesuré 1,76 Go contre 0,63 Go sur un Short de 31 s).
@@ -211,6 +203,7 @@ async def render_timeline(run_dir: Path, timeline_path: Path, output_path: Path)
         "clips": len(timeline.clips),
         "subtitles": bool(words),
         "music": timeline.music,
+        "mix": mix,
         "credits": credits,
     }
     (output_path.with_suffix(".render.json")).write_text(

@@ -273,17 +273,25 @@ async def generate_tts(
         )
         return duration, "azure"
 
-    duration = await _generate_edge_tts(text, output_path, voice, mastering=mastering)
+    duration = await _generate_edge_tts(
+        text, output_path, voice, mastering=mastering, rate=tts_rate, pitch=tts_pitch
+    )
     return duration, "edge-tts"
 
 
 async def _generate_edge_tts(
-    text: str, output_path: Path, voice: str, *, mastering: dict[str, Any] | None = None
+    text: str,
+    output_path: Path,
+    voice: str,
+    *,
+    mastering: dict[str, Any] | None = None,
+    rate: str = "+0%",
+    pitch: str = "+0Hz",
 ) -> float:
     import edge_tts
 
     tmp_mp3 = output_path.with_suffix(".mp3")
-    communicate = edge_tts.Communicate(text, voice)
+    communicate = edge_tts.Communicate(text, voice, rate=rate or "+0%", pitch=pitch or "+0Hz")
     try:
         await communicate.save(str(tmp_mp3))
     except Exception as exc:

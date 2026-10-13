@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field, ValidationError, model_validator
 Role = Literal["scenariste", "voix", "monteur", "miniaturiste"]
 Motion = Literal["zoom", "pan_left", "pan_right", "static"]
 TextPosition = Literal["top", "center", "bottom"]
+Sfx = Literal["", "whoosh", "pop", "ding", "click", "riser", "impact"]
 
 # Tolérance (s) entre la fin de la timeline et la durée de la voix.
 TIMELINE_DURATION_TOLERANCE_S = 0.5
@@ -58,6 +59,10 @@ class Scenario(BaseModel):
     cta: str = ""
     mood: str = ""
     music_mood: str = ""
+    # Direction visuelle commune à toute la vidéo (charte anim/lib/studio.js).
+    visual_mode: Literal["animation", "mixed", "footage"] = "animation"
+    theme: str = "night"
+    accent: str = ""
     publish: PublishMetadata
 
     @property
@@ -79,6 +84,8 @@ class TimelineClip(BaseModel):
     video_offset: float = Field(default=0.0, ge=0)
     text: str = ""
     text_position: TextPosition = "top"
+    # Bruitage synthétique joué au début du clip (riser : se termine au début du clip).
+    sfx: Sfx = ""
 
     @model_validator(mode="after")
     def _ordered(self) -> "TimelineClip":
@@ -97,6 +104,10 @@ class Timeline(BaseModel):
     music: str | None = None
     music_volume: float = Field(default=0.08, ge=0, le=0.5)
     subtitles: bool = True
+    # Mots surlignés en couleur d'accent dans les sous-titres (les nombres le sont toujours).
+    subtitle_keywords: list[str] = Field(default_factory=list)
+    # Centre du texte : high ≈ 67 % de la hauteur (hors interface TikTok), center, low.
+    subtitle_position: Literal["high", "center", "low"] = "high"
     clips: list[TimelineClip] = Field(min_length=1)
 
     @model_validator(mode="after")
@@ -131,6 +142,10 @@ class Critique(BaseModel):
     strengths: list[str] = Field(default_factory=list)
     issues: list[str] = Field(default_factory=list)
     changes: list[RequestedChange] = Field(default_factory=list)
+    # Notes par critère de la grille virale (hook, retention, valeur, visuels, voix_son, sous_titres, chute_partage).
+    scores: dict[str, int] = Field(default_factory=dict)
+    # Résumé de `analyze` : {"source": "gemini"|"claude", "path": "review/vN/analysis/analysis.json", "flags": […]}.
+    analysis: dict | None = None
 
     @model_validator(mode="after")
     def _changes_when_iterating(self) -> "Critique":
