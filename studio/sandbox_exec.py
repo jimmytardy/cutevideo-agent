@@ -67,6 +67,9 @@ async def render_html(job: dict, frames: Path) -> int:
         if not has_render:
             await page.evaluate("window.gsap && window.gsap.ticker.lagSmoothing(0)")
         elapsed_ms = 0
+        has_check = await page.evaluate("typeof window.__studioCheck === 'function'")
+        seen: dict[str, str] = {}
+        check_every = max(1, fps // 2)
         for i in range(n):
             t = i / fps
             if has_render:
@@ -78,12 +81,16 @@ async def render_html(job: dict, frames: Path) -> int:
                     elapsed_ms = target_ms
                 await page.evaluate(_SEEK_JS, t)
             await page.screenshot(path=str(frames / f"frame_{i:05d}.jpg"), type="jpeg", quality=94)
+            # Contrôle des zones toutes les ~0,5 s (un zoom caméra peut sortir le contenu en cours de route).
+            if has_check and (i % check_every == 0 or i == n - 1):
+                for w in await page.evaluate("window.__studioCheck()") or []:
+                    key = "".join(c for c in str(w) if not c.isdigit())
+                    seen.setdefault(key, f"t={t:.1f}s : {w}")
             if errors:
                 raise RuntimeError(f"erreur JavaScript à t={t:.2f}s : {errors[0]}")
-        # Le kit studio.js signale les éléments hors des zones utiles (état final de l'animation).
-        warnings = await page.evaluate("window.__studioCheck ? window.__studioCheck() : []")
         await browser.close()
-    job["_warnings"] = [str(w) for w in (warnings or [])][:12]
+    # Alertes du kit studio.js (éléments hors des zones utiles, scène vide…), première occurrence de chacune.
+    job["_warnings"] = list(seen.values())[:12]
     return n
 
 

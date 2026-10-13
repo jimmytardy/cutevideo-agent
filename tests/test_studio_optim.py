@@ -126,3 +126,11 @@ def test_punctuation_tokens_are_not_shown_alone() -> None:
     lines = subtitles.group_lines(words)
     flat = [w.word for line in lines for w in line]
     assert ":" not in flat and "que:" in flat
+
+
+def test_french_typography_and_keywords_with_punctuation() -> None:
+    words = [WordSegment("Pourquoi", 0.0, 0.3), WordSegment("Lune?", 0.3, 0.6)]
+    ass = subtitles.build_ass(words, subtitles.SubtitleStyle(keywords=["Lune"]))
+    first = [line for line in ass.splitlines() if line.startswith("Dialogue:")][0]
+    assert "Lune\\h?" in first
+    assert subtitles._ass_color("#4ADE80") in first  # mot-clé reconnu malgré la ponctuation

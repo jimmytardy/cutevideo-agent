@@ -130,15 +130,17 @@ def build_ass(words: list[WordSegment], style: SubtitleStyle) -> str:
             end = line[wi + 1].start if wi + 1 < len(line) else line_end
             parts = []
             for k, w in enumerate(line):
-                text = w.word.replace("{", "").replace("}", "").strip()
-                if not text:
+                raw = w.word.replace("{", "").replace("}", "").strip()
+                if not raw:
                     continue
+                # Typographie française : espace insécable avant ? ! : ; (« part? » → « part ? »).
+                text = re.sub(r"(?<=[\w»])([?!:;])", r"\\h\1", raw)
                 if k == wi:
                     parts.append(
                         f"{{\\c{_ass_color(style.active_color)}\\fscx{style.active_scale}\\fscy{style.active_scale}}}"
                         f"{text}{{\\c{_ass_color(style.color)}\\fscx100\\fscy100}}"
                     )
-                elif _is_keyword(text, keywords):
+                elif _is_keyword(raw, keywords):
                     parts.append(f"{{\\c{_ass_color(style.keyword_color)}}}{text}{{\\c{_ass_color(style.color)}}}")
                 else:
                     parts.append(text)
