@@ -92,7 +92,7 @@ async def _finish(
     result: dict[str, Any] = {"media": rel, "duration_s": duration, "sheet": review["sheet"]}
     if warnings:
         result["zone_warnings"] = warnings
-        result["hint"] = "corrige ces positions (contenu entre y 170 et 1180, x 60 et 960) puis relance"
+        result["hint"] = "corrige positions et tailles (contenu entre y 170 et 1180, x 60 et 960, éléments grands) puis relance"
     return result
 
 

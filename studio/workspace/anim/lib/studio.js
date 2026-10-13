@@ -124,6 +124,20 @@
         if (r.top < 130) pb.push(`monte à y ${Math.round(r.top)}`);
         if (pb.length) out.push(`${describe(it)} ${pb.join(", ")}`);
       }
+      // Taille : icônes isolées trop petites et scène globalement vide (vu sur téléphone, le petit disparaît).
+      let covered = 0;
+      const ux0 = 60, ux1 = 960, uy0 = 170, uy1 = 1180;
+      for (const it of this.items) {
+        if (it.layer === "overlay" || it.bleed || +it.node.getAttribute("opacity") < 0.05) continue;
+        const r = it.node.getBoundingClientRect();
+        const w = Math.max(0, Math.min(r.right, ux1) - Math.max(r.left, ux0));
+        const h = Math.max(0, Math.min(r.bottom, uy1) - Math.max(r.top, uy0));
+        covered += w * h;
+        const imgs = it.node.querySelectorAll(":scope > image");
+        if (imgs.length === 1 && r.width < 170) out.push(`icône ${describe(it)} petite (${Math.round(r.width)} px, viser ≥ 250)`);
+      }
+      const ratio = covered / ((ux1 - ux0) * (uy1 - uy0));
+      if (this.items.length && ratio < 0.28) out.push(`scène vide : les éléments couvrent ~${Math.round(ratio * 100)} % de la zone utile (viser ≥ 35 % : agrandir ou zoom caméra)`);
       return out;
     }
 
