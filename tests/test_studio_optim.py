@@ -118,3 +118,11 @@ def test_concat_wavs_inserts_short_gaps(tmp_path: Path) -> None:
         parts.append(p)
     dur = voicefx.concat_wavs(parts, tmp_path / "out.wav", gap_s=0.1)
     assert dur == pytest.approx(1.5 + 0.2, abs=0.01)
+
+
+def test_punctuation_tokens_are_not_shown_alone() -> None:
+    words = [WordSegment("Sauf", 0.0, 0.3), WordSegment("que", 0.3, 0.5), WordSegment(":", 0.5, 0.55),
+             WordSegment("23", 0.6, 0.9)]
+    lines = subtitles.group_lines(words)
+    flat = [w.word for line in lines for w in line]
+    assert ":" not in flat and "que:" in flat

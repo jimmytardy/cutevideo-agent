@@ -26,6 +26,8 @@ pour lire, écrire ou lister des fichiers utilise Read, Write, Edit et Glob.
 - `scenario.visual_mode` : `animation` (défaut, **concepts, mécanismes, histoires, chiffres**), `mixed` (animation +
   vraies images quand elles apportent vraiment : lieu réel, objet réel, photo historique), `footage` (rare).
   Si `brief.json.animations` = `off`, on est en `footage` ; si `templates`, seulement les modèles.
+- **Aucune image vide à une coupe** : à t = 0 de chaque plan, le mot-clé (affiché d'office) et l'objet principal
+  sont déjà là (`at: 0`, `enter: "none"` ou `"grow"`) ; les éléments suivants arrivent ensuite.
 - **Une idée visuelle littérale par phrase**, et **un nouvel élément à l'écran toutes les ~2 s** (la scène se
   construit : apparition, flèche, chiffre, zoom) — jamais d'image figée plus de 3 s.
 - **Mot-clé titre** en capitales en haut de chaque plan (1-3 mots, `on_screen_text`) + petites étiquettes.

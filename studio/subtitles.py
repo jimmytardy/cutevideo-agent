@@ -65,7 +65,20 @@ def _norm(word: str) -> str:
     return re.sub(r"[^a-z0-9%]", "", w)
 
 
+def _merge_punctuation(words: list[WordSegment]) -> list[WordSegment]:
+    """Rattache au mot précédent les « mots » sans lettre ni chiffre (« : », « … ») que Whisper isole."""
+    merged: list[WordSegment] = []
+    for w in words:
+        if merged and not any(c.isalnum() for c in w.word):
+            prev = merged[-1]
+            merged[-1] = WordSegment(word=prev.word + w.word.strip(), start=prev.start, end=max(prev.end, w.end))
+        else:
+            merged.append(w)
+    return merged
+
+
 def group_lines(words: list[WordSegment]) -> list[list[WordSegment]]:
+    words = _merge_punctuation(words)
     lines: list[list[WordSegment]] = []
     cur: list[WordSegment] = []
     for w in words:

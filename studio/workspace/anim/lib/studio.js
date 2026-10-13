@@ -179,7 +179,8 @@
         sub = el("text", {x: 0, y: size * 0.62, "text-anchor": "middle", "font-weight": 800, "font-size": o.subSize || 54, fill: this.color(o.subColor || "accent"), "letter-spacing": 2}, g);
         sub.textContent = o.sub.toUpperCase();
       }
-      return this._add(g, Object.assign({x: 540, y: o.y || 330, enter: "down", layer: "overlay", fit: [t1, sub], maxW: 960}, o));
+      // Le mot-clé est là dès la coupe (la coupe fait le mouvement) : pas d'écran vide en début de plan.
+      return this._add(g, Object.assign({x: 540, y: o.y || 330, enter: "none", layer: "overlay", fit: [t1, sub], maxW: 960}, o));
     }
 
     text(text, o = {}) {
