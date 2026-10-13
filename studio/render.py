@@ -178,6 +178,9 @@ async def render_timeline(run_dir: Path, timeline_path: Path, output_path: Path)
         ass_escaped = str(ass).replace("\\", "/").replace(":", "\\:")
         vf_args = ["-vf", f"ass={ass_escaped}"]
 
+    # Durée explicite plutôt que `-shortest` : sa file de synchronisation garde en mémoire des
+    # images brutes 1080×1920 (pic mesuré 1,76 Go contre 0,63 Go sur un Short de 31 s).
+    duration = min((await probe_media(video_only))["duration_s"], (await probe_media(audio))["duration_s"])
     await run_ffmpeg(
         [
             "ffmpeg", "-y",
@@ -190,7 +193,7 @@ async def render_timeline(run_dir: Path, timeline_path: Path, output_path: Path)
             "-c:v", "libx264", "-crf", "20", "-preset", ffmpeg_preset(),
             "-pix_fmt", "yuv420p",
             "-c:a", "aac", "-b:a", "192k",
-            "-shortest",
+            "-t", f"{duration:.3f}",
             "-movflags", "+faststart",
             str(output_path),
         ],

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import signal
 from asyncio.subprocess import Process
 
 logger = logging.getLogger(__name__)
@@ -19,15 +21,34 @@ def unregister(proc: Process) -> None:
     _registered.discard(proc)
 
 
+def _is_group_leader(proc: Process) -> bool:
+    try:
+        return os.getpgid(proc.pid) == proc.pid
+    except ProcessLookupError:
+        return False
+
+
 async def terminate_proc(proc: Process, *, grace_s: float = 2.0) -> None:
+    """Arrête le process et, s'il mène son propre groupe (`start_new_session=True`), tous ses
+    descendants : sinon outils, ffmpeg et Chromium survivraient à l'annulation."""
     if proc.returncode is not None:
         return
-    proc.terminate()
+    leader = _is_group_leader(proc)
+
+    def send(sig: int) -> None:
+        try:
+            os.killpg(proc.pid, sig) if leader else proc.send_signal(sig)
+        except ProcessLookupError:
+            pass
+
+    send(signal.SIGTERM)
     try:
         await asyncio.wait_for(proc.wait(), timeout=grace_s)
     except asyncio.TimeoutError:
-        proc.kill()
+        send(signal.SIGKILL)
         await proc.wait()
+    if leader:
+        send(signal.SIGKILL)  # le leader peut sortir avant ses descendants
 
 
 async def kill_all(*, grace_s: float = 2.0) -> None:

@@ -43,6 +43,12 @@ async def render_html(job: dict, frames: Path) -> int:
             "--proxy-server=http://127.0.0.1:9",
             "--disable-gpu",
             "--font-render-hinting=none",
+            # Empreinte mémoire minimale : un seul renderer, tas JS borné, pas d'extras.
+            "--renderer-process-limit=1",
+            "--js-flags=--max-old-space-size=384",
+            "--disable-extensions",
+            "--disable-background-networking",
+            "--mute-audio",
         ])
         page = await browser.new_page(viewport={"width": int(job["width"]), "height": int(job["height"])})
         await page.route("**/*", lambda route: route.continue_() if route.request.url.startswith("file:")

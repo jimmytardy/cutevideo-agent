@@ -6,8 +6,9 @@ body{background:var(--bg);font-family:"DejaVu Sans","Liberation Sans",sans-serif
   justify-content:center;align-items:center;padding:0 70px 520px;box-sizing:border-box;text-align:center}
 #n{font-size:200px;font-weight:800;color:var(--accent);letter-spacing:-4px;font-variant-numeric:tabular-nums;white-space:nowrap}
 #l{margin-top:30px;font-size:64px;font-weight:700;line-height:1.15;opacity:0}
-#ring{position:absolute;width:760px;height:760px;border-radius:50%;border:10px solid var(--accent);opacity:.18;top:330px}
-</style></head><body><div id="ring"></div><div id="n"></div><div id="l"></div>
+#c{position:relative;display:flex;align-items:center;justify-content:center;width:820px;height:820px}
+#ring{position:absolute;inset:0;border-radius:50%;border:10px solid var(--accent);opacity:.18}
+</style></head><body><div id="c"><div id="ring"></div><div id="n"></div></div><div id="l"></div>
 <script>
 const P = /*PARAMS*/{};
 document.documentElement.style.setProperty("--accent", P.accent || "#FFD400");
@@ -17,7 +18,7 @@ const fmt = v => (P.prefix || "") + v.toLocaleString("fr-FR", {minimumFractionDi
 const n = document.getElementById("n"), l = document.getElementById("l"), ring = document.getElementById("ring");
 l.textContent = P.label || "";
 // Taille du chiffre adaptée à sa longueur finale.
-n.style.fontSize = Math.min(200, Math.floor(1450 / Math.max(fmt(to).length, 1))) + "px";
+n.style.fontSize = Math.min(200, Math.floor(1250 / Math.max(fmt(to).length, 1))) + "px";
 const ease = x => 1 - Math.pow(1 - Math.min(Math.max(x, 0), 1), 4);
 window.renderFrame = (t) => {
   const k = ease(t / Math.max(D * 0.65, 0.5));

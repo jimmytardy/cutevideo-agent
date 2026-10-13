@@ -234,6 +234,8 @@ async def run_claude(
             stdout=asyncio.subprocess.PIPE,
             stderr=stderr_fh,
             limit=_STREAM_LIMIT,
+            # Groupe de processus dédié : l'annulation tue aussi outils, ffmpeg et Chromium.
+            start_new_session=True,
         )
         register(proc)
         try:

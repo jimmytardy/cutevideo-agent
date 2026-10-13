@@ -224,3 +224,34 @@ def test_container_worker_rejects_paths_outside_runs(tmp_path: Path) -> None:
     assert proc.returncode == 0, proc.stderr
     assert (jobs / "j1.done").exists()  # le producteur est débloqué…
     assert not list(outside.iterdir())  # … sans rien écrire hors du volume des runs
+
+
+def test_render_waits_then_refuses_when_machine_is_low_on_memory(monkeypatch: pytest.MonkeyPatch) -> None:
+    import asyncio
+
+    from studio import sandbox
+
+    monkeypatch.setattr(sandbox, "available_memory_mb", lambda: 300)
+    with pytest.raises(sandbox.SandboxError, match="mémoire insuffisante"):
+        asyncio.run(sandbox.wait_for_memory(min_free_mb=1200, timeout_s=0))
+    monkeypatch.setattr(sandbox, "available_memory_mb", lambda: 4000)
+    asyncio.run(sandbox.wait_for_memory(min_free_mb=1200, timeout_s=0))
+
+
+@needs_bwrap
+def test_bwrap_sandbox_is_memory_capped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Un script gourmand est tué dans son cgroup, sans OOM global de la machine."""
+    import asyncio
+
+    from studio import sandbox
+
+    if not sandbox._cgroup_scope_works():
+        pytest.skip("systemd-run --user indisponible")
+    anim = tmp_path / "anim"
+    anim.mkdir()
+    (anim / "hog.py").write_text("b = bytearray(1500 * 1024 * 1024)\n", encoding="utf-8")
+    monkeypatch.setenv("STUDIO_SANDBOX", "bwrap")
+    monkeypatch.setattr(sandbox, "MEMORY_MAX", "300M")
+    with pytest.raises(sandbox.SandboxError):
+        asyncio.run(sandbox.run_sandboxed("python", anim / "hog.py", anim, tmp_path / "out", width=64, height=64,
+                                          fps=1, duration=1))

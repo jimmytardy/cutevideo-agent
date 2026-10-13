@@ -168,6 +168,9 @@ services:
       STUDIO_SANDBOX_JOBS_DIR: /var/lib/cutevideo/studio-runs/.sandbox-jobs
     volumes:
       - studio_runs:/var/lib/cutevideo/studio-runs
+      # Scripts du bac à sable montés depuis le repo (pas de rebuild à chaque modification).
+      - ./studio/sandbox_exec.py:/opt/sandbox/sandbox_exec.py:ro
+      - ./studio/sandbox_worker.py:/opt/sandbox/sandbox_worker.py:ro
     read_only: true
     tmpfs:
       - /tmp
@@ -175,9 +178,12 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    shm_size: 512m
-    mem_limit: 2g
+    shm_size: 256m
+    # Plafonds stricts : un script d'animation ne doit jamais faire tomber le VPS (pas de swap).
+    mem_limit: 1200m
+    memswap_limit: 1200m
     cpus: 1.5
+    pids_limit: 256
     restart: unless-stopped
 
   # Ce bloc reste en sommeil, sauf si app-dev le réveille

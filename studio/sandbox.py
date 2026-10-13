@@ -32,8 +32,67 @@ EXEC_SCRIPT = Path(__file__).resolve().parent / "sandbox_exec.py"
 DEFAULT_TIMEOUT_S = 300.0
 
 
+# Garde-fous ressources (VPS partagé, sans swap) : un rendu Chromium ne doit jamais
+# pousser la machine à l'OOM global.
+MIN_FREE_MB = int(os.getenv("STUDIO_SANDBOX_MIN_FREE_MB", "1200"))
+MEMORY_WAIT_S = float(os.getenv("STUDIO_SANDBOX_MEMORY_WAIT_S", "180"))
+MEMORY_MAX = os.getenv("STUDIO_SANDBOX_MEMORY_MAX", "1G")
+CPU_QUOTA = os.getenv("STUDIO_SANDBOX_CPU_QUOTA", "150%")
+
+
 class SandboxError(RuntimeError):
     pass
+
+
+def available_memory_mb() -> int | None:
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemAvailable:"):
+                return int(line.split()[1]) // 1024
+    except OSError:
+        pass
+    return None
+
+
+async def wait_for_memory(min_free_mb: int = MIN_FREE_MB, timeout_s: float = MEMORY_WAIT_S) -> None:
+    """Attend que la machine ait assez de mémoire libre avant de lancer Chromium / Python."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_s
+    while True:
+        free = available_memory_mb()
+        if free is None or free >= min_free_mb:
+            return
+        if loop.time() > deadline:
+            raise SandboxError(
+                f"mémoire insuffisante sur la machine ({free} Mo libres, {min_free_mb} Mo requis) : "
+                "animation non rendue, réessaie plus tard ou utilise une image"
+            )
+        await asyncio.sleep(5)
+
+
+@functools.lru_cache(maxsize=1)
+def _cgroup_scope_works() -> bool:
+    """`systemd-run --user --scope` : plafonne mémoire/CPU du bac à sable dans son propre cgroup."""
+    if shutil.which("systemd-run") is None:
+        return False
+    try:
+        proc = subprocess.run(
+            ["systemd-run", "--user", "--scope", "--quiet", "-p", f"MemoryMax={MEMORY_MAX}", "true"],
+            capture_output=True, timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return proc.returncode == 0
+
+
+def _resource_limits() -> list[str]:
+    """Préfixe de commande : cgroup plafonné (OOM confiné au bac à sable) + priorité basse."""
+    prefix = ["nice", "-n", "10"]
+    if _cgroup_scope_works():
+        prefix = ["systemd-run", "--user", "--scope", "--quiet",
+                  "-p", f"MemoryMax={MEMORY_MAX}", "-p", "MemorySwapMax=0", "-p", f"CPUQuota={CPU_QUOTA}",
+                  *prefix]
+    return prefix
 
 
 @functools.lru_cache(maxsize=1)
@@ -112,7 +171,8 @@ def _bwrap_command(job_file: Path, anim_dir: Path, out_dir: Path) -> list[str]:
     if browsers.is_dir():
         cmd += ["--ro-bind", str(browsers), str(browsers),
                 "--setenv", "PLAYWRIGHT_BROWSERS_PATH", str(browsers)]
-    return [*cmd, str(venv / "bin" / "python"), "/opt/sandbox/sandbox_exec.py", "/out/job.json"]
+    return [*_resource_limits(), *cmd, str(venv / "bin" / "python"), "/opt/sandbox/sandbox_exec.py",
+            "/out/job.json"]
 
 
 async def _run_process(cmd: list[str], timeout_s: float) -> tuple[int, str]:
@@ -169,6 +229,7 @@ async def run_sandboxed(
         raise SandboxError(
             "aucun bac à sable disponible (bwrap ou conteneur studio-sandbox) : scripts d'animation désactivés"
         )
+    await wait_for_memory()
     if out_dir.exists():
         shutil.rmtree(out_dir)
     out_dir.mkdir(parents=True)
@@ -194,7 +255,8 @@ async def run_sandboxed(
         job_file = out_dir / "job.json"
         job_file.write_text(json.dumps({**params, "script": str(script.resolve()), "out_dir": str(out_dir)}),
                             encoding="utf-8")
-        code, output = await _run_process([sys.executable, str(EXEC_SCRIPT), str(job_file)], timeout_s + 30)
+        code, output = await _run_process([*_resource_limits(), sys.executable, str(EXEC_SCRIPT), str(job_file)],
+                                          timeout_s + 30)
         if code != 0 and not (out_dir / "result.json").exists():
             raise SandboxError(f"rendu en échec (code {code}) : {output[-1500:]}")
 
