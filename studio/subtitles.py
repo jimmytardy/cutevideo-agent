@@ -41,6 +41,8 @@ class SubtitleStyle:
     active_scale: int = 112
     position: str = "high"
     keywords: list[str] = field(default_factory=list)
+    # Espace entre mots : celle de Poppins est étroite et le contour épais la mange (« Cettefemmeest »).
+    word_gap: str = "\\h "
 
 
 def _ass_color(hex_color: str, alpha: str = "00") -> str:
@@ -144,7 +146,7 @@ def build_ass(words: list[WordSegment], style: SubtitleStyle) -> str:
             pop = "\\fad(70,0)" if wi == 0 else ""
             events.append(
                 f"Dialogue: 0,{_ass_time(start)},{_ass_time(end)},Sub,,0,0,0,,"
-                f"{{\\an5\\pos(540,{y}){pop}}}{' '.join(parts)}"
+                f"{{\\an5\\pos(540,{y}){pop}}}{style.word_gap.join(parts)}"
             )
     return header + "\n".join(events) + "\n"
 
