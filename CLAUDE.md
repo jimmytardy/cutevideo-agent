@@ -54,6 +54,14 @@ pytest -k "test_resolved"             # single test by name
 
 Tests are in `tests/` and use `pytest-asyncio`. No mocking of the database — tests use real SQLAlchemy models.
 
+**Full video generation is covered at three levels** (keep them green when touching `studio/`, `agent/core/claude_studio.py` or the orchestrator):
+
+1. `tests/test_studio_generation.py` — always runs (~1-2 min): generates a complete Short through the real launcher, `studio.tools` and ffmpeg render; only the `claude` CLI is replaced by `tests/fixtures/fake_claude.py` (deterministic producer, 2 iterations). Also checks the workspace prompts only cite existing tools.
+2. `tests/test_studio_pipeline_db.py` — same flow through `Orchestrator` → `ClaudeStudioRunner` → Postgres/Redis (S3 stubbed). Skipped unless `CUTEVIDEO_TEST_DATABASE_URL` / `CUTEVIDEO_TEST_REDIS_URL` point to **throwaway** infra (docker commands in the module docstring).
+3. `tests/test_studio_live.py` — real `claude -p /make-video`, real image banks and TTS (~10-15 min, uses quota): `CUTEVIDEO_LIVE_TESTS=1 pytest tests/test_studio_live.py -s`.
+
+If you change a run-dir contract or a tool's CLI, update `fake_claude.py` accordingly.
+
 ## Architecture
 
 ### God nodes (most connected abstractions)
