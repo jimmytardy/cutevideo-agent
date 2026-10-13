@@ -1,10 +1,8 @@
-"""Cleanup utilities for restarting a pipeline from a specific step.
+"""Nettoyage des artefacts d'un projet.
 
-Calling cleanup_from_step(project_id, step, session) deletes all DB artifacts
-produced by `step` and every subsequent step, then resets agent-run statuses.
-S3 objects are deleted for any Video rows being removed.
-
-delete_project_completely() removes every artifact for a project (DB, fichiers, Redis).
+- `clear_creation_artifacts()` : avant une (re)création Claude Studio, supprime
+  les vidéos non publiées, critiques, scénarios et runs de la création précédente.
+- `delete_project_completely()` : supprime tout (DB, S3, fichiers, Redis).
 """
 from __future__ import annotations
 
@@ -22,7 +20,6 @@ from agent.core.database import (
     AudioFile,
     CriticReport,
     MediaAsset,
-    MontagePlan,
     PlatformComment,
     Publication,
     Scenario,
@@ -33,159 +30,35 @@ from agent.core.storage import delete_s3_object
 
 logger = logging.getLogger(__name__)
 
-# Ordered pipeline steps — the index drives what gets deleted
-PIPELINE_STEPS: list[str] = [
-    "research_agent",        # 0
-    "scenario_agent",        # 1
-    "hook_optimizer_agent",    # 2
-    "narrator_agent",        # 3
-    "beat_planner_agent",    # 4
-    "media_agent",           # 5
-    "montage_planner_agent", # 6
-    "editor_agent",          # 7
-    "subtitle_agent",        # 8
-    "critic_agent",          # 9
-    "clipper_agent",         # 10
-    "short_editor_agent",    # 11
-]
+def _studio_dirs(project_id: uuid.UUID) -> list[Path]:
+    from agent.core.claude_studio import OUTPUT_ROOT
+    from studio.launcher import default_runs_dir
 
-# Shown in the UI between scenario and media during critic revision loops.
-_REVISION_AGENT = "revision_agent"
-
-_PRE_MEDIA_AGENTS: list[str] = [
-    "fact_checker_agent",
-    "hook_optimizer_agent",
-]
-
-# subtitle_agent re-bakes the video file via ffmpeg, so restarting from it
-# is equivalent to restarting from editor_agent (we must recreate the Video row).
-_EFFECTIVE_STEP: dict[str, str] = {
-    "subtitle_agent": "editor_agent",
-    "revision_agent": "narrator_agent",
-    "diagram_specialist_agent": "beat_planner_agent",
-    # outline_agent (P2) précède le scénariste : le réinitialiser revient à repartir du
-    # scénario (l'outline persisté dans project.config est réécrit au prochain run).
-    "outline_agent": "scenario_agent",
-}
-
-# Étapes autorisées pour POST /run-from/{step} (revision_agent = boucle critique).
-RUN_FROM_STEPS: frozenset[str] = frozenset([*PIPELINE_STEPS, "revision_agent"])
+    return [OUTPUT_ROOT / str(project_id), default_runs_dir() / str(project_id)]
 
 
-def step_index(step: str) -> int:
-    effective = _EFFECTIVE_STEP.get(step, step)
-    return PIPELINE_STEPS.index(effective)
-
-
-async def cleanup_from_step(
-    project_id: uuid.UUID,
-    step: str,
-    session: AsyncSession,
-) -> None:
-    """Delete all artifacts from `step` onwards for the given project."""
-    if step not in PIPELINE_STEPS:
-        raise ValueError(f"Étape inconnue : {step!r}. Valeurs valides : {PIPELINE_STEPS}")
-
-    idx = step_index(step)
-    logger.info("Nettoyage projet %s depuis l'étape %s (idx=%d)", project_id, step, idx)
-
-    # --- critic_agent: delete CriticReports BEFORE videos to avoid FK violation ---
-    if idx <= 9:
-        video_ids_q = await session.execute(
-            select(Video.id).where(Video.project_id == project_id)
-        )
-        video_ids = [r[0] for r in video_ids_q.all()]
-        if video_ids:
-            await session.execute(
-                delete(CriticReport).where(CriticReport.video_id.in_(video_ids))
-            )
-
-    # --- short_editor_agent: delete short_* videos ---
-    if idx <= 11:
-        short_vids_result = await session.execute(
-            select(Video).where(
-                Video.project_id == project_id,
-                Video.video_type.like("short_%"),
-            )
-        )
-        for v in short_vids_result.scalars().all():
-            if v.storage_key:
-                await delete_s3_object(v.storage_key)
-            await session.delete(v)
-
-    # --- editor_agent / subtitle_agent: delete main videos (long, short_master) ---
-    if idx <= 7:
-        main_vids_result = await session.execute(
-            select(Video).where(
-                Video.project_id == project_id,
-                Video.video_type.in_(["long", "short_master"]),
-            )
-        )
-        for v in main_vids_result.scalars().all():
-            if v.storage_key:
-                await delete_s3_object(v.storage_key)
-            await session.delete(v)
-
-    # --- montage_planner_agent: delete MontagePlan ---
-    if idx <= 6:
-        await session.execute(
-            delete(MontagePlan).where(MontagePlan.project_id == project_id)
-        )
-
-    # --- narrator_agent: delete AudioFiles ---
-    if idx <= 3:
-        await session.execute(
-            delete(AudioFile).where(AudioFile.project_id == project_id)
-        )
-
-    # --- media_agent / beat_planner_agent: delete MediaAssets ---
-    if idx <= 5:
-        await session.execute(
-            delete(MediaAsset).where(MediaAsset.project_id == project_id)
-        )
-
-    # --- scenario_agent: delete Scenarios ---
-    if idx <= 1:
-        await session.execute(
-            delete(Scenario).where(Scenario.project_id == project_id)
-        )
-
-    # --- research_agent: clear research_brief from project config ---
-    if idx == 0:
-        from agent.core.database import Project
-        from sqlalchemy import update as sa_update
-
-        project = await session.get(Project, project_id)
-        if project and project.config:
-            cfg = dict(project.config)
-            cfg.pop("research_brief", None)
-            await session.execute(
-                sa_update(Project).where(Project.id == project_id).values(config=cfg)
-            )
-
-    # --- Delete AgentRun rows for affected steps ---
-    affected_steps = PIPELINE_STEPS[idx:]
-    agent_names_to_clear = list(affected_steps)
-    # Revision runs during critic loops before media; stale status if we re-run that segment.
-    if idx <= 7:
-        agent_names_to_clear.append(_REVISION_AGENT)
-    if idx <= 2:
-        agent_names_to_clear.extend(
-            agent for agent in _PRE_MEDIA_AGENTS if agent not in agent_names_to_clear
-        )
-
-    await session.execute(
-        delete(AgentRun).where(
-            AgentRun.project_id == project_id,
-            AgentRun.agent_name.in_(agent_names_to_clear),
-        )
+async def clear_creation_artifacts(project_id: uuid.UUID, session: AsyncSession) -> None:
+    """Efface la création précédente ; les vidéos déjà publiées/planifiées sont conservées."""
+    published = select(Publication.video_id).where(Publication.video_id.is_not(None))
+    videos_result = await session.execute(
+        select(Video).where(Video.project_id == project_id, Video.id.not_in(published))
     )
-
-    # --- Reset Redis status dots (UI reads these, not AgentRun rows) ---
-    await queue.clear_agent_statuses(str(project_id), agent_names_to_clear)
-
+    videos = list(videos_result.scalars().all())
+    video_ids = [v.id for v in videos]
+    if video_ids:
+        await session.execute(delete(CriticReport).where(CriticReport.video_id.in_(video_ids)))
+    for video in videos:
+        if video.storage_key:
+            try:
+                await delete_s3_object(video.storage_key)
+            except Exception as exc:
+                # Un objet S3 orphelin ne doit pas bloquer la nouvelle création.
+                logger.warning("Suppression S3 échouée (%s) : %s", video.storage_key, exc)
+        await session.delete(video)
+    await session.execute(delete(Scenario).where(Scenario.project_id == project_id))
+    await session.execute(delete(AgentRun).where(AgentRun.project_id == project_id))
+    await queue.clear_agent_statuses(str(project_id))
     await session.flush()
-    logger.info("Nettoyage terminé pour le projet %s depuis %s", project_id, step)
 
 
 def _unlink_if_exists(path: Path) -> None:
@@ -253,9 +126,9 @@ async def delete_project_completely(
 
     await queue.clear_agent_statuses(str(project_id))
 
-    tmp_dir = Path(f"./tmp/{project_id}")
-    if tmp_dir.exists():
-        shutil.rmtree(tmp_dir)
+    for directory in [Path(f"./tmp/{project_id}"), *_studio_dirs(project_id)]:
+        if directory.exists():
+            shutil.rmtree(directory)
 
     await session.flush()
     logger.info("Artefacts supprimés pour le projet %s", project_id)

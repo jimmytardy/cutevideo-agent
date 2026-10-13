@@ -54,34 +54,16 @@ PAID_GEMINI_MODELS: frozenset[str] = frozenset(
     {"gemini-2.5-pro", "gemini-2.5-flash", "gemini-3.1-pro-preview", "gemini-3.5-flash"}
 )
 
+# Seuls les agents Python restants appellent un LLM ; la création passe par Claude Code CLI.
 CONFIGURABLE_AGENTS: frozenset[str] = frozenset(
     {
-        "research_agent",
-        "scenario_agent",
-        "critic_agent",
         "content_planner_agent",
-        "clipper_agent",
-        "short_producer_agent",
-        "comments_agent",
-        "channel_planner_agent",
         "distribution_agent",
-        "scenario_media_gap",
-        "validation_brief",
-        "source_advisor",
-        "media_agent_llm",
     }
 )
 
 # Agents dont la config LLM est héritée d'un autre agent configurable.
-LLM_PREFERENCE_ALIAS: dict[str, str] = {
-    "outline_agent": "scenario_agent",
-    "revision_agent": "scenario_agent",
-    "fact_checker_agent": "scenario_agent",
-    "montage_planner_agent": "scenario_agent",
-    "hook_optimizer_agent": "scenario_agent",
-    "diagram_specialist_agent": "scenario_agent",
-    "beat_planner_agent": "scenario_agent",
-}
+LLM_PREFERENCE_ALIAS: dict[str, str] = {}
 
 
 def preference_agent_name(agent_name: str) -> str:

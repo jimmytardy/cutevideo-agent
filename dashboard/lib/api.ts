@@ -226,220 +226,6 @@ export interface AgentRun {
   llm_model: string | null
 }
 
-export interface ProjectCost {
-  project_id: string
-  total_usd: number
-  cap_usd: number
-  iterations_used: number
-  max_iterations: number | null
-  stop_reason: string
-  by_agent: Array<{
-    agent_name: string
-    usd: number
-    input_tokens: number
-    output_tokens: number
-  }>
-  by_iteration: Array<{
-    iteration: number
-    usd: number
-    duration_s: number
-  }>
-  elapsed_s: number
-}
-
-export interface MediaAsset {
-  id: string
-  project_id: string
-  segment_order: number | null
-  beat_index: number | null
-  source: string | null
-  source_url: string | null
-  local_path: string | null
-  license: string | null
-  attribution: string | null
-  asset_type: string | null
-  selected: boolean
-  relevance_score: number | null
-  relevance_reason: string | null
-  library_status: string | null
-  generation_prompt: string | null
-  visual_type: string | null
-  iteration: number | null
-  created_at: string
-}
-
-export interface MediaRelevanceScoreEntry {
-  score: number
-  reason: string
-  title?: string
-  url?: string
-  rejection_category?: string
-}
-
-export interface MediaRelevanceSegmentLog {
-  segment_order: number
-  scores?: MediaRelevanceScoreEntry[]
-  source?: string
-  attempt?: number
-  phase?: string
-  generation_failed?: boolean
-  validation_relaxed?: boolean
-  total_raw_candidates?: number
-  passing_count?: number
-  niche_risk?: string
-  from_phase?: string
-  score?: number
-}
-
-export interface MediaProgress {
-  iteration: number
-  found: number
-  total: number
-  percent: number
-  segments_done: number
-  segments_total: number
-  agent_status: string
-}
-
-export interface AgentProgressItem {
-  done: number
-  total: number
-  percent: number
-  detail?: string | null
-  segments_done?: number | null
-  segments_total?: number | null
-}
-
-export interface PipelineProgressResponse {
-  preparation: Record<string, AgentProgressItem>
-  iterations: Record<string, Record<string, AgentProgressItem>>
-  post_production: Record<string, AgentProgressItem>
-}
-
-export interface PipelinePlanResponse {
-  is_short: boolean
-  preparation: string[]
-  iteration_first: string[]
-  iteration_revision: string[]
-  post_production: string[]
-  max_iterations: number
-  max_iterations_unlimited?: boolean
-}
-
-export interface BeatValidationResolved {
-  segment_order: number
-  beat_order: number | null
-  segment_title: string
-  visual_type: string | null
-  phrase_anchor: string | null
-  prompt: string | null
-  must_include: string[]
-  must_exclude: string[]
-  validation_prompt: string
-  min_relevance_score: number
-  layers: string[]
-}
-
-export interface MediaValidationBrief {
-  subject_entity: string
-  subject_type: string
-  must_include: string[]
-  must_exclude: string[]
-  ambiguity_warnings: string[]
-  validation_prompt: string
-  min_relevance_score: number
-  niche_risk: string
-  segments: Record<string, Record<string, unknown>>
-  resolved_beats: BeatValidationResolved[]
-  source: string
-}
-
-export interface VideoAnalysisIssue {
-  type: string
-  severity: 'low' | 'medium' | 'high'
-  timestamp_s: number
-  description: string
-}
-
-export interface VideoAnalysis {
-  analysis_status?: 'ok' | 'missing_key' | 'file_not_found' | 'error' | 'no_local_path'
-  score: number
-  issues: VideoAnalysisIssue[]
-  visual_coherence: number
-  subtitle_quality: number
-  rhythm: number
-  summary: string
-}
-
-export interface DeliveryStyle {
-  pace?: string
-  emotion?: string
-  azure_style?: string
-  emphasis_words?: string[]
-}
-
-export interface VisualBeat {
-  order: number
-  phrase_anchor: string
-  visual_type: string
-  prompt: string
-  style_hint?: string
-  on_screen_text?: string
-  duration_hint_s?: number | null
-  diagram_labels?: Array<{ text?: string; position?: string }>
-  diagram_brief?: { layout?: string; key_elements?: string[]; fallback_visual_type?: string }
-}
-
-export interface ScenarioSegment {
-  order?: number
-  title?: string
-  duration_s?: number
-  needs_voice?: boolean
-  needs_music?: boolean
-  narration_text?: string
-  narration?: string
-  on_screen_text?: string
-  search_keywords?: string[]
-  source_hint?: string[]
-  mood?: string
-  strip_source_audio?: boolean
-  hook_type?: string | null
-  delivery_style?: DeliveryStyle
-  visual_suggestion?: string
-  visual_beats?: VisualBeat[]
-}
-
-export interface ResearchBrief {
-  subject_entity: string
-  key_facts: string[]
-  timeline: Array<{ year?: string; event?: string }>
-  sources: Array<{ title?: string; url?: string; snippet?: string }>
-  visual_anchors: string[]
-  common_misconceptions: string[]
-  narrative_angles: string[]
-  confidence: number
-  niche_risk: string
-}
-
-export interface OutlineSegment {
-  order: number
-  title: string
-  duration_s: number
-  needs_voice: boolean
-  needs_music: boolean
-  mood: string
-  hook_type?: string | null
-  strip_source_audio: boolean
-  intent: string
-}
-
-export interface EditorialOutline {
-  title: string
-  description: string
-  segments: OutlineSegment[]
-  total_duration_s: number
-}
-
 export interface ProjectMetadata {
   title: string
   description: string
@@ -462,64 +248,9 @@ export function projectThumbnailStreamUrl(projectId: string, index: number): str
 export interface Scenario {
   id: string
   project_id: string
-  segments: ScenarioSegment[] | null
+  segments: StudioBeat[] | null
   total_duration_s: number | null
   iteration: number
-  created_at: string
-}
-
-export interface AudioFile {
-  id: string
-  project_id: string
-  iteration: number
-  segment_order: number | null
-  local_path: string | null
-  duration_s: number | null
-  tts_engine: string | null
-  voice: string | null
-  transcript: string | null
-  word_timestamps: Array<{ word: string; start: number; end: number }> | null
-  created_at: string
-}
-
-export interface EffectiveBeat {
-  order: number
-  phrase_anchor: string
-  visual_type: string
-  on_screen_text: string
-  adaptation: string
-  source_beat_orders: number[]
-}
-
-export interface BeatClipPlan {
-  beat_order: number
-  source_beat_orders: number[]
-  asset_path: string
-  asset_type: string
-  timeline_start_s: number
-  timeline_end_s: number
-  source_trim_start_s: number
-  source_trim_end_s: number | null
-  trim_reason: string
-  on_screen_text: string
-  audio_lead_s?: number
-  audio_trail_s?: number
-}
-
-export interface SegmentMontagePlan {
-  segment_order: number
-  effective_beats: EffectiveBeat[]
-  clips: BeatClipPlan[]
-  adaptation_notes: string
-  music_path?: string
-}
-
-export interface MontagePlan {
-  id: string
-  project_id: string
-  iteration: number
-  segments: SegmentMontagePlan[]
-  planner_notes: string
   created_at: string
 }
 
@@ -531,7 +262,7 @@ export interface CriticReport {
   global_score: number | null
   feedback: Record<string, unknown> | null
   requested_changes: Array<Record<string, string>> | null
-  video_analysis: VideoAnalysis | null
+  video_analysis: Record<string, unknown> | null
   created_at: string
 }
 
@@ -709,88 +440,14 @@ export async function fetchQueueStatus(projectId: string): Promise<PipelineQueue
   return fetcher(`${BASE}/projects/${projectId}/queue-status`)
 }
 
-export async function runFromStep(projectId: string, step: string): Promise<void> {
-  await apiJson<unknown>(`${BASE}/projects/${projectId}/run-from/${step}`, { method: 'POST' })
-}
-
-export async function restartFromCriticIteration(
-  projectId: string,
-  reportId: string,
-): Promise<{ critic_start_from: string }> {
-  return apiJson<{ critic_start_from: string }>(
-    `${BASE}/projects/${projectId}/restart-from-critic/${reportId}`,
-    { method: 'POST' },
-  )
-}
-
 export async function fetchCriticReports(projectId: string): Promise<CriticReport[]> {
   const res = await fetchWithRetry(`${BASE}/projects/${projectId}/critic-reports`)
   if (!res.ok) return []
   return res.json()
 }
 
-export async function fetchProjectCost(projectId: string): Promise<ProjectCost | null> {
-  const res = await fetchWithRetry(`${BASE}/projects/${projectId}/cost`)
-  if (!res.ok) return null
-  return res.json()
-}
-
 export async function deleteProject(projectId: string): Promise<void> {
   await apiJson<unknown>(`${BASE}/projects/${projectId}`, { method: 'DELETE' })
-}
-
-export async function updateProjectMaxIterations(projectId: string, maxIterations: number): Promise<Project> {
-  return apiJson<Project>(`${BASE}/projects/${projectId}/config`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ max_critic_iterations: maxIterations }),
-  })
-}
-
-export async function clearProjectMaxIterations(projectId: string): Promise<Project> {
-  return apiJson<Project>(`${BASE}/projects/${projectId}/config`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ max_critic_iterations: null }),
-  })
-}
-
-export async function fetchProjectMediaValidation(projectId: string): Promise<MediaValidationBrief> {
-  return apiJson<MediaValidationBrief>(`${BASE}/projects/${projectId}/media-validation`)
-}
-
-export async function analyzeMarket(
-  prompt: string,
-  platforms: string[] = ['youtube', 'tiktok', 'instagram'],
-): Promise<MarketAnalysisReport> {
-  return apiJson<MarketAnalysisReport>(`${BASE}/channels/onboarding/market-analysis`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt, platforms }),
-  })
-}
-
-export async function suggestThemes(
-  prompt: string,
-  marketContext?: string | null,
-): Promise<ThemeVariant[]> {
-  const data = await apiJson<{ variants: ThemeVariant[] }>(`${BASE}/channels/onboarding/suggest-themes`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt, market_context: marketContext ?? undefined }),
-  })
-  return data.variants
-}
-
-export async function generateBrandKit(
-  variant: ThemeVariant,
-  marketContext?: string | null,
-): Promise<ChannelBrandKit> {
-  return apiJson<ChannelBrandKit>(`${BASE}/channels/onboarding/generate-brand`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ variant, market_context: marketContext ?? undefined }),
-  })
 }
 
 export async function createOnboardingDraft(
@@ -945,77 +602,6 @@ export async function publishProject(projectId: string, platform: string): Promi
   })
 }
 
-export function projectScenarioUrl(
-  projectId: string,
-  opts?: { scenarioId?: string; atAgent?: string; iteration?: number },
-): string {
-  const base = `${BASE}/projects/${projectId}/scenario`
-  const params = new URLSearchParams()
-  if (opts?.scenarioId) params.set('scenario_id', opts.scenarioId)
-  if (opts?.atAgent) params.set('at_agent', opts.atAgent)
-  if (opts?.iteration != null) params.set('iteration', String(opts.iteration))
-  const qs = params.toString()
-  return qs ? `${base}?${qs}` : base
-}
-
-export async function fetchProjectScenario(
-  projectId: string,
-  opts?: { scenarioId?: string; atAgent?: string },
-): Promise<Scenario | null> {
-  const res = await fetchWithRetry(projectScenarioUrl(projectId, opts))
-  if (!res.ok) return null
-  return res.json()
-}
-
-export async function fetchProjectMediaAssets(projectId: string): Promise<MediaAsset[]> {
-  const res = await fetchWithRetry(`${BASE}/projects/${projectId}/media-assets`)
-  if (!res.ok) return []
-  return res.json()
-}
-
-export function pipelineProgressUrl(projectId: string): string {
-  return `${BASE}/projects/${projectId}/pipeline-progress`
-}
-
-export function pipelinePlanUrl(projectId: string): string {
-  return `${BASE}/projects/${projectId}/pipeline-plan`
-}
-
-export async function fetchProjectPipelineProgress(
-  projectId: string,
-): Promise<PipelineProgressResponse | null> {
-  const res = await fetchWithRetry(pipelineProgressUrl(projectId))
-  if (!res.ok) return null
-  return res.json()
-}
-
-export function mediaProgressUrl(projectId: string, iteration?: number): string {
-  const base = `${BASE}/projects/${projectId}/media-progress`
-  if (iteration != null) return `${base}?iteration=${iteration}`
-  return base
-}
-
-export function montagePlanUrl(projectId: string, iteration?: number): string {
-  const base = `${BASE}/projects/${projectId}/montage-plan`
-  if (iteration != null) return `${base}?iteration=${iteration}`
-  return base
-}
-
-export async function fetchProjectMediaProgress(
-  projectId: string,
-  iteration?: number,
-): Promise<MediaProgress | null> {
-  const res = await fetchWithRetry(mediaProgressUrl(projectId, iteration))
-  if (!res.ok) return null
-  return res.json()
-}
-
-export async function fetchProjectAudio(projectId: string): Promise<AudioFile[]> {
-  const res = await fetchWithRetry(`${BASE}/projects/${projectId}/audio`)
-  if (!res.ok) return []
-  return res.json()
-}
-
 export interface HealthStatus {
   status: 'ok' | 'degraded'
   database: 'ok' | 'error'
@@ -1096,4 +682,46 @@ export async function listMarketAnalyses(): Promise<MarketAnalysisListItem[]> {
 
 export async function getMarketAnalysis(id: string): Promise<MarketAnalysisDetail> {
   return apiJson<MarketAnalysisDetail>(`${BASE}/markets/${id}`)
+}
+
+// ── Claude Studio ────────────────────────────────────────────────────────
+export const STUDIO_STEPS = ['scenario_agent', 'narrator_agent', 'editor_agent', 'thumbnail_agent', 'critic_agent']
+
+const STUDIO_STEP_LABELS: Record<string, string> = {
+  scenario_agent: 'Scénariste',
+  narrator_agent: 'Voix',
+  editor_agent: 'Monteur',
+  thumbnail_agent: 'Miniaturiste',
+  critic_agent: 'Critique',
+}
+
+export function studioStepLabel(agent: string): string {
+  return STUDIO_STEP_LABELS[agent] ?? agent
+}
+
+export interface StudioBeat {
+  text: string
+  visual_intent?: string
+  on_screen_text?: string
+}
+
+export interface StudioCritiqueFeedback {
+  summary?: string
+  strengths?: string[]
+  issues?: string[]
+}
+
+export interface StudioRequestedChange {
+  role: string
+  instruction: string
+}
+
+export interface StudioInfo {
+  status: string
+  iterations: number
+  scores?: number[]
+  notes?: string
+  cost_usd?: number | null
+  num_turns?: number | null
+  credits?: Array<{ media: string; attribution?: string; license?: string }>
 }

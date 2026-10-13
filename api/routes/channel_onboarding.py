@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import uuid
 from typing import Any, Literal
@@ -12,29 +11,21 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.agents.channel_planner_agent import ChannelPlannerAgent
-from agent.skills.market_research.youtube_discovery import YouTubeAuthError
 from agent.core.auth import create_oauth_state, decode_oauth_state
-from agent.core.channel_brand import ChannelBrandKit, ThemeVariant, YouTubeBrand
+from agent.core.channel_brand import ChannelBrandKit, YouTubeBrand
 from agent.core.config import settings
 from agent.core.database import Channel, MarketAnalysis, User, get_db
-from agent.core.subscription import QuotaExceededError, check_can_create_channel, check_can_run_market_analysis
+from agent.core.subscription import QuotaExceededError, check_can_create_channel
 from agent.skills.publisher import youtube_branding
 from api.authorization import get_user_channel
 from api.deps import get_current_user
 from api.models import (
     ChannelResponse,
-    GenerateBrandRequest,
-    MarketAnalysisRequest,
-    MarketAnalysisResponse,
     OnboardingCompleteRequest,
     OnboardingDraftRequest,
     OnboardingInstagramRequest,
     OnboardingTikTokRequest,
     OnboardingYoutubeRequest,
-    SuggestThemesRequest,
-    SuggestThemesResponse,
-    ThemeVariantResponse,
     YouTubeChannelItem,
     YouTubeOAuthUrlResponse,
 )
@@ -81,71 +72,6 @@ def _disable_platform_in_config(channel: Channel, platform: str) -> None:
     channel.config = cfg
     if platform == "tiktok":
         channel.tiktok_enabled = False
-
-
-@router.post("/onboarding/market-analysis", response_model=MarketAnalysisResponse)
-async def market_analysis(
-    body: MarketAnalysisRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> MarketAnalysisResponse:
-    """Analyse marché, concurrence et niches (YouTube API + synthèse multi-plateformes)."""
-    try:
-        await check_can_run_market_analysis(db, current_user)
-    except QuotaExceededError as exc:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
-
-    planner = ChannelPlannerAgent()
-    planner.bind_user(current_user.id)
-    try:
-        report = await planner.analyze_market(
-            body.prompt,
-            platforms=body.platforms,
-            region=body.region,
-            language=body.language,
-        )
-    except YouTubeAuthError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
-    except Exception as e:
-        logger.exception("Erreur inattendue lors de l'analyse marché")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)) from e
-
-    report_dict = report.model_dump()
-    saved = MarketAnalysis(
-        user_id=current_user.id,
-        prompt=body.prompt,
-        saturation_verdict=report.saturation_verdict,
-        market_summary=report.market_summary,
-        platforms_analyzed=report.platforms_analyzed,
-        report=report_dict,
-    )
-    db.add(saved)
-    await db.commit()
-    await db.refresh(saved)
-
-    response = MarketAnalysisResponse.model_validate(report_dict)
-    response.id = saved.id
-    return response
-
-
-@router.post("/onboarding/suggest-themes", response_model=SuggestThemesResponse)
-async def suggest_themes(body: SuggestThemesRequest) -> SuggestThemesResponse:
-    planner = ChannelPlannerAgent()
-    variants = await planner.suggest_theme_variants(
-        body.prompt,
-        market_context=body.market_context,
-    )
-    return SuggestThemesResponse(
-        variants=[ThemeVariantResponse.model_validate(v.model_dump()) for v in variants]
-    )
-
-
-@router.post("/onboarding/generate-brand")
-async def generate_brand(body: GenerateBrandRequest) -> dict[str, Any]:
-    planner = ChannelPlannerAgent()
-    variant = ThemeVariant.model_validate(body.variant.model_dump())
-    kit = await planner.generate_brand_kit(variant, market_hint=body.market_context)
-    return kit.model_dump()
 
 
 @router.post("/onboarding/draft", response_model=ChannelResponse, status_code=status.HTTP_201_CREATED)
@@ -406,19 +332,6 @@ async def complete_onboarding(
                 else:
                     existing[key] = val
         channel.config = existing
-    # Demande à l'IA de choisir l'ordre optimal des sources médias pour cette chaîne
-    from agent.skills.media_sources.source_advisor import suggest_media_source_priority
-    priority = await suggest_media_source_priority(
-        channel_name=channel.name,
-        theme_category=channel.theme_category or "",
-        niche_prompt=channel.niche_prompt or "",
-        user_id=current_user.id,
-    )
-    if priority:
-        cfg = channel.config or {}
-        cfg["media_source_priority"] = priority
-        channel.config = cfg
-
     if body and body.market_analysis_id:
         ma_result = await db.execute(
             select(MarketAnalysis).where(
@@ -444,15 +357,6 @@ async def complete_onboarding(
     await db.commit()
     await db.refresh(channel)
 
-    from agent.agents.style_director_agent import StyleDirectorAgent
-
-    async def _run_style_director() -> None:
-        try:
-            await StyleDirectorAgent().run_for_channel(channel.id, force=True)
-        except Exception:
-            logger.exception("StyleDirector post-onboarding échoué pour %s", channel.slug)
-
-    asyncio.create_task(_run_style_director())
     return channel
 
 

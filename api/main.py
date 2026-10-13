@@ -25,7 +25,6 @@ from api.routes import (
     config,
     content_planning,
     distribution,
-    engagement,
     markets,
     me,
     media,
@@ -114,7 +113,6 @@ app.include_router(media_serve.router)
 app.include_router(analytics.router)
 app.include_router(content_planning.router)
 app.include_router(distribution.router)
-app.include_router(engagement.router)
 app.include_router(config.router)
 app.include_router(scheduler.router)
 app.include_router(cost.router)

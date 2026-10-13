@@ -9,9 +9,6 @@ import TextField from '@mui/material/TextField'
 import Stepper from '@mui/material/Stepper'
 import Step from '@mui/material/Step'
 import StepLabel from '@mui/material/StepLabel'
-import Card from '@mui/material/Card'
-import CardContent from '@mui/material/CardContent'
-import CardActionArea from '@mui/material/CardActionArea'
 import Alert from '@mui/material/Alert'
 import CircularProgress from '@mui/material/CircularProgress'
 import MenuItem from '@mui/material/MenuItem'
@@ -24,25 +21,19 @@ import FormLabel from '@mui/material/FormLabel'
 import Link from '@mui/material/Link'
 import { PageContainer, PageHeader } from '@/components/layout'
 import Chip from '@mui/material/Chip'
-import Divider from '@mui/material/Divider'
 import {
-  analyzeMarket,
   applyYoutubeBranding,
   completeOnboarding,
   connectTikTok,
   createOnboardingDraft,
   disconnectYoutubeOAuth,
-  generateBrandKit,
   getYoutubeOAuthUrl,
   listYoutubeChannels,
   patchOnboardingInstagram,
   patchOnboardingTiktok,
   patchOnboardingYoutube,
   skipOnboardingStep,
-  suggestThemes,
   type ChannelBrandKit,
-  type MarketAnalysisReport,
-  type ThemeVariant,
   type YouTubeChannelItem,
 } from '@/lib/api'
 
@@ -56,9 +47,8 @@ export default function NewChannelWizardPage() {
   const [loading, setLoading] = useState(false)
 
   const [themePrompt, setThemePrompt] = useState('')
-  const [marketReport, setMarketReport] = useState<MarketAnalysisReport | null>(null)
-  const [variants, setVariants] = useState<ThemeVariant[]>([])
-  const [selectedVariant, setSelectedVariant] = useState<ThemeVariant | null>(null)
+  const [channelName, setChannelName] = useState('')
+  const [themeCategory, setThemeCategory] = useState('general')
   const [brandKit, setBrandKit] = useState<ChannelBrandKit | null>(null)
   const [channelId, setChannelId] = useState<string | null>(null)
 
@@ -145,83 +135,29 @@ export default function NewChannelWizardPage() {
     }
   }, [refreshYoutubeList])
 
-  const marketContextForSuggest = (): string | undefined => {
-    if (!marketReport) return undefined
-    return [
-      marketReport.market_summary,
-      `Verdict différenciation : ${marketReport.differentiation_verdict}`,
-      `Saturation : ${marketReport.saturation_verdict}`,
-      marketReport.avoid.length ? `À éviter : ${marketReport.avoid.join('; ')}` : '',
-    ]
-      .filter(Boolean)
-      .join('\n')
-  }
-
-  const handleMarketAnalysis = async () => {
-    if (!themePrompt.trim()) return
-    setLoading(true)
-    setError(null)
-    try {
-      const report = await analyzeMarket(themePrompt.trim())
-      setMarketReport(report)
-      const fromReport: ThemeVariant[] = report.recommended_themes.map((t) => ({
-        content_angle: t.content_angle,
-        slug: t.slug,
-        name: t.name,
-        theme_category: t.theme_category,
-        niche_prompt: t.niche_prompt,
-        suggested_tags: t.suggested_tags,
-      }))
-      setVariants(fromReport)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Erreur analyse marché')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleSuggest = async () => {
-    if (!themePrompt.trim()) return
-    setLoading(true)
-    setError(null)
-    try {
-      const v = await suggestThemes(themePrompt.trim(), marketContextForSuggest())
-      setVariants(v)
-      setActiveStep(0)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Erreur IA')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleSelectRecommendedTheme = async (
-    theme: MarketAnalysisReport['recommended_themes'][number],
-  ) => {
-    const variant: ThemeVariant = {
-      content_angle: theme.content_angle,
-      slug: theme.slug,
-      name: theme.name,
-      theme_category: theme.theme_category,
-      niche_prompt: theme.niche_prompt,
-      suggested_tags: theme.suggested_tags,
-    }
-    await handleSelectVariant(variant)
-  }
-
-  const handleSelectVariant = async (variant: ThemeVariant) => {
-    setSelectedVariant(variant)
-    setLoading(true)
-    setError(null)
-    try {
-      const kit = await generateBrandKit(variant, marketContextForSuggest())
-      setBrandKit(kit)
-      setActiveStep(1)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Erreur génération kit')
-    } finally {
-      setLoading(false)
-    }
+  // Kit de marque pré-rempli à partir du formulaire ; modifiable à l'étape « Identité ».
+  const handleBuildBrandKit = () => {
+    const name = channelName.trim()
+    const niche = themePrompt.trim()
+    if (!name || !niche) return
+    const slug = name
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+    setBrandKit({
+      slug,
+      name,
+      theme_category: themeCategory.trim() || 'general',
+      niche_prompt: niche,
+      content_angle: niche,
+      youtube: { title: name, description: niche, keywords: [], handle_suggestion: slug },
+      tiktok: { display_name: name, bio: niche.slice(0, 80), default_caption_style: '' },
+      instagram: { page_name: name, bio: niche.slice(0, 150) },
+      default_tags: [],
+    })
+    setActiveStep(1)
   }
 
   const handleSaveDraft = async () => {
@@ -385,140 +321,35 @@ export default function NewChannelWizardPage() {
         {activeStep === 0 && (
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
             <TextField
-              label="Décrivez votre idée de chaîne"
-              placeholder="Vidéos d'animaux mignons bébé, montages courts..."
+              label="Nom de la chaîne"
+              fullWidth
+              value={channelName}
+              onChange={(e) => setChannelName(e.target.value)}
+            />
+            <TextField
+              label="Ligne éditoriale"
+              placeholder="Shorts de vulgarisation sur les animaux : un fait surprenant expliqué en 45 secondes..."
+              helperText="Transmise au scénariste Claude pour chaque vidéo."
               multiline
               rows={4}
               fullWidth
               value={themePrompt}
               onChange={(e) => setThemePrompt(e.target.value)}
             />
-            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-              <Button
-                variant="contained"
-                color="secondary"
-                onClick={handleMarketAnalysis}
-                disabled={loading || !themePrompt.trim()}
-              >
-                {loading ? <CircularProgress size={24} /> : 'Analyser le marché et la concurrence'}
-              </Button>
-              <Button variant="outlined" onClick={handleSuggest} disabled={loading || !themePrompt.trim()}>
-                Proposer des niches (rapide)
-              </Button>
-            </Box>
-            <Alert severity="info" sx={{ mt: 1 }}>
-              L&apos;analyse marché utilise l&apos;API YouTube (données réelles) + synthèse TikTok/Instagram.
-              Configurez <code>YOUTUBE_REFRESH_TOKEN</code> sur le serveur pour les données concurrents YouTube.
-            </Alert>
-            {marketReport && (
-              <Card variant="outlined" sx={{ mt: 2 }}>
-                <CardContent>
-                  <Typography variant="h6" gutterBottom>
-                    Analyse marché
-                  </Typography>
-                  <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 2 }}>
-                    <Chip
-                      label={`Saturation : ${marketReport.saturation_verdict}`}
-                      color={
-                        marketReport.saturation_verdict === 'favorable'
-                          ? 'success'
-                          : marketReport.saturation_verdict === 'crowded'
-                            ? 'error'
-                            : 'warning'
-                      }
-                      size="small"
-                    />
-                    {marketReport.platforms_analyzed.map((p) => (
-                      <Chip key={p} label={p} size="small" variant="outlined" />
-                    ))}
-                  </Box>
-                  <Typography variant="body2" paragraph>
-                    {marketReport.market_summary}
-                  </Typography>
-                  <Typography variant="subtitle2" color="primary" gutterBottom>
-                    Chance de se démarquer
-                  </Typography>
-                  <Typography variant="body2" paragraph>
-                    {marketReport.differentiation_verdict}
-                  </Typography>
-                  {marketReport.top_competitors.length > 0 && (
-                    <>
-                      <Divider sx={{ my: 2 }} />
-                      <Typography variant="subtitle2" gutterBottom>
-                        Concurrence principale
-                      </Typography>
-                      {marketReport.top_competitors.slice(0, 5).map((c) => (
-                        <Box key={`${c.platform}-${c.name}`} sx={{ mb: 1.5 }}>
-                          <Typography variant="body2" fontWeight={600}>
-                            {c.name} ({c.platform})
-                            {c.subscriber_count != null
-                              ? ` — ${c.subscriber_count.toLocaleString('fr-FR')} abonnés`
-                              : ''}
-                          </Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            {c.positioning}
-                          </Typography>
-                        </Box>
-                      ))}
-                    </>
-                  )}
-                  {marketReport.avoid.length > 0 && (
-                    <Alert severity="warning" sx={{ mt: 2 }}>
-                      À éviter : {marketReport.avoid.join(' · ')}
-                    </Alert>
-                  )}
-                </CardContent>
-              </Card>
-            )}
-            {variants.length > 0 && (
-              <Box sx={{ display: 'grid', gap: 2, mt: 2 }}>
-                {marketReport?.recommended_themes.map((t) => (
-                  <Card key={t.slug} variant="outlined">
-                    <CardActionArea
-                      onClick={() => handleSelectRecommendedTheme(t)}
-                      disabled={loading}
-                    >
-                      <CardContent>
-                        <Box sx={{ display: 'flex', gap: 1, mb: 1 }}>
-                          <Chip
-                            label={`Diff. ${t.differentiation_score}/100`}
-                            size="small"
-                            color={t.differentiation_score >= 70 ? 'success' : 'default'}
-                          />
-                          <Chip label={t.competition_level} size="small" variant="outlined" />
-                        </Box>
-                        <Typography variant="h6">{t.name}</Typography>
-                        <Typography variant="body2" color="text.secondary">
-                          {t.content_angle}
-                        </Typography>
-                        <Typography variant="body2" sx={{ mt: 1 }}>
-                          {t.why_you_can_win}
-                        </Typography>
-                        <Typography variant="caption" display="block" sx={{ mt: 1 }}>
-                          {t.theme_category} — {t.slug}
-                        </Typography>
-                      </CardContent>
-                    </CardActionArea>
-                  </Card>
-                ))}
-                {!marketReport &&
-                  variants.map((v) => (
-                    <Card key={v.slug} variant="outlined">
-                      <CardActionArea onClick={() => handleSelectVariant(v)} disabled={loading}>
-                        <CardContent>
-                          <Typography variant="h6">{v.name}</Typography>
-                          <Typography variant="body2" color="text.secondary">
-                            {v.content_angle}
-                          </Typography>
-                          <Typography variant="caption" display="block" sx={{ mt: 1 }}>
-                            {v.theme_category} — {v.slug}
-                          </Typography>
-                        </CardContent>
-                      </CardActionArea>
-                    </Card>
-                  ))}
-              </Box>
-            )}
+            <TextField
+              label="Catégorie"
+              placeholder="science, histoire, animaux, tech..."
+              fullWidth
+              value={themeCategory}
+              onChange={(e) => setThemeCategory(e.target.value)}
+            />
+            <Button
+              variant="contained"
+              onClick={handleBuildBrandKit}
+              disabled={!channelName.trim() || !themePrompt.trim()}
+            >
+              Continuer
+            </Button>
           </Box>
         )}
 

@@ -92,9 +92,6 @@ async def _process_task(payload: dict) -> None:
 
     project_id = uuid.UUID(payload["project_id"])
     start_from = payload.get("start_from")
-    critic_feedback = payload.get("critic_feedback")
-    critic_start_from = payload.get("critic_start_from")
-    resume_iteration = payload.get("resume_iteration")
 
     await acquire_lease(project_id, WORKER_ID)
     stop_renew = asyncio.Event()
@@ -105,9 +102,6 @@ async def _process_task(payload: dict) -> None:
         Orchestrator().run_pipeline(
             project_id,
             start_from=start_from,
-            critic_feedback=critic_feedback,
-            critic_start_from=critic_start_from,
-            resume_iteration=resume_iteration,
             already_claimed=True,
         )
     )

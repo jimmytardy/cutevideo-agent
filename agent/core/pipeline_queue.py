@@ -14,7 +14,6 @@ from agent.core.config import get_pipeline_settings
 from agent.core.database import AsyncSessionFactory, Channel, Project, User
 from agent.core.disk_guard import format_disk_wait_message, is_disk_sufficient
 from agent.core.pipeline_lease import has_active_lease
-from agent.core.pipeline_resume import resolve_start_from
 from agent.core.queue import (
     LEGACY_PIPELINE_QUEUE,
     PIPELINE_PAYLOAD_PREFIX,
@@ -146,12 +145,6 @@ async def enqueue_pipeline_task(
         if channel is None:
             raise ValueError(f"Chaîne {project.channel_id} introuvable")
         resolved_user_id = user_id or channel.user_id
-
-    if start_from is None and critic_start_from is None:
-        plan = await resolve_start_from(project_id)
-        start_from = plan.step
-        if resume_iteration is None and plan.iteration > 1:
-            resume_iteration = plan.iteration
 
     await queue.clear_pipeline_cancel(project_key)
 

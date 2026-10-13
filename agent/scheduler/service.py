@@ -54,21 +54,9 @@ class SchedulerService:
             replace_existing=True,
         )
         self._scheduler.add_job(
-            jobs.run_engagement_agents,
-            CronTrigger(day_of_week="mon,thu", hour=9, minute=15, timezone="Europe/Paris"),
-            id="engagement_agents_biweekly",
-            replace_existing=True,
-        )
-        self._scheduler.add_job(
             jobs.run_purge_old_media,
             CronTrigger(hour="3", minute="0"),
             id="purge_old_media",
-            replace_existing=True,
-        )
-        self._scheduler.add_job(
-            jobs.run_style_director_refresh,
-            CronTrigger(hour=4, minute=0, timezone="Europe/Paris"),
-            id="style_director_refresh",
             replace_existing=True,
         )
         logger.info("Scheduler configuré (%d jobs)", len(jobs.JOB_REGISTRY))

@@ -14,12 +14,16 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Claude Code CLI : orchestre la création des vidéos (studio/, `claude -p /make-video`).
+ARG CLAUDE_CODE_VERSION=2.1.296
+RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
+
 WORKDIR /app/dashboard
 COPY dashboard/package.json dashboard/package-lock.json* ./
 RUN npm ci
 
 WORKDIR /app
-RUN mkdir -p tmp output/long output/shorts/master output/shorts/platforms
+RUN mkdir -p tmp output/studio /var/lib/cutevideo/studio-runs
 
 COPY scripts/docker-entrypoint.dev.sh ./scripts/docker-entrypoint.dev.sh
 COPY scripts/docker-entrypoint.worker.dev.sh ./scripts/docker-entrypoint.worker.dev.sh
@@ -27,7 +31,8 @@ COPY scripts/pipeline_worker.py ./scripts/pipeline_worker.py
 RUN chmod +x ./scripts/docker-entrypoint.dev.sh ./scripts/docker-entrypoint.worker.dev.sh
 
 ENV PYTHONUNBUFFERED=1 \
-    INTERNAL_API_URL=http://127.0.0.1:8000
+    INTERNAL_API_URL=http://127.0.0.1:8000 \
+    STUDIO_RUNS_DIR=/var/lib/cutevideo/studio-runs
 
 EXPOSE 3000 8000
 

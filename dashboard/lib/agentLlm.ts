@@ -17,9 +17,7 @@ export interface AgentLlmConfig {
   has_anthropic_key: boolean
 }
 
-export const AGENT_LLM_LINKED_TO: Record<string, string> = {
-  revision_agent: 'scenario_agent',
-}
+export const AGENT_LLM_LINKED_TO: Record<string, string> = {}
 
 export const DEFAULT_AGENT_LLM_PREFERENCE: AgentLlmPreference = {
   provider: 'gemini',
@@ -34,42 +32,6 @@ export interface ConfigurableAgentInfo {
 }
 
 export const CONFIGURABLE_AGENT_INFO: Record<string, ConfigurableAgentInfo> = {
-  research_agent: {
-    label: 'Chercheur',
-    title: 'Collecte documentaire',
-    tasks: [
-      'Recherche les faits vérifiables sur le sujet de la vidéo',
-      'Croise les sources via Gemini et Google Search (Gemini uniquement)',
-      'Produit un brief structuré pour le scénariste',
-    ],
-  },
-  scenario_agent: {
-    label: 'Scénariste',
-    title: 'Structure narrative',
-    tasks: [
-      'Rédige le script complet segment par segment',
-      'Définit les visual beats et les durées',
-      'Intègre le brief de recherche et l\'identité éditoriale',
-    ],
-  },
-  revision_agent: {
-    label: 'Agent révision',
-    title: 'Correction chirurgicale',
-    tasks: [
-      'Applique les retours du critique sur le scénario',
-      'Patche uniquement les passages signalés',
-      'Préserve la structure et le ton du script original',
-    ],
-  },
-  critic_agent: {
-    label: 'Critique IA',
-    title: 'Contrôle qualité',
-    tasks: [
-      'Analyse la vidéo montée (narration, rythme, cohérence)',
-      'Attribue un score et des corrections détaillées',
-      'Décide d\'approuver ou de relancer une itération',
-    ],
-  },
   content_planner_agent: {
     label: 'Planificateur de contenu',
     title: 'Calendrier éditorial',
@@ -79,42 +41,6 @@ export const CONFIGURABLE_AGENT_INFO: Record<string, ConfigurableAgentInfo> = {
       'S\'appuie sur l\'historique et les retours audience',
     ],
   },
-  clipper_agent: {
-    label: 'Découpeur shorts',
-    title: 'Extraction de moments forts',
-    tasks: [
-      'Identifie les passages les plus accrocheurs du scénario long',
-      'Propose 5 à 8 clips de 45 à 90 secondes',
-      'Optimise hooks et titres pour la viralité',
-    ],
-  },
-  short_producer_agent: {
-    label: 'Producteur shorts',
-    title: 'Shorts natifs dérivés',
-    tasks: [
-      'Génère des mini-scénarios autonomes à partir d\'une vidéo longue',
-      'Crée un angle différent avec hook immédiat',
-      'Adapte le rythme au format vertical',
-    ],
-  },
-  comments_agent: {
-    label: 'Agent commentaires',
-    title: 'Engagement communautaire',
-    tasks: [
-      'Classifie les commentaires YouTube et TikTok',
-      'Rédige des réponses pour les cas ambigus',
-      'Enrichit le contexte d\'apprentissage de la chaîne',
-    ],
-  },
-  channel_planner_agent: {
-    label: 'Planificateur de chaîne',
-    title: 'Onboarding éditorial',
-    tasks: [
-      'Analyse le marché et la concurrence',
-      'Suggère des niches et angles distincts',
-      'Génère le kit de marque (titres, bios, tags)',
-    ],
-  },
   distribution_agent: {
     label: 'Distribution',
     title: 'Publication multi-plateformes',
@@ -122,42 +48,6 @@ export const CONFIGURABLE_AGENT_INFO: Record<string, ConfigurableAgentInfo> = {
       'Planifie les créneaux optimaux YouTube, TikTok, Instagram',
       'Rédige titres, descriptions et métadonnées',
       'Orchestre la mise en file d\'attente de publication',
-    ],
-  },
-  scenario_media_gap: {
-    label: 'Adaptation écarts média',
-    title: 'Scénario sans visuel',
-    tasks: [
-      'Intervient quand une image IA n\'a pas pu être générée',
-      'Réécrit la narration pour ne plus exiger le visuel manquant',
-      'Renforce le texte à l\'écran en compensation',
-    ],
-  },
-  validation_brief: {
-    label: 'Brief validation média',
-    title: 'Critères de curation',
-    tasks: [
-      'Définit l\'entité sujet et les contraintes visuelles',
-      'Liste ce que les images doivent montrer ou éviter',
-      'Fixe les seuils de pertinence par segment',
-    ],
-  },
-  source_advisor: {
-    label: 'Conseiller sources',
-    title: 'Priorisation des banques d\'images',
-    tasks: [
-      'Recommande quelles sources média privilégier par beat',
-      'Adapte la stratégie au type de visuel et à la thématique',
-      'Optimise le rapport qualité et licence libre',
-    ],
-  },
-  media_agent_llm: {
-    label: 'Scoring média',
-    title: 'Pertinence visuelle',
-    tasks: [
-      'Évalue la pertinence des candidats image ou vidéo via Gemini Vision',
-      'Compare les miniatures au brief de validation',
-      'Classe les médias par score de relevance (Gemini uniquement)',
     ],
   },
 }
@@ -176,40 +66,16 @@ export const AGENT_LLM_GROUPS: ReadonlyArray<{
   agents: readonly string[]
 }> = [
   {
-    id: 'production',
-    label: 'Réalisation de la vidéo',
-    description: 'Recherche, scénario, révisions et contrôle qualité.',
-    agents: ['research_agent', 'scenario_agent', 'critic_agent', 'revision_agent'],
-  },
-  {
-    id: 'media',
-    label: 'Médias et visuels',
-    description: 'Sourcing, validation et scoring des images et vidéos.',
-    agents: ['validation_brief', 'media_agent_llm', 'scenario_media_gap', 'source_advisor'],
-  },
-  {
-    id: 'shorts',
-    label: 'Shorts',
-    description: 'Découpe et scénarisation des formats courts.',
-    agents: ['clipper_agent', 'short_producer_agent'],
-  },
-  {
     id: 'planning',
     label: 'Planification éditoriale',
-    description: 'Calendrier de contenu et onboarding de chaîne.',
-    agents: ['content_planner_agent', 'channel_planner_agent'],
+    description: 'Choix quotidien des sujets (la création des vidéos passe par Claude Code CLI).',
+    agents: ['content_planner_agent'],
   },
   {
     id: 'distribution',
     label: 'Publication',
     description: 'Planification des créneaux et métadonnées multi-plateformes.',
     agents: ['distribution_agent'],
-  },
-  {
-    id: 'engagement',
-    label: 'Engagement audience',
-    description: 'Modération et réponses aux commentaires.',
-    agents: ['comments_agent'],
   },
 ]
 
@@ -284,10 +150,7 @@ export const ANTHROPIC_MODELS = [
   { value: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5' },
 ] as const
 
-const AGENT_TASK_KIND: Record<string, AgentTaskKind> = {
-  media_agent_llm: 'vision',
-  research_agent: 'gemini_search',
-}
+const AGENT_TASK_KIND: Record<string, AgentTaskKind> = {}
 
 export function agentTaskKind(agentName: string): AgentTaskKind {
   const source = resolvePreferenceAgent(agentName)

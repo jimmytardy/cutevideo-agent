@@ -8,7 +8,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from starlette.requests import Request
 
-from agent.agents.critic_agent import CriticAgent
 from agent.core.database import User
 from api.authorization import get_user_project
 from api.middleware_auth import resolve_request_auth_token
@@ -70,32 +69,6 @@ async def test_protected_route_returns_401_without_token() -> None:
         )
     assert response.status_code == 401
     assert response.json()["detail"] == "Authentification requise"
-
-
-def test_normalize_feedback_flattens_nested_criteria() -> None:
-    raw = {
-        "rhythm": {"score": 16, "comments": "Bon rythme"},
-        "structure": 12,
-        "comments": "Synthèse globale",
-        "start_from": "media_agent",
-    }
-    normalized = CriticAgent._normalize_feedback(raw)
-    assert normalized["rhythm"] == 16
-    assert normalized["structure"] == 12
-    assert normalized["start_from"] == "media_agent"
-    assert "Synthèse globale" in normalized["comments"]
-    assert "rhythm: Bon rythme" in normalized["comments"]
-
-
-def test_extract_structure_score_from_nested_object() -> None:
-    feedback = {"structure": {"score": 14, "comments": "Hook faible"}}
-    assert CriticAgent._extract_structure_score(feedback) == 14
-
-
-def test_normalize_criterion_value_handles_primitives() -> None:
-    assert CriticAgent._normalize_criterion_value(18) == 18
-    assert CriticAgent._normalize_criterion_value({"score": 9}) == 9
-    assert CriticAgent._normalize_criterion_value("bad") is None
 
 
 @pytest.mark.asyncio

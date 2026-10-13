@@ -47,10 +47,7 @@ GEMINI_SEARCH_PAID_MODELS: tuple[str, ...] = (
     "gemini-3.1-pro-preview",
 )
 
-_AGENT_TASK_KIND: dict[str, AgentTaskKind] = {
-    "media_agent_llm": "vision",
-    "research_agent": "gemini_search",
-}
+_AGENT_TASK_KIND: dict[str, AgentTaskKind] = {}
 
 
 @dataclass(frozen=True)

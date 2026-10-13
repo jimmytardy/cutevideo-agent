@@ -134,9 +134,9 @@ async def burn_ass_subtitles(
     from agent.skills.video.ffmpeg_runtime import (
         ffmpeg_preset,
         filter_thread_args,
+        run_ffmpeg,
         thread_args,
     )
-    from agent.skills.video.ffmpeg_utils import _run_ffmpeg
 
     ass_escaped = str(ass_path.resolve()).replace("\\", "/").replace(":", "\\:")
     cmd = [
@@ -150,7 +150,7 @@ async def burn_ass_subtitles(
         "-movflags", "+faststart",
         str(output_path),
     ]
-    await _run_ffmpeg(cmd)
+    await run_ffmpeg(cmd)
     logger.info("Sous-titres incrustés → %s", output_path)
 
 

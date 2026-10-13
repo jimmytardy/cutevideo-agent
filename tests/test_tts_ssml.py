@@ -1,19 +1,6 @@
 """Tests SSML builder and voice optional logic."""
 
-from agent.agents.narrator_agent import segment_needs_voice
 from agent.skills.audio.ssml_builder import build_azure_ssml, is_dragon_hd_voice
-
-
-def test_segment_needs_voice_false_when_explicit() -> None:
-    assert segment_needs_voice({"needs_voice": False, "narration_text": "hello"}) is False
-
-
-def test_segment_needs_voice_false_when_empty_text() -> None:
-    assert segment_needs_voice({"needs_voice": True, "narration_text": ""}) is False
-
-
-def test_segment_needs_voice_true_by_default_with_text() -> None:
-    assert segment_needs_voice({"narration_text": "Bonjour"}) is True
 
 
 def test_build_azure_ssml_maps_editorial_tone_channel_wide() -> None:

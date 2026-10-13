@@ -58,48 +58,41 @@ Tests are in `tests/` and use `pytest-asyncio`. No mocking of the database — t
 
 ### God nodes (most connected abstractions)
 
-- `Channel` — top-level entity; every pipeline, publication, and config is scoped to a channel
-- `BaseAgent` — abstract base for all 27 agents (`agent/agents/`); AgentRun DB logging, LLM calls via `call_llm()`, and learning context injection
-- `Orchestrator` — sequences the creation pipeline for one project; calls agents in order and gates on `CriticAgent` score
-- `ChannelRuntimeConfig` — Pydantic model resolved by `resolve_channel_config()` from `Channel.config` JSON + `data/agent_config.json` defaults; consumed by every agent
-- `resolve_channel_config()` (agent/core/channel_config.py:181) — the single merge point between per-channel DB config and global defaults
+- `Channel` — top-level entity; every project, publication, and config is scoped to a channel
+- `ClaudeStudioRunner` (agent/core/claude_studio.py) — the creation pipeline: writes `brief.json`, runs Claude Code CLI headless, mirrors progress into `AgentRun`, persists the result
+- `Orchestrator` — thin wrapper: builds `PipelineContext`, calls `ClaudeStudioRunner`, sets project status `approved` / `failed` / `stopped`
+- `ChannelRuntimeConfig` — Pydantic model resolved by `resolve_channel_config()` from `Channel.config` JSON + `data/agent_config.json` defaults
+- `resolve_channel_config()` (agent/core/channel_config.py) — the single merge point between per-channel DB config and global defaults
 
-### Pipeline flow
+### Creation pipeline: Claude Studio (`studio/`)
 
-**Creation pipeline** (one `Project` per video, status `pending → running → approved/rejected`):
+Video creation is done by **Claude Code CLI** (`claude -p /make-video`), not by Python agents. One `Project` = one vertical 9:16 Short.
 
 ```
-ResearchAgent → OutlineAgent → ScenarioAgent → [FactCheckerAgent, HookOptimizerAgent]
-    → NarratorAgent → [ArtDirectorAgent, BeatPlannerAgent, DiagramSpecialistAgent]
-    → MediaAgent → MontagePlannerAgent → EditorAgent → SubtitleAgent
-    → CriticAgent (loop, up to max_critic_iterations; RevisionAgent on `iterate`)
-    → ClipperAgent → ShortEditorAgent
+Orchestrator.run_pipeline → ClaudeStudioRunner
+  → run dir (STUDIO_RUNS_DIR/<project_id>, OUTSIDE the repo) = copy of studio/workspace/ + brief.json
+  → claude -p /make-video  (producer = main session, 5 sub-agents in studio/workspace/.claude/agents/)
+       scenariste → scenario.json · voix → voice.wav + words.json · monteur → timeline.json + renders/vN.mp4
+       miniaturiste → thumbnails/ + thumbnail.json · critique → critique_N.json (approve / iterate, changes per role)
+       loop ≤ brief.max_iterations, then result.json
+  → persist: Scenario, Video short_master + short_<platform> (S3), CriticReport per iteration,
+    Project.config.youtube_metadata (title/description/hashtags + media credits), .thumbnail, .claude_studio
 ```
 
-`Orchestrator._run_main_loop()` (called by `_run_creation_pipeline()`) drives this sequentially. The canonical step list and restart points are `_STEPS` / `_STEP_TO_LOOP_IDX` in `orchestrator.py` — **the source of truth if this diagram drifts**. Note the order: `NarratorAgent` runs **before** `BeatPlannerAgent` (beats are split post-TTS from Whisper timestamps) which runs **before** `MediaAgent`. Each agent receives a `PipelineContext` with the DB entities and `ChannelRuntimeConfig`.
+- `studio/workspace/` — the Claude workspace copied into each run dir: `CLAUDE.md` (Short rules + file contracts), `.claude/commands/make-video.md` (producer/loop), `.claude/agents/*.md` (the 5 roles)
+- `studio/tools.py` — the **only** commands the agents may run (`python -m studio.tools <cmd>`, JSON output): `search-media`, `preview` (contact sheet Claude looks at), `download`, `ai-image` (Flux, capped by `STUDIO_MAX_AI_IMAGES`), `music`, `tts` (Azure → Gemini → edge fallback), `transcribe` (Whisper timings, script spelling via `studio/align.py`), `render`, `frames`, `thumbnail`, `probe`, `validate`. It `chdir`s to the repo root before importing `agent.*` (relative `.env` / `data/`).
+- `studio/contracts.py` — Pydantic contracts of every run-dir file (brief, scenario, timeline, critique, thumbnail, result); validated by tools and by the runner
+- `studio/render.py` — timeline → Short (Ken Burns / video crop per clip, concat, voice+music mix, karaoke ASS subtitles); `studio/media.py` — search/download/credits/previews/frames; `studio/thumbnail.py`, `studio/textfx.py`
+- `studio/launcher.py` — builds the CLI command (permissions passed as `--allowedTools`: Bash restricted to `python -m studio.tools:*`; project settings files are ignored in untrusted dirs), parses stream-json into `agent_start` / `agent_end` / `tool` / `result` events, kills the process on cancel/timeout
+- `studio/run.py` — local run without DB: `python -m studio.run "sujet" [--duration 45] [--interactive]`
+- Step names kept for the dashboard/AgentRun: `scenario_agent`, `narrator_agent`, `editor_agent`, `thumbnail_agent`, `critic_agent` (`ROLE_AGENT_NAMES`)
+- Auth: by default `ANTHROPIC_API_KEY` is **not** passed to the CLI (Claude subscription: CLI login or `CLAUDE_CODE_OAUTH_TOKEN`); `CLAUDE_STUDIO_AUTH=api_key` to bill the API. Other knobs: `CLAUDE_STUDIO_MODEL`, `CLAUDE_STUDIO_TIMEOUT_S`, `CLAUDE_STUDIO_MAX_TURNS`, `CLAUDE_STUDIO_MAX_BUDGET_USD`, `STUDIO_WHISPER_MODEL` (default `small`)
 
-**Scheduler jobs** (APScheduler, defined in `agent/scheduler/jobs.py`, wired in `agent/scheduler/service.py`):
+**Remaining Python agents** (`agent/agents/`, extend `BaseAgent`): `ContentPlannerAgent` (creates tomorrow's `pending` projects) and `DistributionAgent` (schedules/publishes approved videos). Their LLM calls go through `call_llm()` (agent/core/llm_resolver.py).
 
-| Schedule | Job |
-|----------|-----|
-| Daily 06:00 Paris | `ContentPlannerAgent` — creates `pending` projects for tomorrow |
-| Every 15 min | `DistributionAgent` — schedules and publishes approved videos |
-| Hourly :15 (Mon, Thu) | `AnalyticsAgent` then `CommentsAgent` (engagement loop) |
-| Daily 03:00 | S3 storage cleanup |
+**Scheduler jobs** (APScheduler, `agent/scheduler/jobs.py`, wired in `agent/scheduler/service.py`): content planner (06:00 Paris), pending-project launch (06:30 + hourly), distribution (every 15 min), S3/media purge (03:00).
 
-**Concurrency**: `can_start_pipeline()` (agent/core/concurrency.py) gates new runs against `Channel.max_concurrent_pipelines` (default 1 per channel).
-
-### Agent structure
-
-Every agent extends `BaseAgent` (agent/core/base_agent.py):
-- LLM calls go through `_call_claude()` → `call_llm()` (agent/core/llm_resolver.py), which picks the provider per user: **Gemini by default** (platform Vertex AI / API key), Anthropic only when the user has saved their own Anthropic key and chose a `claude-*` model
-- `start_run()` / `end_run()` / `fail_run()` record an `AgentRun` row in DB
-- `run(input_data)` is the only abstract method
-- Learning context is injected via `load_channel_context()` and compacted via `compact_learning_context()`
-
-LLM model and token limits are resolved per-agent from `data/agent_config.json` → `llm.agent_models` by `resolve_model()` / `resolve_max_tokens()` in `agent/core/llm_config.py`. Default model: `claude-opus-5-5`; economy tier: `claude-sonnet-5-5`. The selectable Anthropic models live in `ANTHROPIC_TEXT_MODELS` (agent/core/agent_llm_constraints.py) and `dashboard/lib/agentLlm.ts`; stored user preferences naming a model outside that list fall back to its first entry.
-
-Anthropic calls (`_anthropic_complete()` in llm_resolver.py) stream via `client.beta.messages.stream`. Opus/Sonnet/Fable 5.x always think and thinking consumes `max_tokens`, so `ANTHROPIC_THINKING_HEADROOM_TOKENS` is added on top of the per-agent budget; those models also get the server-side refusal fallback (`fallbacks: "default"`). **Never use an assistant prefill** (400 on current models) — truncated answers are continued with a user turn (`CONTINUATION_PROMPT`). No `temperature`/`top_p` on current Claude models either (the `temperature=` calls in the codebase are all Gemini).
+**Concurrency**: `can_start_pipeline()` (agent/core/concurrency.py) gates new runs against `Channel.max_concurrent_pipelines` (default 1). A restart wipes the previous creation first (`clear_creation_artifacts()` in agent/core/pipeline_reset.py; published videos are kept).
 
 ### Channel config layering
 
@@ -110,18 +103,15 @@ Anthropic calls (`_anthropic_complete()` in llm_resolver.py) stream via `client.
 
 Theme-based media source priority lives in `THEME_SOURCE_PRIORITY` (agent/core/channel_config.py) and `data/agent_config.json → media_sources.priority_by_theme`.
 
-### Learning context (engagement loop)
-
-`ChannelLearningContext` (DB table) stores a rolling JSON of insights per channel, updated after each `AnalyticsAgent` + `CommentsAgent` run. `ScenarioAgent`, `CriticAgent`, and `ClipperAgent` receive a compacted summary via `compact_learning_context()`.
-
 ### Skills (agent/skills/)
 
-Reusable building blocks called by agents — not agents themselves:
+Building blocks used by `studio/tools.py` and the remaining agents:
 
-- `audio/` — `tts.py` (edge-tts / Azure Neural via `azure_tts.py`), `audio_mixer.py`, `ssml_builder.py` (maps `delivery_style`/mood → Azure SSML `express-as` style + prosody; tolerant of model vocab via `STYLE_ALIASES` / `_normalize_pace`; **DragonHD voices drop `express-as`, only `rate`/`pitch` apply**), `whisper_utils.py`, `sound_design.py` (SFX whoosh/pop/impact/click/riser, beat-cut cues long+short, ambient bed)
-- `video/` — `ffmpeg_utils.py` (encode/concat/subtitle burn; flash blanc inter-chapitres long via `long_montage_profile`), `filter_graph_builder.py` (per-segment `filter_complex` render — editor hot path; applies motion, xfade transitions, `drawtext`/`svg_overlay`), `montage_profile.py` (`short_montage_profile` / `long_montage_profile`, `load_sfx_config`), `pacing_director.py` (hints hook long `fadewhite`, mood transitions), `montage_decisions.py` (per-beat creative decisions: `resolve_motion_style` alternates Ken Burns for photos, `resolve_overlay_mode` triggers a text overlay whenever a beat has `on_screen_text`, `resolve_transition`), `ken_burns.py`, `shorts.py`, `viral_subtitles.py`, `ffmpeg_runtime.py` (shared CPU/RAM guardrails)
-- `media_sources/` — one file per source (Gallica, Europeana, Wikimedia, Unsplash, Pexels, Pixabay, NASA, Internet Archive) + `ai/` for Flux/Imagen3 fallback
-- `publisher/` — `youtube.py`, `tiktok_comments.py`, `instagram.py`, `composio_client.py` (TikTok OAuth), `executor.py` (publication YouTube utilise `Project.config.thumbnail` de `thumbnail_agent`, fallback `generate_thumbnail`)
+- `audio/` — `tts.py` (Azure Neural via `azure_tts.py` / Gemini / edge-tts), `ssml_builder.py` (**DragonHD voices drop `express-as`, only `rate`/`pitch` apply**), `audio_mixer.py` (voice + ducked music), `mastering.py`, `whisper_utils.py`, `music_fetcher.py` (Freesound / Internet Archive)
+- `video/` — `ken_burns.py`, `viral_subtitles.py` (karaoke ASS), `ffmpeg_runtime.py` (shared CPU/RAM guardrails)
+- `media_sources/` — one file per free bank (Pexels, Pixabay, Unsplash, Coverr, Wikimedia, NASA, Europeana, Internet Archive, Gallica; loaded dynamically by `studio/media.py`) + `ai/` for Flux/Imagen3; licences checked by `media/rights_check.py`
+- `publisher/` — `youtube.py`, `instagram.py`, `composio_client.py` (TikTok), `executor.py` (uses `Project.config.thumbnail`, fallback `generate_thumbnail`)
+- `content_planning/`, `pipeline_progress/` (5 studio steps per iteration from `AgentRun`)
 
 ### FFmpeg CPU/RAM guardrails
 
@@ -129,24 +119,23 @@ Dev/prod machines may be CPU/RAM-limited and shared with other workloads. All he
 
 - `FFMPEG_THREADS` (default `2`) — caps cores per ffmpeg process; without it libx264 grabs every core (`*thread_args()` is injected into encode commands).
 - `FFMPEG_PRESET` (default `medium`) — libx264 preset for the editor render; set `fast` for a lighter, faster encode (~10–20% larger file, near-identical quality).
-- `run_ffmpeg()` holds a global semaphore (=1) so only **one ffmpeg process runs at a time** across the whole process, even when an agent fans out via `asyncio.gather`. **Both video and audio encodes** route through it (`tts.py`, `mastering` filters, `sound_design.py`, `audio_mixer.py`, plus all `video/`).
+- `run_ffmpeg()` holds a global semaphore (=1) so only **one ffmpeg process runs at a time** across the whole process, even when an agent fans out via `asyncio.gather`. **Both video and audio encodes** route through it (`tts.py`, `mastering` filters, `audio_mixer.py`, `video/` and `studio/`).
 - `*thread_args()` must be placed in the **output** section (after the last `-i`, before `-c:v`) — as an input option it only caps the decoder, not the libx264 encoder.
-- `*thread_args()` (`-threads`) caps **only the libx264 encoder**, not filtering. Any encode with `-vf` or `-filter_complex` (editor `filter_graph_builder`, `ken_burns`, `shorts`, `viral_subtitles`) **must also** include `*filter_thread_args()` (`-filter_threads`/`-filter_complex_threads`, placed **before the first `-i`** as global options) — otherwise ffmpeg defaults filter threads to the logical core count and the filter stage saturates the CPU despite `-threads`. The editor's cost is dominated by `-filter_complex`, so this is the main CPU lever there.
-- Whisper (`whisper_utils._get_whisper_model`) passes `cpu_threads=` (`WHISPER_CPU_THREADS`, else `FFMPEG_THREADS`); faster-whisper otherwise uses every core, and `large-v3` runs on CPU right after the editor.
+- `*thread_args()` (`-threads`) caps **only the libx264 encoder**, not filtering. Any encode with `-vf` or `-filter_complex` (`studio/render.py`, `ken_burns`, `viral_subtitles`, thumbnails) **must also** include `*filter_thread_args()` (`-filter_threads`/`-filter_complex_threads`, placed **before the first `-i`** as global options) — otherwise ffmpeg defaults filter threads to the logical core count and the filter stage saturates the CPU despite `-threads`.
+- Whisper (`whisper_utils._get_whisper_model`) passes `cpu_threads=` (`WHISPER_CPU_THREADS`, else `FFMPEG_THREADS`); faster-whisper otherwise uses every core (studio default model `small`; `large-v3` needs ~3 GB RAM).
 
-Per-segment fan-outs (`NarratorAgent`, `MediaAgent`, shorts `derivation.py`) use `bounded_gather()` (agent/core/concurrency.py) instead of raw `asyncio.gather` — at most `PIPELINE_FANOUT_CONCURRENCY` (default 3) tasks run at once, so a 15-segment video doesn't launch 15 concurrent TTS/ffmpeg/downloads.
+Fan-outs (e.g. `studio/media.py` multi-source search) use `bounded_gather()` (agent/core/concurrency.py) instead of raw `asyncio.gather` — at most `PIPELINE_FANOUT_CONCURRENCY` (default 3) tasks run at once, so a 15-segment video doesn't launch 15 concurrent TTS/ffmpeg/downloads.
 
-The creation pipeline already renders sequentially (one segment at a time) and `max_concurrent_pipelines` defaults to `1`. **Any new ffmpeg encode must call `run_ffmpeg()` and include `*thread_args()`** (in the output section); cheap `ffprobe` / `ffmpeg -filters` probes may bypass it. **Any new per-segment fan-out must use `bounded_gather()`.**
+`studio/render.py` renders clips sequentially and `max_concurrent_pipelines` defaults to `1`. **Any new ffmpeg encode must call `run_ffmpeg()` and include `*thread_args()`** (in the output section); cheap `ffprobe` / `ffmpeg -filters` probes may bypass it. **Any new fan-out must use `bounded_gather()`.**
 
 ### API (FastAPI, api/)
 
 All routes are under `/api/v1/`. Key route modules:
-- `agents.py` — manual trigger of any agent run
+- `agents.py` — agent runs / statuses of a project
 - `projects.py` — CRUD for projects
 - `content_planning.py` — content planner trigger + channel plan
 - `distribution.py` — distribution queue
-- `engagement.py` — analytics/comments trigger + learning context read
-- `channel_onboarding.py` — 6-step wizard (market analysis, brand kit, OAuth, TikTok via Composio)
+- `channel_onboarding.py` — wizard (name/niche form, brand kit, YouTube OAuth, TikTok via Composio, Instagram)
 - `cost.py` — weekly AI image cost estimates
 - `scheduler.py` — APScheduler status and manual job trigger
 
@@ -156,7 +145,7 @@ The scheduler is embedded in the API process (not a separate worker) when `SCHED
 
 Next.js 14 App Router + Material UI v6. API calls go through `dashboard/lib/api.ts` using a `fetcher()` wrapper. The Next.js dev server proxies `/api/` to the FastAPI backend (see `next.config.mjs`).
 
-Key pages: `/channels` (list), `/channels/new` (6-step wizard), `/channels/[id]/settings`, `/scheduler`, `/projects/[id]`.
+Key pages: `/channels` (list), `/channels/new` (wizard), `/channels/[id]/settings`, `/scheduler`, `/projects/[id]` (Claude Studio steps via `components/StudioPipeline.tsx`, preview, thumbnails, script, credits).
 
 ### Storage
 
@@ -164,6 +153,6 @@ Key pages: `/channels` (list), `/channels/new` (6-step wizard), `/channels/[id]/
 
 ### Key config files
 
-- `data/agent_config.json` — global defaults for pipeline, TTS, video encoding, media sources, LLM tiers, quotas, engagement thresholds
+- `data/agent_config.json` — global defaults for pipeline, TTS, video encoding, media sources, LLM tiers, quotas
 - `.env` / `.env.example` — secrets and runtime overrides (DATABASE_URL, REDIS_URL, API keys)
 - `alembic/` — migration history; apply with `alembic upgrade head`

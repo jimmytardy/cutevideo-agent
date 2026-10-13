@@ -1,15 +1,15 @@
-# CuteVideo Agent — Pipeline IA Multi-Agents
+# CuteVideo — Shorts automatiques avec Claude Code
 
-Génération automatique de vidéos éducatives longues + shorts via un pipeline multi-agents, avec **plusieurs chaînes thématiques** en parallèle (1 pipeline actif max par chaîne).
+Génération automatique de Shorts éducatifs (9:16) : **Claude Code CLI** écrit, fait la voix, monte, conçoit la miniature et critique chaque vidéo, en utilisant les banques d'images gratuites. Plusieurs **chaînes thématiques** en parallèle (1 création active max par chaîne).
 
 ## Stack
 
 - **Backend** : Python (FastAPI, SQLAlchemy async, Alembic)
-- **IA** : Claude (Anthropic) — cerveau de chaque agent
+- **IA** : Claude Code CLI (`claude -p /make-video`) — 5 sous-agents ; Gemini/Claude pour le planificateur et la distribution
 - **DB** : PostgreSQL 16 + Redis
 - **Frontend** : Next.js 14 App Router + Material UI v6
-- **Vidéo** : FFmpeg, Whisper, edge-tts
-- **Sources médias** : Gallica BnF, Europeana, Wikimedia, Unsplash, Pexels
+- **Vidéo** : FFmpeg, Whisper, Azure TTS / Gemini TTS / edge-tts
+- **Sources médias** : Pexels, Pixabay, Unsplash, Coverr, Wikimedia, NASA, Europeana, Internet Archive, Gallica (+ Flux en dernier recours)
 
 ## Pipeline des agents
 
@@ -29,9 +29,19 @@ Content Planner (J) → projets pending → Pipeline (J) → approved → Distri
 **Création** (chaque projet `pending` — mandat content_planner dans `project.config`) :
 
 ```
-Scénariste → Chercheur Média → Narrateur Voix → Monteur Vidéo
-    → Sous-titreur → Critique IA → Découpeur Shorts → Éditeur Shorts
+claude -p /make-video  (dossier studio/)
+  Scénariste → Voix → Monteur (choisit les médias en regardant les planches) → Miniaturiste
+    → Critique (regarde les frames, note /100) → itère sur les rôles concernés si besoin
 ```
+
+Production locale sans base de données :
+
+```bash
+python -m studio.run "Pourquoi les flamants roses sont roses" --duration 45
+python -m studio.run "…" --interactive   # ouvre Claude Code dans le dossier du run
+```
+
+Auth du CLI : abonnement Claude (login `claude` ou `CLAUDE_CODE_OAUTH_TOKEN` via `claude setup-token`) ; `CLAUDE_STUDIO_AUTH=api_key` pour facturer `ANTHROPIC_API_KEY`.
 
 **Distribution** (scheduler toutes les 15 min, si `publishing.auto_publish`) :
 
@@ -43,23 +53,11 @@ Distribution Agent → planification créneaux YT / TikTok / IG (Europe/Paris)
 - Quotas par défaut : 1 vidéo longue / jour, 3 shorts / jour (configurable dans `data/agent_config.json`).
 - Créneaux par plateforme : `publishing.platform_slots` (jours + heures Paris).
 
-**Engagement** (scheduler horaire `:15`, heures UTC décalées par publication) :
-
-```
-Analytics Agent → Comments Agent
-```
-
-- **Analytics** : métriques YouTube, fenêtre **21 jours** (shorts) / **6 mois** (longues), contexte d'apprentissage chaîne.
-- **Comments** : même fenêtre que analytics ; réponses auto si pertinent.
-
 API :
 - `POST /api/v1/content-planning/run`, `POST /api/v1/content-planning/channels/{id}/plan`
 - `POST /api/v1/distribution/run`, `GET /api/v1/distribution/queue`
-- `POST /api/v1/engagement/run`, `GET /api/v1/engagement/channels/{id}/learning-context`
 
 Tu configures le **thème de la chaîne** (`theme_prompt`, `niche_prompt`, `channel.config.editorial`) — le **sujet de chaque vidéo** est choisi par le content planner.
-
-Les agents **Scénariste**, **Critique** et **Découpeur shorts** intègrent le contexte d'apprentissage dans leurs prompts.
 
 ## Multi-chaînes
 
@@ -128,7 +126,7 @@ docker compose up -d
 Les migrations Alembic s'appliquent automatiquement au démarrage du conteneur (`app-dev`, `worker-dev`).
 Après un `git pull` avec de nouvelles migrations : `docker compose restart app-dev worker-dev`, ou manuellement :
 `docker compose run --rm --no-deps --entrypoint alembic app-dev upgrade head`.
-Au premier pipeline vidéo, Whisper télécharge le modèle configuré (`WHISPER_MODEL`) — le premier run peut être long.
+Au premier run, Whisper télécharge le modèle `STUDIO_WHISPER_MODEL` (défaut `small`) — le premier run peut être long.
 
 Pour OAuth YouTube/TikTok via le dashboard Docker, configure `API_BASE_URL` et `YOUTUBE_OAUTH_REDIRECT_URI` avec l'URL **externe** du dashboard (ex. `http://localhost:3000`), pas l'API interne.
 
@@ -159,10 +157,11 @@ cd dashboard && npm install && npm run dev
 ```
 cutevideo-agent/
 ├── agent/
-│   ├── core/           # orchestrateur, DB, queue, base agent
-│   ├── agents/         # les 8 agents spécialisés
+│   ├── core/           # orchestrateur, runner Claude Studio, DB, queue
+│   ├── agents/         # content planner + distribution
 │   ├── skills/         # briques réutilisables (FFmpeg, TTS, sources médias…)
 │   └── scheduler/      # tâches planifiées
+├── studio/             # Claude Studio : outils CLI, rendu, contrats, workspace Claude (.claude/agents)
 ├── api/                # FastAPI REST
 ├── dashboard/          # Next.js 14 + Material UI
 ├── alembic/            # migrations PostgreSQL
@@ -178,7 +177,7 @@ cutevideo-agent/
 
 ## Variables d'environnement
 
-Voir [`.env.example`](.env.example). Minimum : `ANTHROPIC_API_KEY`. Prod : `STORAGE_BACKEND=s3`, `S3_BUCKET`, credentials AWS, `COMPOSIO_API_KEY` pour TikTok.
+Voir [`.env.example`](.env.example). Minimum : CLI `claude` authentifié + au moins une clé de banque d'images (`PEXELS_API_KEY`, `PIXABAY_API_KEY`…). Prod : `STORAGE_BACKEND=s3`, `S3_BUCKET`, credentials AWS, `COMPOSIO_API_KEY` pour TikTok.
 
 ## MCP Composio (Cursor)
 

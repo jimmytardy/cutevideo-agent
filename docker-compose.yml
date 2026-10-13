@@ -86,6 +86,7 @@ services:
       - "${PORT:-3000}:3000"
     volumes:
       - ./agent:/app/agent
+      - ./studio:/app/studio
       - ./api:/app/api
       - ./alembic:/app/alembic
       - ./alembic.ini:/app/alembic.ini
@@ -120,6 +121,7 @@ services:
       SCHEDULER_ENABLED: "false"
     volumes:
       - ./agent:/app/agent
+      - ./studio:/app/studio
       - ./api:/app/api
       - ./alembic:/app/alembic
       - ./alembic.ini:/app/alembic.ini

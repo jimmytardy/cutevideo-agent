@@ -91,26 +91,9 @@ def _project_targets_publication_date(project: Project, target_iso: str) -> bool
     return True
 
 
-@track_job_run("engagement_agents_biweekly")
-async def run_engagement_agents() -> dict[str, Any]:
-    from agent.agents.analytics_agent import AnalyticsAgent
-    from agent.agents.comments_agent import CommentsAgent
-
-    analytics_result = await AnalyticsAgent().run_scheduled()
-    comments_result = await CommentsAgent().run_scheduled()
-    return {"analytics": analytics_result, "comments": comments_result}
-
-
 @track_job_run("purge_old_media")
 async def run_purge_old_media() -> None:
     await purge_old_media_files(retention_days=settings.storage_retention_days)
-
-
-@track_job_run("style_director_refresh")
-async def run_style_director_refresh() -> dict[str, int]:
-    from agent.agents.style_director_agent import StyleDirectorAgent
-
-    return await StyleDirectorAgent().run_scheduled()
 
 
 JOB_REGISTRY: dict[str, Any] = {
@@ -118,9 +101,7 @@ JOB_REGISTRY: dict[str, Any] = {
     "run_pending_projects_morning": run_pending_projects_morning,
     "run_pending_projects_hourly": run_pending_projects_hourly,
     "distribution_agent": run_distribution_agent,
-    "engagement_agents_biweekly": run_engagement_agents,
     "purge_old_media": run_purge_old_media,
-    "style_director_refresh": run_style_director_refresh,
 }
 
 JOB_METADATA: list[dict[str, str]] = [
@@ -149,21 +130,9 @@ JOB_METADATA: list[dict[str, str]] = [
         "description": "Planifie et publie les vidéos approuvées sur les plateformes (YouTube, TikTok, Instagram).",
     },
     {
-        "id": "engagement_agents_biweekly",
-        "name": "Engagement",
-        "schedule": "Lun/Jeu 9h15 Europe/Paris",
-        "description": "Analyse les performances puis répond aux commentaires et met à jour le contexte d'apprentissage des chaînes.",
-    },
-    {
         "id": "purge_old_media",
         "name": "Purge médias",
         "schedule": "3h00 UTC",
         "description": "Nettoie le stockage en supprimant les fichiers médias qui dépassent la durée de rétention.",
-    },
-    {
-        "id": "style_director_refresh",
-        "name": "Style Director",
-        "schedule": "4h00 Europe/Paris",
-        "description": "Rafraîchit le profil de montage par chaîne depuis les vidéos de référence (si refresh_days écoulés).",
     },
 ]
