@@ -39,8 +39,10 @@ async def compose_thumbnail(
         raise ValueError(f"aspect inconnu : {aspect} (9:16 ou 16:9)")
     width, height = SIZES[aspect]
     src, seek = _parse_background(run_dir, background)
-    if seek is None and src.suffix.lower() not in IMAGE_EXTENSIONS:
-        seek = 1.0
+    if src.suffix.lower() not in IMAGE_EXTENSIONS:
+        # Une frame demandée après la fin de la vidéo ne produit aucune image : on la borne.
+        duration = (await probe_media(src))["duration_s"] or 0.0
+        seek = min(1.0 if seek is None else seek, max(0.0, duration - 0.1))
 
     out.parent.mkdir(parents=True, exist_ok=True)
     lines = wrap_lines(text.upper(), MAX_CHARS[aspect])

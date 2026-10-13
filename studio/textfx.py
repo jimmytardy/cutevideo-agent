@@ -6,7 +6,9 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
-FONT_FILE = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+# Police de la charte (Poppins Black, OFL) ; repli DejaVu si le fichier manque.
+_POPPINS = Path(__file__).resolve().parent / "workspace" / "anim" / "lib" / "fonts" / "Poppins-Black.ttf"
+FONT_FILE = str(_POPPINS) if _POPPINS.exists() else "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 # Largeur moyenne d'un glyphe DejaVu Sans Bold en majuscules, en fraction de la taille.
 _GLYPH_WIDTH_EM = 0.72
 
