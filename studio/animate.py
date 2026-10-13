@@ -23,7 +23,8 @@ from studio.sandbox import SandboxError, run_sandboxed, scripts_supported
 AnimationPolicy = Literal["off", "templates", "scripts"]
 ANIMATION_POLICIES: tuple[AnimationPolicy, ...] = ("off", "templates", "scripts")
 TEMPLATES_DIR = Path(__file__).resolve().parent / "anim_templates"
-TEMPLATES = ("title", "counter", "bars", "list")
+TEMPLATES = ("title", "counter", "bars", "list", "compare", "steps", "map", "before_after", "paradox")
+WORKSPACE_LIB = Path(__file__).resolve().parent / "workspace" / "anim" / "lib"
 MAX_DURATION_S = 12.0
 SCRIPT_KINDS = {".html": "html", ".htm": "html", ".py": "python"}
 
@@ -93,17 +94,23 @@ async def animate_template(run_dir: Path, template: str, params: dict, duration:
     if template not in TEMPLATES:
         raise ContractError(f"modèle inconnu : {template} (disponibles : {', '.join(TEMPLATES)})")
     name, duration = _check_name(name), _check_duration(duration)
-    work = run_dir / "anim" / ".work" / name
+    anim_dir = run_dir / "anim"
+    work = anim_dir / ".work" / name
     work.mkdir(parents=True, exist_ok=True)
+    # Les modèles s'appuient sur la charte `anim/lib/` (studio.js, polices, icônes, carte).
+    if not (anim_dir / "lib" / "studio.js").exists():
+        shutil.copytree(WORKSPACE_LIB, anim_dir / "lib", dirs_exist_ok=True)
     payload = json.dumps({**params, "duration": duration}, ensure_ascii=False).replace("</", "<\\/")
     html = (TEMPLATES_DIR / f"{template}.html").read_text(encoding="utf-8")
-    page = work / "page.html"
+    page = anim_dir / f".tpl_{name}.html"
     page.write_text(html.replace("/*PARAMS*/{}", payload), encoding="utf-8")
     try:
-        await run_sandboxed("html", page, work, work / "out", width=SHORT_WIDTH, height=SHORT_HEIGHT,
+        await run_sandboxed("html", page, anim_dir, work / "out", width=SHORT_WIDTH, height=SHORT_HEIGHT,
                             fps=SHORT_FPS, duration=duration, trusted=True)
     except SandboxError as exc:
         raise ContractError(f"rendu du modèle {template} : {exc}") from exc
+    finally:
+        page.unlink(missing_ok=True)
     return await _finish(run_dir, name, work / "out", SHORT_FPS, duration, {"template": template})
 
 

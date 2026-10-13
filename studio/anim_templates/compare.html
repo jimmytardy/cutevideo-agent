@@ -1,0 +1,21 @@
+<!doctype html>
+<!-- Modèle « compare » : A contre B. PARAMS : title, sub?, left {label, value?, icon?, caption?}, right {…}, verdict?, theme?, accent? -->
+<html><head><meta charset="utf-8"></head><body>
+<script src="lib/studio.js"></script>
+<script>
+const P = /*PARAMS*/{};
+const s = Studio.scene({theme: P.theme || "night", accent: P.accent});
+const D = P.duration || 4;
+if (P.title) s.title(P.title, {at: 0.05, sub: P.sub});
+const side = (o, x, at, color) => {
+  if (!o) return;
+  if (o.icon) s.icon(o.icon, {x, y: 700, size: 360, at, enter: "pop", idle: "float"});
+  s.text(o.label || "", {x, y: o.icon ? 920 : 760, size: 72, at: at + 0.15, enter: "up", maxW: 420});
+  if (o.value) s.text(o.value, {x, y: o.icon ? 1040 : 900, size: 110, weight: 900, color, at: at + 0.3, enter: "pop", maxW: 440});
+  if (o.caption) s.text(o.caption, {x, y: o.icon ? 1130 : 1000, size: 40, weight: 600, color: "muted", at: at + 0.45, enter: "fade", maxW: 420});
+};
+side(P.left, 290, 0.35, "accent2");
+s.text("VS", {x: 540, y: 760, size: 80, weight: 900, color: "muted", at: 0.6, enter: "pop", idle: "pulse"});
+side(P.right, 790, 0.85, "accent");
+if (P.verdict) s.tag(P.verdict, {x: 540, y: 1190, at: Math.min(D - 0.8, 1.7), size: 48, fill: "accent", enter: "pop"});
+</script></body></html>

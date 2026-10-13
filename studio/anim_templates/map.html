@@ -1,0 +1,14 @@
+<!doctype html>
+<!-- Modèle « map » : carte + points + trajet. PARAMS : title?, sub?, center [lon,lat], mapScale (200 monde → 1500 pays), highlight {"France": "accent"}, points [{lon, lat, label}], route [[lon,lat],…], theme?, accent? -->
+<html><head><meta charset="utf-8"></head><body>
+<script src="lib/d3.min.js"></script><script src="lib/topojson-client.min.js"></script><script src="lib/world-110m.js"></script>
+<script src="lib/studio.js"></script>
+<script>
+const P = /*PARAMS*/{};
+const s = Studio.scene({theme: P.theme || "night", accent: P.accent});
+const D = P.duration || 4;
+if (P.title) s.title(P.title, {at: 0.05, sub: P.sub});
+s.map({center: P.center || [10, 30], mapScale: P.mapScale || 260, y: 800, at: 0.1, highlight: P.highlight || {},
+  points: P.points || [], route: P.route, routeAt: 0.7, routeDur: Math.max(0.8, D - 1.6)});
+s.camera({at: 0.2, dur: D, zoom: 1.08, x: 540, y: 800});
+</script></body></html>

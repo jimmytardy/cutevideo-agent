@@ -1,0 +1,15 @@
+<!doctype html>
+<!-- Modèle « paradox » : hook « A → ? → B » (deux choses sans rapport apparent). PARAMS : left_icon, right_icon, text, sub?, theme?, accent? -->
+<html><head><meta charset="utf-8"></head><body>
+<script src="lib/studio.js"></script>
+<script>
+const P = /*PARAMS*/{};
+const s = Studio.scene({theme: P.theme || "night", accent: P.accent});
+const D = P.duration || 3;
+s.title(P.text || "", {at: 0.05, sub: P.sub, size: 116});
+s.icon(P.left_icon || "question", {x: 290, y: 760, size: 330, at: 0.1, enter: "pop", idle: "float"});
+s.icon(P.right_icon || "question", {x: 790, y: 1010, size: 330, at: 0.45, enter: "pop", idle: "float"});
+s.arrow({from: [360, 940], to: [700, 860], bend: 0.35, dashed: true, at: 0.7, dur: 0.6});
+s.text("?", {x: 560, y: 1080, size: 220, weight: 900, color: "accent", at: Math.min(D - 0.6, 1.1), enter: "pop", idle: "wiggle"});
+s.shake({at: 0.45, dur: 0.3, amp: 12});
+</script></body></html>

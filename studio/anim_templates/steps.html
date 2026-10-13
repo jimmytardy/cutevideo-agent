@@ -1,0 +1,19 @@
+<!doctype html>
+<!-- Modèle « steps » : mécanisme / étapes reliées par des flèches. PARAMS : title, sub?, items [{icon?, text}] (2-4), theme?, accent? -->
+<html><head><meta charset="utf-8"></head><body>
+<script src="lib/studio.js"></script>
+<script>
+const P = /*PARAMS*/{};
+const s = Studio.scene({theme: P.theme || "night", accent: P.accent});
+const D = P.duration || 4, items = (P.items || []).slice(0, 4);
+if (P.title) s.title(P.title, {at: 0.05, sub: P.sub});
+const y0 = 560, y1 = 1150, n = Math.max(items.length, 1);
+const gap = n > 1 ? (y1 - y0) / (n - 1) : 0;
+const step = Math.max(0.45, (D - 0.9) / n);
+items.forEach((it, i) => {
+  const y = y0 + i * gap, at = 0.3 + i * step;
+  if (it.icon) s.icon(it.icon, {x: 200, y, size: n > 3 ? 170 : 230, at, enter: "pop"});
+  s.text(it.text || "", {x: it.icon ? 350 : 540, y, size: n > 3 ? 62 : 74, anchor: it.icon ? "start" : "middle", maxW: it.icon ? 660 : 900, at: at + 0.1, enter: "left"});
+  if (i < n - 1) s.arrow({from: [200, y + 115], to: [200, y + gap - 115], bend: 0, at: at + step * 0.55, dur: 0.4, width: 10});
+});
+</script></body></html>
