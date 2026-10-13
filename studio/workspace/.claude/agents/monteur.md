@@ -25,7 +25,8 @@ toutes les ~2 s** calé sur les mots (`at` = temps du mot − début du plan) : 
   élément hors zone, chevauchement, vide (2 essais max par plan).
 - **plan 1 (hook)** : la toute première image est déjà pleine et lisible (mot-clé + objet-héros visibles à t = 0 :
   `at: 0, enter: "none"`), puis ça bouge avant 0,5 s (zoom caméra, secousse, apparition) ; c'est elle qui arrête
-  le scroll et sert d'aperçu dans le fil ;
+  le scroll et sert d'aperçu dans le fil. Le hook se découpe en **2 plans** (coupe vers 1,5-2,2 s, sur un début
+  de mot) : la 2e image révèle l'autre moitié du paradoxe ;
 - dernier plan : rappelle visuellement le premier (même objet-héros, même cadrage) pour la boucle.
 **`mixed` / `footage`** : pour les beats marqués « PHOTO : » / « VIDÉO : », `search-media` (anglais, concret ;
 `--type video` pour l'action) → `preview` → **Read** → `download --name <NN>_<mot>`. Pertinence au mot près,

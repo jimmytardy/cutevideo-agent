@@ -136,6 +136,21 @@
         const imgs = it.node.querySelectorAll(":scope > image");
         if (imgs.length === 1 && r.width < 170) out.push(`icône ${describe(it)} petite (${Math.round(r.width)} px, viser ≥ 250)`);
       }
+      // Texte recouvert par une icône (ou l'inverse) : illisible.
+      const vis = this.items.filter((it) => !it.bleed && +it.node.getAttribute("opacity") >= 0.05);
+      const texts = vis.filter((it) => it.node.querySelector("text") && !it.node.querySelector("image"));
+      const icons = vis.filter((it) => it.node.querySelector(":scope > image"));
+      for (const a of texts) {
+        const ra = a.node.getBoundingClientRect();
+        const area = ra.width * ra.height;
+        if (!area) continue;
+        for (const b of icons) {
+          const rb = b.node.getBoundingClientRect();
+          const w = Math.max(0, Math.min(ra.right, rb.right) - Math.max(ra.left, rb.left));
+          const h = Math.max(0, Math.min(ra.bottom, rb.bottom) - Math.max(ra.top, rb.top));
+          if (w * h > 0.3 * area) out.push(`${describe(a)} chevauche l'icône ${describe(b)}`);
+        }
+      }
       const ratio = covered / ((ux1 - ux0) * (uy1 - uy0));
       if (this.items.length && ratio < 0.28) out.push(`scène vide : les éléments couvrent ~${Math.round(ratio * 100)} % de la zone utile (viser ≥ 35 % : agrandir ou zoom caméra)`);
       return out;
