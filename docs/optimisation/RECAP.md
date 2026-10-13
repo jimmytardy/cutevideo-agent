@@ -11,6 +11,7 @@ sous-titres refaits, charte d'animation + 5 modèles, prompts recalibrés. Gén�
 | # | Sujet | Version | Score | Analyse | Durée | Rendu | Mémoire min | Chemin |
 |---|---|---|---|---|---|---|---|---|
 | baseline | Pourquoi la Lune s'éloigne de la Terre | v1 → v2 | 79 → 85 (approuvée, ancienne grille) | critique Claude (frames) | 30,9 s | ~6 min | 1,13 Go | `~/.cache/cutevideo/optim/baseline_lune/renders/v2.mp4` |
+| g2 | Le paradoxe des anniversaires (concept abstrait) | v1 → v2 | 77 → **85** (approuvée) | `analyze` claude | 41,8 s | 57 min au total | 2,8 Go dispo | `~/.cache/cutevideo/optim/runs/g2_anniv/renders/v2.mp4` |
 | g1 | Pourquoi la Lune s'éloigne de la Terre (nouvelle chaîne) | v1 → v2 | 81 → **86** (approuvée, grille virale) | `analyze` claude | 42,5 s | 42 min au total (rendu 2 min) | 1,9 Go dispo | `~/.cache/cutevideo/optim/runs/g1_lune/renders/v2.mp4` |
 
 Mesures `analyze` de la baseline v2 : 2,38 mots/s, 13 silences de 0,4-0,9 s (un après chaque phrase), musique
@@ -34,6 +35,13 @@ hook « La Lune s'éloigne de nous à la vitesse où poussent vos ongles ! », �
 ongles, dites-vous que… » qui reboucle sur la 1re image. Critique v1 (81) très précise grâce aux planches :
 voile gris des flashs, scènes trop petites, étiquette sur les sous-titres, prosodie « Au… temps » ; v2 corrige.
 Défauts restants : éléments encore petits sur certains plans, étiquettes secondaires < 48 px.
+
+g2 en clair : « Un match de foot sur deux cache deux personnes nées le même jour ! », 22 joueurs + l'arbitre,
+« vous contre 22 » puis 253 duos, question, 50,7 %, Mondial 2014 (16 équipes sur 32), 99,9 % à 70, fin en boucle
+« la prochaine fois que vous regardez un match, dites-vous que… ». v1 pénalisée par des défauts d'outillage
+(contenu sous les sous-titres dans 8 plans, icône calendrier marquée « July », musique de 40 s à intro muette) →
+corrigés dans l'outillage pendant l'itération 2 (voir changements 12-14). Mesures v1 → v2 : 2,92 → 2,96 mots/s,
+-14,4 / -14,5 LUFS (recalage efficace), voix/fond 13,6 → 17,0 dB.
 
 ## Changements (quoi, pourquoi, effet mesuré)
 1. **`python -m studio.tools analyze`** (`studio/analyze.py`) — Gemini d'abord, repli Claude automatique :
@@ -72,7 +80,18 @@ Défauts restants : éléments encore petits sur certains plans, étiquettes sec
     textes incrustés en Poppins ; `thumbnail` borne `@t` à la durée de la vidéo (erreur obscure avant).
 11. Modèles title / counter / bars / list refaits sur le kit (même charte que les scripts).
 
+12. **Emphase vocale par ligne** : `narration.txt` accepte `[rate=-4% pitch=+12Hz] Nous !` (synthèse par ligne
+    puis recollage) — edge-tts n'accepte pas de SSML ; la critique trouvait les révélations « plates ».
+13. **Garde-fous de zone** : le kit renvoie `zone_warnings` (élément sous y 1205, au-delà de x 995…) à la fin de
+    chaque `animate` ; planches d'animation avec la bande des sous-titres en rouge. Cause n° 1 du 77 de g2 v1.
+14. **Musique** : silences de début/fin retirés avant mixage (intro muette pendant le hook), piste Freesound
+    choisie plus longue que la voix + 6 s (fin de vidéo sans musique). Icône calendrier (texte « JUL ») retirée.
+15. Sous-titres : ponctuation isolée rattachée au mot (« : » seul à l'écran) ; kit : mot-clé affiché dès la coupe
+    (débuts de plan presque vides relevés par la critique dans g1 et g2).
+
 ## Choix rejetés
+- Capture d'écran CDP (`Page.captureScreenshot optimizeForSpeed`) pour accélérer le rendu des animations :
+  0,143 s/image contre 0,172 (-17 %), gain trop faible pour toucher au moteur de rendu du bac à sable.
 - **Pollinations.ai** comme repli IA gratuit : filigrane imposé, 576×1024, rendu médiocre.
 - Moteurs TTS locaux (Piper, Kokoro, XTTS) : français moins naturel que les voix Multilingual d'edge (Piper,
   Kokoro) ou trop lourds pour 2 cœurs / 7,5 Go partagés (XTTS, F5).
