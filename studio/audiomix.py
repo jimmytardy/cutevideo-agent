@@ -145,6 +145,15 @@ async def mix_short_audio(
     mix_labels = ["[v]"]
     music_gain_db = None
     if music is not None:
+        # Silences de début et de fin retirés : sinon intro muette pendant le hook et trou à chaque boucle.
+        trimmed = work / "music_trim.wav"
+        await run_ffmpeg([
+            "ffmpeg", "-y", "-i", str(music), "-vn",
+            "-af", "silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.05,areverse,"
+                   "silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.05,areverse",
+            *thread_args(), "-ac", "2", "-ar", str(SR), "-c:a", "pcm_s16le", str(trimmed),
+        ], error_prefix="Musique : retrait des silences")
+        music = trimmed
         music_lufs, _ = await _measure(music)
         rel_db = 20 * math.log10(max(music_volume, 1e-3) / 0.08)
         music_gain_db = (voice_lufs - MUSIC_BELOW_VOICE_DB + rel_db) - (music_lufs if music_lufs is not None else -16.0)

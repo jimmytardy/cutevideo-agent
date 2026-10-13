@@ -264,7 +264,10 @@ async def fetch_music(run_dir: Path, mood: str) -> dict[str, Any]:
     from agent.skills.audio.music_fetcher import fetch_music_for_mood
 
     out_dir = run_dir / "media" / "music"
-    path = await fetch_music_for_mood(mood, output_dir=out_dir)
+    # Piste plus longue que la voix (+ marge pour le retrait des silences) : évite une boucle audible.
+    voice = _read_json(run_dir / "voice.json", {})
+    min_duration = int(float(voice.get("duration_s") or 0) + 6)
+    path = await fetch_music_for_mood(mood, output_dir=out_dir, min_duration_s=min_duration)
     if not path:
         raise RuntimeError(f"aucune musique trouvée pour le mood {mood!r}")
     rel = str(path.relative_to(run_dir))
@@ -322,7 +325,14 @@ async def loudness(path: Path) -> float | None:
     return float(matches[-1]) if matches else None
 
 
-async def _tile_from(src: Path, out: Path, label: str, *, seek: float | None = None) -> None:
+# Repères des zones (planches d'animation) : bande des sous-titres et colonne d'icônes TikTok, à l'échelle tuile.
+_GUIDES = (
+    f"drawbox=x=0:y={int(1220 * TILE_H / 1920)}:w=iw:h={int(140 * TILE_H / 1920)}:color=red@0.25:t=fill,"
+    f"drawbox=x={int(990 * TILE_W / 1080)}:y=0:w=2:h=ih:color=red@0.6:t=fill,"
+)
+
+
+async def _tile_from(src: Path, out: Path, label: str, *, seek: float | None = None, guides: bool = False) -> None:
     font = f":fontfile={FONT_FILE}" if Path(FONT_FILE).exists() else ""
     label_file = out.with_suffix(".txt")
     label_file.write_text(label, encoding="utf-8")
@@ -331,6 +341,7 @@ async def _tile_from(src: Path, out: Path, label: str, *, seek: float | None = N
         "ffmpeg", "-y", *filter_thread_args(), *seek_args, "-i", str(src),
         "-vf", (
             f"scale={TILE_W}:{TILE_H}:force_original_aspect_ratio=increase,crop={TILE_W}:{TILE_H},"
+            f"{_GUIDES if guides else ''}"
             f"drawtext=textfile='{label_file}'{font}:fontsize=26:fontcolor=yellow:"
             "box=1:boxcolor=black@0.7:boxborderw=6:x=8:y=8"
         ),
@@ -387,7 +398,9 @@ async def preview_candidates(run_dir: Path, ids: list[str]) -> dict[str, Any]:
     return {"sheet": str(sheet.relative_to(run_dir)), "failed": failed}
 
 
-async def extract_frames(run_dir: Path, video: Path, every_s: float, out_dir: Path) -> dict[str, Any]:
+async def extract_frames(
+    run_dir: Path, video: Path, every_s: float, out_dir: Path, *, guides: bool = False
+) -> dict[str, Any]:
     """Frames régulières d'une vidéo + planche contact (pour la critique)."""
     info = await probe_media(video)
     duration = info["duration_s"]
@@ -405,7 +418,7 @@ async def extract_frames(run_dir: Path, video: Path, every_s: float, out_dir: Pa
         ], error_prefix="Extraction frame")
         frames.append(str(frame.relative_to(run_dir)))
         tile = work / f"t{i:03d}.png"
-        await _tile_from(frame, tile, f"{t:.1f}s")
+        await _tile_from(frame, tile, f"{t:.1f}s", guides=guides)
         tiles.append(tile)
     sheet = out_dir / "sheet.png"
     await _build_sheet(tiles, sheet)

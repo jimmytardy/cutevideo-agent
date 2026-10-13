@@ -1,8 +1,8 @@
 # Icônes du kit (Noto Emoji, Apache 2.0) : Studio.icon("<nom>") / s.units("<nom>", n) / s.travel("<nom>", …)
 abacus alien ambulance anatomical_heart anchor angry ant apple astronaut atom axe baby bacteria balance 
 balloon banana bandage bank bar_chart bat battery beach bear bee beer bell bike biohazard bird blood bomb 
-bone book books boy brain bread brick bridge briefcase broccoli bulb burger butterfly cactus cake calendar 
-camel camera candle candy car carrot castle cat chain chart_down chart_up check cheese chicken child church 
+bone book books boy brain bread brick bridge briefcase broccoli bulb burger butterfly cactus cake camel 
+camera candle candy car carrot castle cat chain chart_down chart_up check cheese chicken child church 
 cigarette city clap classical_building clipboard clock cloud coffee coin cold collision comet compass 
 computer construction cook cool corn cow crab credit_card crescent crocodile cross crowd crown crying 
 crystal_ball dashing desert detective dice dinosaur dizzy dna doctor dog dollar door down_arrow drop eagle 

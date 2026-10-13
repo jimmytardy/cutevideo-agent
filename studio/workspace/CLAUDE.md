@@ -53,7 +53,7 @@ s.shake({at: 0.6}); s.flash({at: 2}); s.camera({at: 1.8, dur: 1, zoom: 1.2, x: 5
 </script></body></html>
 ```
 Éléments (tous : `at`, `dur`, `enter` pop|fade|up|down|left|right|grow|drop|none, `out` + `exit`, `idle`
-float|pulse|spin|wiggle, `x`, `y`, `scale`, `rotate`) : `title`, `text` (multi-lignes `\n`, `size`, `color`
+float|pulse|spin|wiggle, `x`, `y`, `scale`, `rotate`, `bleed: true` pour un fond qui déborde exprès) : `title`, `text` (multi-lignes `\n`, `size`, `color`
 ink|accent|accent2|muted), `tag`, `icon`, `counter`, `arrow`, `travel(icon, {from, to})` (objet qui suit un
 trajet), `bar` (jauge horizontale `value` 0-1), `columns([{label, value, valueText}])`, `units(icon, n, {cols,
 lit})` (tableau d'unités : 25 crânes = 25 morts), `gauge({label, from, to})` (jauge semi-circulaire, enjeu
@@ -62,7 +62,7 @@ highlight: {"France": "accent"}, points: [{lon, lat, label}], route: [[lon, lat]
 `lib/d3.min.js`, `lib/topojson-client.min.js`, `lib/world-110m.js`), `custom((g, el, theme) => update)` pour du
 SVG libre. **Icônes** (`lib/icons/<nom>.svg`, ~350 : **liste complète en un seul Read de
 `anim/lib/icons/INDEX.txt`**, pas de Glob ; une icône inconnue fait échouer le rendu) : earth, moon, sun, volcano, rocket,
-atom, dna, brain, heart, skull, person, scientist, king, soldier, money, chart_up, clock, calendar, factory,
+atom, dna, brain, heart, skull, person, scientist, king, soldier, money, chart_up, clock, factory,
 radioactive, fire, drop, wave, snowflake, tree, house, car, ship, plane, bike, fish, whale, bacteria, virus,
 thinking, shocked, mind_blown, warning, check, cross, question, bomb, explosion, lightning, magnifier, hand,
 ruler, scissors, mirror, cake, dice, balance, chain, thought, speech…
@@ -77,7 +77,8 @@ Polices : Poppins (déjà chargée). `window.renderFrame` est posé par la scèn
 ## Animations (selon `brief.json.animations`)
 - `off` : aucune animation. `templates` : seulement `animate-template`. `scripts` : modèles **et** scripts jetables.
 - Une animation devient `media/anim_<name>.mp4` (sans son) → clip vidéo normal dans `timeline.json`
-  (`motion: "static"`, `video_offset: 0`). **Toujours lire sa planche** `review/anim_<name>/sheet.png`.
+  (`motion: "static"`, `video_offset: 0`). **Toujours lire sa planche** `review/anim_<name>/sheet.png` (bande
+  rouge = sous-titres, trait rouge = interface droite). Si la sortie contient `zone_warnings`, corrige et relance.
 - Durée ≤ 12 s par animation (une animation par plan ou par beat, 2-6 s typiquement).
 
 **Modèles** (`animate-template --template <t> --params '<json>' --duration 3 --name 04_x`) — options communes

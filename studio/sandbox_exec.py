@@ -80,7 +80,10 @@ async def render_html(job: dict, frames: Path) -> int:
             await page.screenshot(path=str(frames / f"frame_{i:05d}.jpg"), type="jpeg", quality=94)
             if errors:
                 raise RuntimeError(f"erreur JavaScript à t={t:.2f}s : {errors[0]}")
+        # Le kit studio.js signale les éléments hors des zones utiles (état final de l'animation).
+        warnings = await page.evaluate("window.__studioCheck ? window.__studioCheck() : []")
         await browser.close()
+    job["_warnings"] = [str(w) for w in (warnings or [])][:12]
     return n
 
 
@@ -126,7 +129,7 @@ def main(job_path: str) -> int:
             count = render_python(job, frames)
         else:
             raise ValueError(f"type de script inconnu : {job['kind']}")
-        result = {"ok": True, "frames": count}
+        result = {"ok": True, "frames": count, "warnings": job.get("_warnings", [])}
     except subprocess.TimeoutExpired:
         result = {"ok": False, "error": f"délai dépassé ({job.get('timeout_s', 240)} s)"}
     except Exception as exc:  # noqa: BLE001 — renvoyé tel quel à Claude

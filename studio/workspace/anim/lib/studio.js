@@ -11,7 +11,7 @@
  * Tout est fonction de t (renderFrame est posé automatiquement) : aucune horloge réelle.
  * Options communes à tous les éléments : at (s), dur (durée d'entrée, 0.45), enter
  * (pop|fade|up|down|left|right|grow|draw|none), out (instant de sortie), exit (fade|pop|up|down),
- * idle (float|pulse|spin|wiggle), opacity, rotate (deg), scale.
+ * idle (float|pulse|spin|wiggle), opacity, rotate (deg), scale, bleed (fond qui peut déborder : pas d'alerte de zone).
  * Zone utile : y 170-1200 (au-dessous : sous-titres puis interface TikTok), x 60-960 (icônes à droite).
  */
 (function () {
@@ -101,6 +101,30 @@
       el("stop", {offset: "100%", "stop-color": "#000", "stop-opacity": opts.theme === "paper" ? 0.18 : 0.55}, vg);
       el("rect", {x: 0, y: 0, width: W, height: H, fill: "url(#vign)", "pointer-events": "none"}, svg);
       window.renderFrame = (t) => this.render(t);
+      window.__studioCheck = () => this.check();
+    }
+
+    // Contrôle des zones (appelé par le moteur de rendu après la dernière image) : contenu hors de
+    // y 140-1200 (sous-titres puis interface TikTok en dessous) ou de x 40-990 (icônes TikTok à droite).
+    check() {
+      const out = [];
+      const describe = (it) => {
+        const txt = it.node.textContent ? it.node.textContent.trim().slice(0, 24) : "";
+        const img = it.node.querySelector("image");
+        return txt ? `« ${txt} »` : img ? (img.getAttribute("href") || "").replace("lib/icons/", "").replace(".svg", "") : "élément";
+      };
+      for (const it of this.items) {
+        if (it.bleed || +it.node.getAttribute("opacity") < 0.05) continue;  // bleed : fond qui déborde exprès
+        const r = it.node.getBoundingClientRect();
+        if (!r.width || !r.height) continue;
+        const pb = [];
+        if (r.bottom > 1205) pb.push(`descend à y ${Math.round(r.bottom)} (sous-titres dès 1220)`);
+        if (r.right > 995) pb.push(`déborde à droite x ${Math.round(r.right)} (interface après 990)`);
+        if (r.left < 35) pb.push(`colle au bord gauche x ${Math.round(r.left)}`);
+        if (r.top < 130) pb.push(`monte à y ${Math.round(r.top)}`);
+        if (pb.length) out.push(`${describe(it)} ${pb.join(", ")}`);
+      }
+      return out;
     }
 
     color(c) { return c === "accent" ? this.th.accent : c === "accent2" ? this.th.accent2 : c === "ink" ? this.th.ink : c === "muted" ? this.th.muted : (c || this.th.ink); }
@@ -335,7 +359,7 @@
         }
         return {pg, delay: p.at !== undefined ? p.at : 0.4 + i * 0.4};
       });
-      return this._add(g, Object.assign({enter: "fade", x: 540, y: o.y || 760}, o, {scale: 1}), (t, it) => {
+      return this._add(g, Object.assign({enter: "fade", x: 540, y: o.y || 760, bleed: true}, o, {scale: 1}), (t, it) => {
         for (const p of pins) p.pg.setAttribute("opacity", clamp((t - it.at - p.delay) * 4));
         for (const r of extra) {
           // Pointillés révélés progressivement : motif « 2 20 » répété jusqu'à la longueur parcourue.

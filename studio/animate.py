@@ -76,7 +76,9 @@ async def _encode(frames_dir: Path, fps: int, duration: float, out: Path) -> Non
     ], error_prefix=f"Encodage animation {out.name}")
 
 
-async def _finish(run_dir: Path, name: str, work: Path, fps: int, duration: float, credit: dict) -> dict[str, Any]:
+async def _finish(
+    run_dir: Path, name: str, work: Path, fps: int, duration: float, credit: dict, warnings: list[str] | None = None
+) -> dict[str, Any]:
     out = run_dir / "media" / f"anim_{name}.mp4"
     await _encode(work / "frames", fps, duration, out)
     rel = str(out.relative_to(run_dir))
@@ -84,9 +86,14 @@ async def _finish(run_dir: Path, name: str, work: Path, fps: int, duration: floa
         "source": "animation", "license": "original", "author": "Claude Studio",
         "attribution": None, "source_url": None, "requires_attribution": False, **credit,
     })
-    review = await extract_frames(run_dir, out, max(duration / 6, 0.4), run_dir / "review" / f"anim_{name}")
+    review = await extract_frames(run_dir, out, max(duration / 6, 0.4), run_dir / "review" / f"anim_{name}",
+                                  guides=True)
     shutil.rmtree(work / "frames", ignore_errors=True)
-    return {"media": rel, "duration_s": duration, "sheet": review["sheet"]}
+    result: dict[str, Any] = {"media": rel, "duration_s": duration, "sheet": review["sheet"]}
+    if warnings:
+        result["zone_warnings"] = warnings
+        result["hint"] = "corrige ces positions (contenu entre y 170 et 1180, x 60 et 960) puis relance"
+    return result
 
 
 async def animate_template(run_dir: Path, template: str, params: dict, duration: float, name: str) -> dict[str, Any]:
@@ -105,13 +112,14 @@ async def animate_template(run_dir: Path, template: str, params: dict, duration:
     page = anim_dir / f".tpl_{name}.html"
     page.write_text(html.replace("/*PARAMS*/{}", payload), encoding="utf-8")
     try:
-        await run_sandboxed("html", page, anim_dir, work / "out", width=SHORT_WIDTH, height=SHORT_HEIGHT,
-                            fps=SHORT_FPS, duration=duration, trusted=True)
+        job = await run_sandboxed("html", page, anim_dir, work / "out", width=SHORT_WIDTH, height=SHORT_HEIGHT,
+                                  fps=SHORT_FPS, duration=duration, trusted=True)
     except SandboxError as exc:
         raise ContractError(f"rendu du modèle {template} : {exc}") from exc
     finally:
         page.unlink(missing_ok=True)
-    return await _finish(run_dir, name, work / "out", SHORT_FPS, duration, {"template": template})
+    return await _finish(run_dir, name, work / "out", SHORT_FPS, duration, {"template": template},
+                         job.get("warnings"))
 
 
 async def animate_script(run_dir: Path, script_rel: str, duration: float, name: str) -> dict[str, Any]:
@@ -128,8 +136,8 @@ async def animate_script(run_dir: Path, script_rel: str, duration: float, name: 
     name, duration = _check_name(name), _check_duration(duration)
     work = run_dir / "anim" / ".work" / name
     try:
-        await run_sandboxed(kind, script, anim_dir, work, width=SHORT_WIDTH, height=SHORT_HEIGHT,
-                            fps=SHORT_FPS, duration=duration)
+        job = await run_sandboxed(kind, script, anim_dir, work, width=SHORT_WIDTH, height=SHORT_HEIGHT,
+                                  fps=SHORT_FPS, duration=duration)
     except SandboxError as exc:
         raise ContractError(f"{script_rel} : {exc}") from exc
-    return await _finish(run_dir, name, work, SHORT_FPS, duration, {"script": script_rel})
+    return await _finish(run_dir, name, work, SHORT_FPS, duration, {"script": script_rel}, job.get("warnings"))

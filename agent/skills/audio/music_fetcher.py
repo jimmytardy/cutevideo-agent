@@ -61,20 +61,21 @@ async def fetch_background_music(
 async def fetch_music_for_mood(
     mood: str,
     output_dir: Path | None = None,
+    *,
+    min_duration_s: int = 30,
 ) -> Path | None:
     """Cherche et télécharge une piste musicale adaptée au mood YouTube/TikTok."""
     query = _MOOD_QUERIES.get(mood.lower(), _MOOD_QUERIES["calme"])
     output_dir = output_dir or Path("./tmp/music")
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    for fetcher in (_fetch_freesound, _fetch_internet_archive):
-        path = await fetcher(query, output_dir)
-        if path:
-            return path
-    return None
+    path = await _fetch_freesound(query, output_dir, min_duration_s=min_duration_s)
+    if path:
+        return path
+    return await _fetch_internet_archive(query, output_dir)
 
 
-async def _fetch_freesound(query: str, output_dir: Path) -> Path | None:
+async def _fetch_freesound(query: str, output_dir: Path, *, min_duration_s: int = 30) -> Path | None:
     from agent.skills.media.rights_check import is_publishable
 
     api_key = settings.freesound_api_key
@@ -84,7 +85,7 @@ async def _fetch_freesound(query: str, output_dir: Path) -> Path | None:
 
     params = {
         "query": query,
-        "filter": "duration:[30 TO 300]",
+        "filter": f"duration:[{max(30, int(min_duration_s))} TO 300]",
         "fields": "id,name,previews,duration,license",
         "page_size": 5,
         "sort": "rating_desc",
