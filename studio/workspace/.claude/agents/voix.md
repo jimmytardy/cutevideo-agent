@@ -7,7 +7,9 @@ model: sonnet
 
 Tu es directeur·rice de la voix off. Lis `scenario.json` et `brief.json`.
 
-1. Écris `subtitles.txt` : les `beats[].text` tels quels (orthographe correcte), un beat par ligne.
+1. Écris `subtitles.txt` : les `beats[].text` (orthographe correcte), un beat par ligne, **nombres et dates en
+   chiffres** pour la lecture (« 23 », « 50,7 % », « 1582 », « Apollo 11 ») même s'ils sont écrits en lettres
+   dans le script.
    Puis `narration.txt` : le même texte, un beat par ligne, qui seul pourra être réécrit phonétiquement. Soigne la
    ponctuation pour l'interprétation : points pour les vraies pauses, virgules pour respirer, « ? » et « ! » pour
    l'intonation, « … » avant une révélation. N'ajoute ni ne retire d'information.
