@@ -151,3 +151,20 @@ def test_line_emphasis_is_relative_to_global_settings() -> None:
     assert voicefx.combine_offset("+0Hz", "+12Hz") == "+12Hz"
     assert voicefx.combine_offset("+6%", None) == "+6%"
     assert voicefx.combine_offset("+6%", "bidon") == "+6%"
+
+
+def test_cues_are_relative_to_the_clip(tmp_path: Path) -> None:
+    import json
+    import subprocess
+    import sys
+
+    (tmp_path / "words.json").write_text(json.dumps([
+        {"word": "Avant", "start": 1.0, "end": 1.3}, {"word": "Cinquante", "start": 27.8, "end": 28.2},
+        {"word": "pour", "start": 28.3, "end": 28.5}, {"word": "Après", "start": 31.0, "end": 31.4},
+    ]), encoding="utf-8")
+    out = subprocess.run([sys.executable, "-m", "studio.tools", "cues", "--start", "27.74", "--end", "30.5"],
+                         capture_output=True, text=True, env={**__import__("os").environ, "STUDIO_RUN_DIR": str(tmp_path)},
+                         cwd=Path(__file__).resolve().parent.parent)
+    cues = json.loads(out.stdout)["cues"]
+    assert [c["word"] for c in cues] == ["Cinquante", "pour"]
+    assert cues[0]["at"] == pytest.approx(0.06, abs=0.001)

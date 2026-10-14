@@ -12,7 +12,9 @@ contient des corrections).
 ## 1. Découper sur la voix
 Avec `words.json`, retrouve le début de chaque beat (premier mot). Un plan = un beat (ou une demi-phrase si le beat
 dépasse 4 s). Les coupes tombent sur des débuts de mots. Dans chaque plan, prévois **un nouvel événement visuel
-toutes les ~2 s** calé sur les mots (`at` = temps du mot − début du plan) : apparition, flèche, chiffre, zoom.
+toutes les ~2 s** calé sur les mots : `python -m studio.tools cues --start <début> --end <fin>` donne pour
+chaque mot son `at` relatif au plan — un chiffre ou une révélation apparaît **sur** le mot (au plus 0,1 s avant),
+jamais après.
 
 ## 2. Fabriquer les plans
 **`visual_mode` = animation (défaut)** : une animation par plan, avec la charte de la vidéo (`scenario.theme`,

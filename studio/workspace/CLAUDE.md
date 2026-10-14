@@ -154,6 +154,7 @@ d'affilée**. `music_volume` 0.08 ≈ musique 17 dB sous la voix (0.06-0.12). So
 | `music --mood dramatique` | musique libre → `media/music/…` |
 | `tts --text-file narration.txt [--mood …] [--rate +8%] [--pitch -2Hz] [--max-pause 0.4]` | → `voice.wav` (Azure → Gemini → edge ; silences > 0,4 s raccourcis ; ligne préfixée `[rate=-4% pitch=+12Hz]` = emphase) |
 | `transcribe --text-file subtitles.txt` | `voice.wav` → `words.json` (timings Whisper, orthographe du script) |
+| `cues --start 26.68 --end 29.9` | mots du plan avec `at` relatif au début du plan → valeurs `at` exactes pour le kit |
 | `render --out renders/v1.mp4` | rend `timeline.json` (plusieurs minutes : normal) |
 | `frames --video renders/v1.mp4 [--every 2]` | frames + `review/v1/sheet.png` + loudness |
 | `analyze --video renders/v1.mp4 [--words words.json] [--timeline timeline.json]` | analyse multimodale : avis Gemini si dispo, sinon planches hook/chronologie/coupes, débit, pauses, loudness, rapport voix/fond, intonation, spectrogramme + alertes |

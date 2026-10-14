@@ -162,6 +162,18 @@ async def cmd_transcribe(args: argparse.Namespace, run_dir: Path) -> Any:
     }
 
 
+async def cmd_cues(args: argparse.Namespace, run_dir: Path) -> Any:
+    """Mots d'un plan avec leur instant relatif au début du plan (valeurs `at` du kit d'animation)."""
+    words = json.loads(_inside(run_dir, args.words).read_text(encoding="utf-8"))
+    start, end = args.start, args.end if args.end is not None else float("inf")
+    cues = [
+        {"word": w["word"], "at": round(w["start"] - start, 2), "end": round(w["end"] - start, 2)}
+        for w in words
+        if start - 0.05 <= w["start"] < end
+    ]
+    return {"start": start, "end": None if end == float("inf") else end, "cues": cues}
+
+
 async def cmd_render(args: argparse.Namespace, run_dir: Path) -> Any:
     from studio.render import render_timeline
 
@@ -303,6 +315,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--model", help="modèle Whisper (défaut STUDIO_WHISPER_MODEL ou small)")
     p.add_argument("--text-file", help="script exact : les sous-titres en reprennent l'orthographe")
     p.set_defaults(func=cmd_transcribe)
+
+    p = sub.add_parser("cues", help="mots d'un plan avec leur instant relatif (pour caler les animations)")
+    p.add_argument("--start", type=float, required=True, help="début du plan dans la voix (s)")
+    p.add_argument("--end", type=float, help="fin du plan (s)")
+    p.add_argument("--words", default="words.json")
+    p.set_defaults(func=cmd_cues)
 
     p = sub.add_parser("render", help="rend timeline.json en Short 9:16")
     p.add_argument("--timeline", default="timeline.json")
