@@ -18,20 +18,9 @@ import {
   type StudioCritiqueFeedback,
   type StudioRequestedChange,
 } from '@/lib/api'
+import { runStatusColor, runStatusLabel } from '@/lib/status'
 
-const STATUS_COLOR: Record<string, 'default' | 'warning' | 'success' | 'error'> = {
-  running: 'warning',
-  success: 'success',
-  failed: 'error',
-  stopped: 'default',
-}
 
-const STATUS_LABEL: Record<string, string> = {
-  running: 'En cours',
-  success: 'Terminé',
-  failed: 'Échec',
-  stopped: 'Arrêté',
-}
 
 interface Props {
   agentRuns: AgentRun[]
@@ -85,11 +74,11 @@ export default function StudioPipeline({ agentRuns, criticReports }: Props) {
                   clickable={!!run}
                   onClick={run ? () => setSelection(isSelected ? null : { iteration, agent }) : undefined}
                   variant={isSelected ? 'filled' : 'outlined'}
-                  color={STATUS_COLOR[status] ?? 'default'}
+                  color={runStatusColor(status)}
                   label={
                     report?.global_score != null
                       ? `${studioStepLabel(agent)} · ${report.global_score}/100`
-                      : `${studioStepLabel(agent)}${status ? ` · ${STATUS_LABEL[status] ?? status}` : ''}`
+                      : `${studioStepLabel(agent)}${status ? ` · ${runStatusLabel(status)}` : ''}`
                   }
                 />
               )

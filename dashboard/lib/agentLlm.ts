@@ -39,7 +39,7 @@ export const CONFIGURABLE_AGENT_INFO: Record<string, ConfigurableAgentInfo> = {
     tasks: [
       'Choisit les sujets longs et courts à produire chaque jour',
       'Respecte les quotas et créneaux de publication',
-      'S\'appuie sur l\'historique et les retours audience',
+      'Évite les sujets déjà traités (historique de la chaîne)',
     ],
   },
   distribution_agent: {
@@ -47,7 +47,7 @@ export const CONFIGURABLE_AGENT_INFO: Record<string, ConfigurableAgentInfo> = {
     title: 'Publication multi-plateformes',
     tasks: [
       'Planifie les créneaux optimaux YouTube, TikTok, Instagram',
-      'Rédige titres, descriptions et métadonnées',
+      'Publie avec les titres et descriptions produits par Claude Studio',
       'Orchestre la mise en file d\'attente de publication',
     ],
   },

@@ -10,6 +10,7 @@ import { BarChart } from '@mui/x-charts/BarChart'
 import { useTheme } from '@mui/material/styles'
 import { PageContainer, PageHeader, PageSection, EmptyState } from '@/components/layout'
 import { fetcher, type Project } from '@/lib/api'
+import { formatDate } from '@/lib/format'
 
 interface Publication {
   id: string
@@ -79,7 +80,7 @@ export default function AnalyticsPage() {
                     </Typography>
                     {pub.published_at && (
                       <Typography variant="caption" color="text.secondary">
-                        {new Date(pub.published_at).toLocaleDateString('fr-FR')}
+                        {formatDate(pub.published_at)}
                       </Typography>
                     )}
                   </CardContent>

@@ -17,14 +17,8 @@ import Box from '@mui/material/Box'
 import AgentLlmConfigPanel from '@/components/AgentLlmConfigPanel'
 import { PageContainer, PageHeader, EmptyState, LoadingState } from '@/components/layout'
 import { fetcher, type AgentRun, type Project } from '@/lib/api'
+import { runStatusColor } from '@/lib/status'
 
-const STATUS_COLOR: Record<string, 'default' | 'warning' | 'success' | 'error'> = {
-  running: 'warning',
-  success: 'success',
-  failed: 'error',
-  pending: 'default',
-  skipped: 'default',
-}
 
 function AgentsMonitoringTab() {
   const { data: projects, isLoading: loadingProjects } = useSWR<Project[]>('/api/v1/projects', fetcher, {
@@ -91,7 +85,7 @@ function AgentsMonitoringTab() {
                       <TableCell>
                         <Chip
                           label={run.status ?? 'unknown'}
-                          color={STATUS_COLOR[run.status ?? ''] ?? 'default'}
+                          color={runStatusColor(run.status ?? '')}
                           size="small"
                         />
                       </TableCell>

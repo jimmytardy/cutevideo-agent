@@ -36,9 +36,8 @@ import {
   normalizePreference,
   resolvePreferenceAgent,
 } from '@/lib/agentLlm'
-import { authHeaders, fetcher } from '@/lib/api'
+import { API_BASE, fetcher, saveAgentLlmPreferences } from '@/lib/api'
 
-const BASE = '/api/v1'
 
 interface AgentLlmRowProps {
   agentName: string
@@ -230,7 +229,7 @@ function AgentLlmRow({
 }
 
 export default function AgentLlmConfigPanel() {
-  const { data, isLoading, mutate } = useSWR<AgentLlmConfig>(`${BASE}/me/agent-llm`, fetcher)
+  const { data, isLoading, mutate } = useSWR<AgentLlmConfig>(`${API_BASE}/me/agent-llm`, fetcher)
   const [preferences, setPreferences] = useState<Record<string, AgentLlmPreference>>({})
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState<{ severity: 'success' | 'error' | 'info'; text: string } | null>(
@@ -262,20 +261,17 @@ export default function AgentLlmConfigPanel() {
       setSaving(true)
       setMessage(null)
       try {
-        const res = await fetch(`${BASE}/me/agent-llm`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json', ...authHeaders() },
-          body: JSON.stringify({ preferences: nextPreferences }),
-        })
-        if (requestId !== saveRequestId.current) return
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}))
+        try {
+          await saveAgentLlmPreferences(nextPreferences)
+        } catch (e) {
+          if (requestId !== saveRequestId.current) return
           setMessage({
             severity: 'error',
-            text: body.detail || 'Erreur lors de la sauvegarde',
+            text: e instanceof Error ? e.message : 'Erreur lors de la sauvegarde',
           })
           return
         }
+        if (requestId !== saveRequestId.current) return
         await mutate()
         setMessage({ severity: 'success', text: 'Configuration enregistrée' })
       } finally {

@@ -29,6 +29,7 @@ import {
   type Channel,
   type SimilarTopic,
 } from '@/lib/api'
+import { formatDate } from '@/lib/format'
 
 type VideoType = 'short' | 'long'
 
@@ -165,7 +166,7 @@ export default function CreatePage() {
                 {similarTopics.map((t, i) => (
                   <Typography key={i} variant="caption" display="block">
                     • {t.title || t.theme || '(sans titre)'}
-                    {t.created_at ? ` — ${new Date(t.created_at).toLocaleDateString('fr-FR')}` : ''}
+                    {t.created_at ? ` — ${formatDate(t.created_at)}` : ''}
                   </Typography>
                 ))}
               </Alert>

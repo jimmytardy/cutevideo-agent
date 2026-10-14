@@ -1,4 +1,4 @@
-const BASE = '/api/v1'
+export const API_BASE = '/api/v1'
 const AUTH_TOKEN_KEY = 'cutevideo_auth_token'
 
 export function getAuthToken(): string | null {
@@ -46,19 +46,19 @@ export interface SubscriptionInfo {
 
 export async function getGoogleLoginUrl(): Promise<{ authorization_url: string; state: string }> {
   const redirectAfter = `${window.location.origin}/login`
-  const res = await fetch(`${BASE}/auth/google/login?redirect_after=${encodeURIComponent(redirectAfter)}`)
+  const res = await fetch(`${API_BASE}/auth/google/login?redirect_after=${encodeURIComponent(redirectAfter)}`)
   if (!res.ok) throw new Error('Impossible de démarrer la connexion Google')
   return res.json()
 }
 
 export async function getTotpEnabled(): Promise<boolean> {
-  const res = await fetch(`${BASE}/auth/totp/enabled`)
+  const res = await fetch(`${API_BASE}/auth/totp/enabled`)
   if (!res.ok) return false
   return Boolean((await res.json()).enabled)
 }
 
 export async function loginWithTotp(email: string, code: string): Promise<string> {
-  const res = await fetch(`${BASE}/auth/totp/login`, {
+  const res = await fetch(`${API_BASE}/auth/totp/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, code }),
@@ -66,14 +66,6 @@ export async function loginWithTotp(email: string, code: string): Promise<string
   if (res.status === 429) throw new Error('Trop d’essais — réessayez dans 15 minutes.')
   if (!res.ok) throw new Error('E-mail ou code invalide.')
   return (await res.json()).access_token as string
-}
-
-export async function fetchMe(): Promise<AuthUser> {
-  return fetcher(`${BASE}/auth/me`)
-}
-
-export async function fetchMySubscription(): Promise<SubscriptionInfo> {
-  return fetcher(`${BASE}/me/subscription`)
 }
 
 export interface Channel {
@@ -153,14 +145,6 @@ export interface Project {
   queue_position?: number | null
   queue_length?: number | null
   queued_at?: string | null
-}
-
-export interface PipelineQueueStatus {
-  position: number
-  queue_length: number
-  priority: number
-  queued_at: string | null
-  blocked_reason: string | null
 }
 
 export interface AgentRun {
@@ -311,7 +295,7 @@ export { fetcher }
 
 export async function fetchChannels(activeOnly = false): Promise<Channel[]> {
   const q = activeOnly ? '?active_only=true' : ''
-  return apiJson<Channel[]>(`${BASE}/channels${q}`)
+  return apiJson<Channel[]>(`${API_BASE}/channels${q}`)
 }
 
 export async function createChannel(data: {
@@ -320,7 +304,7 @@ export async function createChannel(data: {
   theme_category: string
   niche_prompt?: string
 }): Promise<Channel> {
-  return apiJson<Channel>(`${BASE}/channels`, {
+  return apiJson<Channel>(`${API_BASE}/channels`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -328,12 +312,12 @@ export async function createChannel(data: {
 }
 
 export async function fetchChannelIntegrations(channelId: string): Promise<ChannelIntegrations> {
-  return apiJson<ChannelIntegrations>(`${BASE}/channels/${channelId}/integrations`)
+  return apiJson<ChannelIntegrations>(`${API_BASE}/channels/${channelId}/integrations`)
 }
 
 export async function connectTikTok(channelId: string): Promise<{ redirect_url: string; connection_id: string }> {
   return apiJson<{ redirect_url: string; connection_id: string }>(
-    `${BASE}/channels/${channelId}/connect/tiktok`,
+    `${API_BASE}/channels/${channelId}/connect/tiktok`,
     { method: 'POST' },
   )
 }
@@ -343,7 +327,7 @@ export async function finishTikTokConnect(
   state: string,
   params: Record<string, string>,
 ): Promise<ChannelIntegrations> {
-  return apiJson<ChannelIntegrations>(`${BASE}/channels/${channelId}/connect/tiktok/finish`, {
+  return apiJson<ChannelIntegrations>(`${API_BASE}/channels/${channelId}/connect/tiktok/finish`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ state, params }),
@@ -351,7 +335,7 @@ export async function finishTikTokConnect(
 }
 
 export async function setTikTokProvider(channelId: string, provider: TikTokProvider): Promise<ChannelIntegrations> {
-  return apiJson<ChannelIntegrations>(`${BASE}/channels/${channelId}/tiktok-provider`, {
+  return apiJson<ChannelIntegrations>(`${API_BASE}/channels/${channelId}/tiktok-provider`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ provider }),
@@ -364,7 +348,7 @@ export async function createProject(
   target_duration_seconds: number,
   config?: Record<string, unknown>,
 ): Promise<Project> {
-  return apiJson<Project>(`${BASE}/projects`, {
+  return apiJson<Project>(`${API_BASE}/projects`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -377,40 +361,30 @@ export async function createProject(
 }
 
 export async function runPipeline(projectId: string): Promise<void> {
-  await apiJson<unknown>(`${BASE}/projects/${projectId}/run`, { method: 'POST' })
+  await apiJson<unknown>(`${API_BASE}/projects/${projectId}/run`, { method: 'POST' })
 }
 
 export async function stopPipeline(projectId: string): Promise<void> {
-  await apiJson<unknown>(`${BASE}/projects/${projectId}/stop`, { method: 'POST' })
+  await apiJson<unknown>(`${API_BASE}/projects/${projectId}/stop`, { method: 'POST' })
 }
 
 export async function restartPipeline(projectId: string): Promise<void> {
-  await apiJson<unknown>(`${BASE}/projects/${projectId}/restart`, { method: 'POST' })
+  await apiJson<unknown>(`${API_BASE}/projects/${projectId}/restart`, { method: 'POST' })
 }
 
 export async function dequeueProject(projectId: string): Promise<void> {
-  await apiJson<unknown>(`${BASE}/projects/${projectId}/queue`, { method: 'DELETE' })
-}
-
-export async function fetchQueueStatus(projectId: string): Promise<PipelineQueueStatus> {
-  return fetcher(`${BASE}/projects/${projectId}/queue-status`)
-}
-
-export async function fetchCriticReports(projectId: string): Promise<CriticReport[]> {
-  const res = await fetchWithRetry(`${BASE}/projects/${projectId}/critic-reports`)
-  if (!res.ok) return []
-  return res.json()
+  await apiJson<unknown>(`${API_BASE}/projects/${projectId}/queue`, { method: 'DELETE' })
 }
 
 export async function deleteProject(projectId: string): Promise<void> {
-  await apiJson<unknown>(`${BASE}/projects/${projectId}`, { method: 'DELETE' })
+  await apiJson<unknown>(`${API_BASE}/projects/${projectId}`, { method: 'DELETE' })
 }
 
 export async function createOnboardingDraft(
   themePrompt: string,
   brandKit: ChannelBrandKit,
 ): Promise<Channel> {
-  return apiJson<Channel>(`${BASE}/channels/onboarding/draft`, {
+  return apiJson<Channel>(`${API_BASE}/channels/onboarding/draft`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ theme_prompt: themePrompt, brand_kit: brandKit }),
@@ -419,23 +393,23 @@ export async function createOnboardingDraft(
 
 export async function getYoutubeOAuthUrl(channelId?: string): Promise<{ authorization_url: string; state: string }> {
   const q = channelId ? `?channel_id=${channelId}` : ''
-  return apiJson<{ authorization_url: string; state: string }>(`${BASE}/channels/youtube/oauth-url${q}`)
+  return apiJson<{ authorization_url: string; state: string }>(`${API_BASE}/channels/youtube/oauth-url${q}`)
 }
 
 export async function listYoutubeChannels(channelId?: string): Promise<YouTubeChannelItem[]> {
   const q = channelId ? `?channel_id=${channelId}` : ''
-  return apiJson<YouTubeChannelItem[]>(`${BASE}/channels/youtube/list${q}`)
+  return apiJson<YouTubeChannelItem[]>(`${API_BASE}/channels/youtube/list${q}`)
 }
 
 export async function disconnectYoutubeOAuth(channelId: string): Promise<void> {
-  await apiJson<{ status: string }>(`${BASE}/channels/${channelId}/youtube/oauth`, { method: 'DELETE' })
+  await apiJson<{ status: string }>(`${API_BASE}/channels/${channelId}/youtube/oauth`, { method: 'DELETE' })
 }
 
 export async function patchOnboardingYoutube(
   channelId: string,
   data: { youtube_channel_id: string; youtube_channel_url?: string },
 ): Promise<Channel> {
-  return apiJson<Channel>(`${BASE}/channels/${channelId}/onboarding/youtube`, {
+  return apiJson<Channel>(`${API_BASE}/channels/${channelId}/onboarding/youtube`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -443,21 +417,21 @@ export async function patchOnboardingYoutube(
 }
 
 export async function applyYoutubeBranding(channelId: string): Promise<void> {
-  await apiJson<unknown>(`${BASE}/channels/${channelId}/apply-youtube-branding`, { method: 'POST' })
+  await apiJson<unknown>(`${API_BASE}/channels/${channelId}/apply-youtube-branding`, { method: 'POST' })
 }
 
 export async function skipOnboardingStep(
   channelId: string,
   step: 'youtube' | 'tiktok' | 'instagram',
 ): Promise<Channel> {
-  return apiJson<Channel>(`${BASE}/channels/${channelId}/onboarding/skip/${step}`, { method: 'POST' })
+  return apiJson<Channel>(`${API_BASE}/channels/${channelId}/onboarding/skip/${step}`, { method: 'POST' })
 }
 
 export async function patchOnboardingTiktok(
   channelId: string,
   tiktok_publish_defaults: Record<string, unknown>,
 ): Promise<Channel> {
-  return apiJson<Channel>(`${BASE}/channels/${channelId}/onboarding/tiktok`, {
+  return apiJson<Channel>(`${API_BASE}/channels/${channelId}/onboarding/tiktok`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ tiktok_publish_defaults }),
@@ -468,7 +442,7 @@ export async function patchOnboardingInstagram(
   channelId: string,
   data: { instagram_page_id: string; instagram_profile?: Record<string, unknown> },
 ): Promise<Channel> {
-  return apiJson<Channel>(`${BASE}/channels/${channelId}/onboarding/instagram`, {
+  return apiJson<Channel>(`${API_BASE}/channels/${channelId}/onboarding/instagram`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -476,7 +450,7 @@ export async function patchOnboardingInstagram(
 }
 
 export async function completeOnboarding(channelId: string): Promise<Channel> {
-  return apiJson<Channel>(`${BASE}/channels/${channelId}/onboarding/complete`, { method: 'POST' })
+  return apiJson<Channel>(`${API_BASE}/channels/${channelId}/onboarding/complete`, { method: 'POST' })
 }
 
 export interface ChannelUpdatePayload {
@@ -514,7 +488,7 @@ export async function updateChannel(
   channelId: string,
   data: ChannelUpdatePayload,
 ): Promise<Channel> {
-  return apiJson<Channel>(`${BASE}/channels/${channelId}`, {
+  return apiJson<Channel>(`${API_BASE}/channels/${channelId}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -525,7 +499,7 @@ export async function previewChannelCostEstimate(
   channelId: string,
   data: ChannelCostPreviewRequest,
 ): Promise<ChannelCostEstimate> {
-  return apiJson<ChannelCostEstimate>(`${BASE}/channels/${channelId}/cost-estimate/preview`, {
+  return apiJson<ChannelCostEstimate>(`${API_BASE}/channels/${channelId}/cost-estimate/preview`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -533,21 +507,7 @@ export async function previewChannelCostEstimate(
 }
 
 export async function fetchChannel(channelId: string): Promise<Channel> {
-  return apiJson<Channel>(`${BASE}/channels/${channelId}`)
-}
-
-export async function fetchProjectVideos(projectId: string): Promise<Video[]> {
-  const res = await fetchWithRetry(`${BASE}/projects/${projectId}/videos`)
-  if (!res.ok) return []
-  return res.json()
-}
-
-export async function publishProject(projectId: string, platform: string): Promise<void> {
-  await apiJson<unknown>(`${BASE}/projects/${projectId}/publish`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ platform }),
-  })
+  return apiJson<Channel>(`${API_BASE}/channels/${channelId}`)
 }
 
 export interface HealthStatus {
@@ -581,44 +541,20 @@ export interface StorageStats {
   bucket: string | null
 }
 
-export async function fetchHealth(): Promise<HealthStatus> {
-  return fetcher('/health')
-}
-
-export async function fetchStorageStats(): Promise<StorageStats> {
-  return fetcher('/storage/stats')
-}
-
-export async function fetchSchedulerJobs(): Promise<SchedulerJob[]> {
-  return fetcher(`${BASE}/scheduler/jobs`)
-}
-
-export async function fetchUpcomingJobs(): Promise<SchedulerJob[]> {
-  return fetcher(`${BASE}/scheduler/upcoming`)
-}
-
 export async function triggerSchedulerJob(jobId: string): Promise<void> {
-  await apiJson(`${BASE}/scheduler/jobs/${encodeURIComponent(jobId)}/run`, { method: 'POST' })
+  await apiJson(`${API_BASE}/scheduler/jobs/${encodeURIComponent(jobId)}/run`, { method: 'POST' })
 }
 
 export async function setSchedulerRunning(action: 'start' | 'stop'): Promise<void> {
-  await apiJson(`${BASE}/scheduler/${action}`, { method: 'POST' })
+  await apiJson(`${API_BASE}/scheduler/${action}`, { method: 'POST' })
 }
 
 export async function saveAgentConfig(config: unknown): Promise<void> {
-  await apiJson(`${BASE}/config/agent`, {
+  await apiJson(`${API_BASE}/config/agent`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(config),
   })
-}
-
-export async function fetchProjectsByStatus(status: string, limit = 20): Promise<Project[]> {
-  return fetcher(`${BASE}/projects?status=${encodeURIComponent(status)}&limit=${limit}`)
-}
-
-export async function fetchRecentProjects(limit = 10): Promise<Project[]> {
-  return fetcher(`${BASE}/projects?limit=${limit}`)
 }
 
 export interface SimilarTopic {
@@ -637,7 +573,7 @@ export async function checkTopicSimilarity(
   theme: string,
 ): Promise<SimilarityCheck> {
   const params = new URLSearchParams({ channel_id: channelId, theme })
-  return fetcher(`${BASE}/projects/check-similarity?${params}`)
+  return fetcher(`${API_BASE}/projects/check-similarity?${params}`)
 }
 
 // ── Claude Studio ────────────────────────────────────────────────────────
@@ -680,4 +616,22 @@ export interface StudioInfo {
   cost_usd?: number | null
   num_turns?: number | null
   credits?: Array<{ media: string; attribution?: string; license?: string }>
+}
+
+// ── Compte ───────────────────────────────────────────────────────────────
+
+export async function saveApiKey(provider: string, apiKey: string): Promise<void> {
+  await apiJson(`${API_BASE}/me/api-keys/${encodeURIComponent(provider)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ api_key: apiKey }),
+  })
+}
+
+export async function saveAgentLlmPreferences(preferences: Record<string, unknown>): Promise<void> {
+  await apiJson(`${API_BASE}/me/agent-llm`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ preferences }),
+  })
 }

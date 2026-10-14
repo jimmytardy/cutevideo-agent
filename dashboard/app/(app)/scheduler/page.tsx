@@ -18,6 +18,8 @@ import Alert from '@mui/material/Alert'
 import AdminGuard from '@/components/AdminGuard'
 import { PageContainer, PageHeader, PageSection, LoadingState } from '@/components/layout'
 import { fetcher, setSchedulerRunning, triggerSchedulerJob } from '@/lib/api'
+import { formatDateTime } from '@/lib/format'
+import { runStatusColor } from '@/lib/status'
 
 interface JobInfo {
   id: string
@@ -42,11 +44,6 @@ interface SchedulerRun {
   error: string | null
 }
 
-const STATUS_COLOR: Record<string, 'default' | 'success' | 'error' | 'warning'> = {
-  success: 'success',
-  failed: 'error',
-  running: 'warning',
-}
 
 interface SchedulerStatus {
   running: boolean
@@ -148,14 +145,14 @@ export default function SchedulerPage() {
                         </TableCell>
                         <TableCell>{job.schedule}</TableCell>
                         <TableCell>
-                          {job.next_run_at ? new Date(job.next_run_at).toLocaleString('fr-FR') : '—'}
+                          {formatDateTime(job.next_run_at)}
                         </TableCell>
                         <TableCell>
                           {job.last_run ? (
                             <Chip
                               size="small"
                               label={job.last_run.status}
-                              color={STATUS_COLOR[job.last_run.status] ?? 'default'}
+                              color={runStatusColor(job.last_run.status)}
                             />
                           ) : (
                             '—'
@@ -201,9 +198,9 @@ export default function SchedulerPage() {
                       <TableRow key={run.id} hover>
                         <TableCell>{jobName(run.job_id)}</TableCell>
                         <TableCell>
-                          <Chip size="small" label={run.status} color={STATUS_COLOR[run.status] ?? 'default'} />
+                          <Chip size="small" label={run.status} color={runStatusColor(run.status)} />
                         </TableCell>
-                        <TableCell>{new Date(run.started_at).toLocaleString('fr-FR')}</TableCell>
+                        <TableCell>{formatDateTime(run.started_at)}</TableCell>
                         <TableCell>{run.error ?? '—'}</TableCell>
                       </TableRow>
                     ))}

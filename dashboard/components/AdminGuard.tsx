@@ -4,14 +4,12 @@ import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Box from '@mui/material/Box'
 import CircularProgress from '@mui/material/CircularProgress'
-import useSWR from 'swr'
-import { fetcher, type AuthUser } from '@/lib/api'
+import { useMe } from '@/lib/hooks'
 
-const BASE = '/api/v1'
 
 export default function AdminGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter()
-  const { data: me, isLoading } = useSWR<AuthUser>(`${BASE}/auth/me`, fetcher)
+  const { data: me, isLoading } = useMe()
 
   useEffect(() => {
     if (!isLoading && me && !me.is_admin) {

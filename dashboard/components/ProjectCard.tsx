@@ -18,6 +18,7 @@ import Link from 'next/link'
 import { useConfirmDialog } from '@/components/layout'
 import { projectStatusColor, projectStatusLabel } from '@/lib/status'
 import { runPipeline, deleteProject, type Project } from '@/lib/api'
+import { formatDate } from '@/lib/format'
 
 interface ProjectCardProps {
   project: Project
@@ -101,7 +102,7 @@ export default function ProjectCard({ project, onRefresh }: ProjectCardProps) {
             </Typography>
           )}
           <Typography variant="caption" display="block" color="text.secondary" sx={{ mt: 0.5 }}>
-            Créé le {new Date(project.created_at).toLocaleDateString('fr-FR')}
+            Créé le {formatDate(project.created_at)}
           </Typography>
         </CardContent>
         <CardActions sx={{ px: 2, pb: 2, pt: 0 }}>

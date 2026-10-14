@@ -19,7 +19,7 @@ import ListItemIcon from '@mui/material/ListItemIcon'
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline'
 import HighlightOffOutlinedIcon from '@mui/icons-material/HighlightOffOutlined'
 import { PageContainer, PageHeader, PageSection } from '@/components/layout'
-import { authHeaders, fetcher } from '@/lib/api'
+import { API_BASE, fetcher, saveApiKey } from '@/lib/api'
 import {
   API_KEY_PROVIDERS,
   getApiKeyProvider,
@@ -27,7 +27,6 @@ import {
   type ApiKeyProviderId,
 } from '@/lib/apiKeyProviders'
 
-const BASE = '/api/v1'
 
 type ApiKeyStatus = {
   provider: string
@@ -44,7 +43,7 @@ function KeyConfiguredIcon({ configured }: { configured: boolean }) {
 }
 
 export default function ApiKeysPage() {
-  const { data: keys, mutate } = useSWR<ApiKeyStatus[]>(`${BASE}/me/api-keys`, fetcher)
+  const { data: keys, mutate } = useSWR<ApiKeyStatus[]>(`${API_BASE}/me/api-keys`, fetcher)
   const [provider, setProvider] = useState<ApiKeyProviderId>('gemini')
   const [apiKey, setApiKey] = useState('')
   const [message, setMessage] = useState<string | null>(null)
@@ -58,14 +57,10 @@ export default function ApiKeysPage() {
 
   const saveKey = async () => {
     setMessage(null)
-    const res = await fetch(`${BASE}/me/api-keys/${provider}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({ api_key: apiKey }),
-    })
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}))
-      setMessage(body.detail || 'Erreur')
+    try {
+      await saveApiKey(provider, apiKey)
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : 'Erreur')
       return
     }
     setApiKey('')

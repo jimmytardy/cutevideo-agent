@@ -8,13 +8,13 @@ import CardContent from '@mui/material/CardContent'
 import Chip from '@mui/material/Chip'
 import Grid from '@mui/material/Grid'
 import { PageContainer, PageHeader, StatCard } from '@/components/layout'
-import { fetcher, type AuthUser, type SubscriptionInfo } from '@/lib/api'
+import { API_BASE, fetcher, type SubscriptionInfo } from '@/lib/api'
+import { useMe } from '@/lib/hooks'
 
-const BASE = '/api/v1'
 
 export default function AccountPage() {
-  const { data: sub } = useSWR<SubscriptionInfo>(`${BASE}/me/subscription`, fetcher)
-  const { data: me } = useSWR<AuthUser>(`${BASE}/auth/me`, fetcher)
+  const { data: sub } = useSWR<SubscriptionInfo>(`${API_BASE}/me/subscription`, fetcher)
+  const { data: me } = useMe()
 
   const storageMb = Math.round(Number(sub?.usage?.storage_bytes ?? 0) / 1024 / 1024)
 

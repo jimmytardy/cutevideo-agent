@@ -33,12 +33,11 @@ import LogoutIcon from '@mui/icons-material/Logout'
 import MenuIcon from '@mui/icons-material/Menu'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import useSWR from 'swr'
 import { ThemeToggle } from '@/components/layout'
-import { clearAuthToken, fetcher, type AuthUser } from '@/lib/api'
+import { clearAuthToken, type AuthUser } from '@/lib/api'
+import { useMe } from '@/lib/hooks'
 
 const DRAWER_WIDTH = 240
-const BASE = '/api/v1'
 
 type NavSectionId = 'principal' | 'contenu' | 'insights' | 'agents' | 'administration'
 
@@ -218,7 +217,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const theme = useTheme()
   const isDesktop = useMediaQuery(theme.breakpoints.up('md'))
-  const { data: me } = useSWR<AuthUser>(`${BASE}/auth/me`, fetcher)
+  const { data: me } = useMe()
   const [userMenuAnchor, setUserMenuAnchor] = useState<null | HTMLElement>(null)
   const [mobileOpen, setMobileOpen] = useState(false)
 

@@ -23,9 +23,9 @@ import {
   ErrorState,
 } from '@/components/layout'
 import { projectStatusColor, projectStatusLabel } from '@/lib/status'
-import { fetcher, type HealthStatus, type SchedulerJob, type Project, type StorageStats } from '@/lib/api'
+import { formatBytes, formatDateTime, formatRelativeFuture, formatShortDateTime } from '@/lib/format'
+import { API_BASE, fetcher, type HealthStatus, type SchedulerJob, type Project, type StorageStats } from '@/lib/api'
 
-const BASE = '/api/v1'
 
 function StatusDot({ ok, label, detail }: { ok: boolean; label: string; detail?: string | null }) {
   const chip = (
@@ -88,7 +88,7 @@ function BackendStatus() {
 
 function RunningProjects() {
   const { data, isLoading } = useSWR<Project[]>(
-    `${BASE}/projects?status=running&limit=10`,
+    `${API_BASE}/projects?status=running&limit=10`,
     fetcher,
     { refreshInterval: 10000 },
   )
@@ -125,25 +125,13 @@ function RunningProjects() {
               )}
             </Box>
             <Typography variant="caption" color="text.secondary">
-              Démarré le {new Date(p.updated_at).toLocaleString('fr-FR')}
+              Démarré le {formatDateTime(p.updated_at)}
             </Typography>
           </Box>
         ))}
       </CardContent>
     </Card>
   )
-}
-
-function formatNextRun(iso: string | null): string {
-  if (!iso) return 'Non planifié'
-  const d = new Date(iso)
-  const diffMs = d.getTime() - Date.now()
-  const diffMin = Math.round(diffMs / 60000)
-  if (diffMin < 0) return 'Imminent'
-  if (diffMin < 60) return `dans ${diffMin} min`
-  const diffH = Math.round(diffMin / 60)
-  if (diffH < 24) return `dans ${diffH}h`
-  return `dans ${Math.round(diffH / 24)}j`
 }
 
 function lastRunGlyph(status: string): { label: string; color: 'success' | 'error' | 'default' } {
@@ -155,7 +143,7 @@ function lastRunGlyph(status: string): { label: string; color: 'success' | 'erro
 function CronSchedule() {
   // Endpoint en lecture seule : visible par tous les utilisateurs (pas seulement admin),
   // sans bouton de lancement. Le déclenchement reste réservé à la page Scheduler (admin).
-  const { data, isLoading } = useSWR<SchedulerJob[]>(`${BASE}/scheduler/upcoming`, fetcher, {
+  const { data, isLoading } = useSWR<SchedulerJob[]>(`${API_BASE}/scheduler/upcoming`, fetcher, {
     refreshInterval: 60000,
   })
 
@@ -189,7 +177,7 @@ function CronSchedule() {
                     display="block"
                     color={job.next_run_at ? 'text.secondary' : 'text.disabled'}
                   >
-                    {formatNextRun(job.next_run_at)}
+                    {formatRelativeFuture(job.next_run_at)}
                   </Typography>
                   {job.schedule && (
                     <Typography variant="caption" color="text.disabled" display="block">
@@ -209,13 +197,6 @@ function CronSchedule() {
       </CardContent>
     </Card>
   )
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} o`
-  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} Ko`
-  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} Mo`
-  return `${(bytes / 1024 ** 3).toFixed(2)} Go`
 }
 
 function S3StorageUsage() {
@@ -256,7 +237,7 @@ function S3StorageUsage() {
 }
 
 function RecentActivity() {
-  const { data, isLoading } = useSWR<Project[]>(`${BASE}/projects?limit=5`, fetcher, { refreshInterval: 30000 })
+  const { data, isLoading } = useSWR<Project[]>(`${API_BASE}/projects?limit=5`, fetcher, { refreshInterval: 30000 })
 
   return (
     <Card>
@@ -279,12 +260,7 @@ function RecentActivity() {
                 {p.title ?? p.theme}
               </Typography>
               <Typography variant="caption" color="text.secondary" sx={{ ml: 'auto' }}>
-                {new Date(p.updated_at).toLocaleString('fr-FR', {
-                  day: '2-digit',
-                  month: '2-digit',
-                  hour: '2-digit',
-                  minute: '2-digit',
-                })}
+                {formatShortDateTime(p.updated_at)}
               </Typography>
             </Box>
           </Box>
@@ -295,7 +271,7 @@ function RecentActivity() {
 }
 
 export default function HomePage() {
-  const { data: allProjects } = useSWR<Project[]>(`${BASE}/projects?limit=200`, fetcher, { refreshInterval: 30000 })
+  const { data: allProjects } = useSWR<Project[]>(`${API_BASE}/projects?limit=200`, fetcher, { refreshInterval: 30000 })
   const runningCount = (allProjects ?? []).filter((p) => p.status === 'running').length
   const approvedCount = (allProjects ?? []).filter((p) => p.status === 'approved' || p.status === 'published').length
 
