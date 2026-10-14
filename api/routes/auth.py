@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 import httpx
 from urllib.parse import urlencode, urlparse, urlunparse
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from agent.core.auth import create_access_token, create_oauth_state, decode_oauth_state
 from agent.core.config import settings
 from agent.core.database import SubscriptionPlan, User, get_db
+from agent.core.totp import verify_totp
 from api.deps import get_current_user
 
 logger = logging.getLogger(__name__)
@@ -160,6 +161,11 @@ async def google_callback(
     result = await db.execute(select(User).where(User.google_sub == google_sub))
     user = result.scalar_one_or_none()
     if user is None:
+        # Compte déjà créé par une autre méthode (code Authenticator) : on y rattache Google.
+        user = await _find_user_by_email(db, email)
+        if user is not None:
+            user.google_sub = google_sub
+    if user is None:
         plan = await _get_plan_for_new_user(db)
         user = User(
             google_sub=google_sub,
@@ -191,6 +197,107 @@ async def google_callback(
         url=f"{redirect_base}{sep}{query}",
         status_code=status.HTTP_302_FOUND,
     )
+
+
+# ── Connexion par code Google Authenticator (TOTP) ───────────────────────────
+
+TOTP_MAX_FAILURES = 5
+TOTP_FAILURE_WINDOW_S = 15 * 60
+TOTP_INVALID = "E-mail ou code invalide"
+
+
+class TotpEnabledResponse(BaseModel):
+    enabled: bool
+
+
+class TotpLoginRequest(BaseModel):
+    email: str
+    code: str
+
+
+def totp_enabled() -> bool:
+    return bool(settings.totp_secret.strip() and settings.totp_login_email.strip())
+
+
+async def _find_user_by_email(db: AsyncSession, email: str) -> User | None:
+    result = await db.execute(select(User).where(func.lower(User.email) == email.strip().lower()))
+    return result.scalars().first()
+
+
+def _client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+async def check_totp(redis, email: str, code: str, ip: str) -> None:
+    """Limite d'essais, e-mail autorisé, code valide et non rejoué. Lève HTTPException sinon."""
+    fail_key = f"auth:totp:fail:{ip}"
+    failures = int(await redis.get(fail_key) or 0)
+    if failures >= TOTP_MAX_FAILURES:
+        raise HTTPException(status_code=429, detail="Trop d'essais — réessayez dans 15 minutes")
+
+    async def fail() -> None:
+        count = await redis.incr(fail_key)
+        if count == 1:
+            await redis.expire(fail_key, TOTP_FAILURE_WINDOW_S)
+        raise HTTPException(status_code=401, detail=TOTP_INVALID)
+
+    email_ok = email.strip().lower() == settings.totp_login_email.strip().lower()
+    step = verify_totp(settings.totp_secret, code)
+    if not email_ok or step is None:
+        await fail()
+    last = await redis.get("auth:totp:last_step")
+    if last is not None and int(last) >= int(step):
+        await fail()  # code déjà utilisé
+    await redis.set("auth:totp:last_step", step, ex=120)
+    await redis.delete(fail_key)
+
+
+@router.get("/totp/enabled", response_model=TotpEnabledResponse)
+async def totp_login_enabled() -> TotpEnabledResponse:
+    return TotpEnabledResponse(enabled=totp_enabled())
+
+
+@router.post("/totp/login", response_model=TokenResponse)
+async def totp_login(
+    body: TotpLoginRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> TokenResponse:
+    """Connexion par e-mail + code Google Authenticator, sur le même compte que Google."""
+    if not totp_enabled():
+        raise HTTPException(status_code=404, detail="Connexion par code non configurée")
+    from agent.core.queue import queue
+
+    try:
+        redis = queue.client
+    except Exception as exc:  # noqa: BLE001 - sans Redis, pas de protection : on refuse
+        raise HTTPException(status_code=503, detail="Service indisponible") from exc
+    await check_totp(redis, body.email, body.code, _client_ip(request))
+
+    email = settings.totp_login_email.strip()
+    user = await _find_user_by_email(db, email)
+    if user is None:
+        plan = await _get_plan_for_new_user(db)
+        user = User(
+            google_sub=f"totp:{email.lower()}",
+            email=email,
+            subscription_id=plan.id,
+            subscription_started_at=datetime.now(timezone.utc),
+        )
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+    elif not user.is_active:
+        raise HTTPException(status_code=403, detail="Compte désactivé")
+
+    from agent.core.subscription import sync_user_admin_flag
+
+    await sync_user_admin_flag(db, user)
+    logger.info("Connexion TOTP réussie pour %s", user.email)
+    return TokenResponse(access_token=create_access_token(user.id))
 
 
 @router.get("/me", response_model=AuthUserResponse)

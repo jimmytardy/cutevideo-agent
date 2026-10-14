@@ -1,18 +1,21 @@
 'use client'
 
-import { Suspense, useEffect } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
 import Card from '@mui/material/Card'
 import CardContent from '@mui/material/CardContent'
 import CircularProgress from '@mui/material/CircularProgress'
+import Alert from '@mui/material/Alert'
+import Divider from '@mui/material/Divider'
+import TextField from '@mui/material/TextField'
 import Link from '@mui/material/Link'
 import Typography from '@mui/material/Typography'
 import VideoLibraryOutlinedIcon from '@mui/icons-material/VideoLibraryOutlined'
 import NextLink from 'next/link'
 import { ThemeToggle } from '@/components/layout'
-import { getGoogleLoginUrl, setAuthToken } from '@/lib/api'
+import { getGoogleLoginUrl, getTotpEnabled, loginWithTotp, setAuthToken } from '@/lib/api'
 
 function LoginPageContent() {
   const router = useRouter()
@@ -25,6 +28,31 @@ function LoginPageContent() {
       router.replace('/')
     }
   }, [searchParams, router])
+
+  const [totpEnabled, setTotpEnabled] = useState(false)
+  const [email, setEmail] = useState('')
+  const [code, setCode] = useState('')
+  const [totpError, setTotpError] = useState<string | null>(null)
+  const [totpBusy, setTotpBusy] = useState(false)
+
+  useEffect(() => {
+    getTotpEnabled().then(setTotpEnabled).catch(() => setTotpEnabled(false))
+  }, [])
+
+  const handleTotpLogin = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setTotpError(null)
+    setTotpBusy(true)
+    try {
+      setAuthToken(await loginWithTotp(email, code))
+      router.replace('/')
+    } catch (err) {
+      setTotpError(err instanceof Error ? err.message : String(err))
+      setCode('')
+    } finally {
+      setTotpBusy(false)
+    }
+  }
 
   const handleGoogleLogin = async () => {
     const { authorization_url } = await getGoogleLoginUrl()
@@ -85,6 +113,34 @@ function LoginPageContent() {
             <Button variant="contained" size="large" fullWidth onClick={handleGoogleLogin}>
               Continuer avec Google
             </Button>
+            {totpEnabled && (
+              <Box component="form" onSubmit={handleTotpLogin} sx={{ mt: 3 }}>
+                <Divider sx={{ mb: 3 }}>ou</Divider>
+                <TextField
+                  fullWidth
+                  type="email"
+                  label="E-mail"
+                  autoComplete="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  sx={{ mb: 2 }}
+                  required
+                />
+                <TextField
+                  fullWidth
+                  label="Code Google Authenticator"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  inputProps={{ inputMode: 'numeric', autoComplete: 'one-time-code', pattern: '[0-9]{6}' }}
+                  sx={{ mb: 2 }}
+                  required
+                />
+                {totpError && <Alert severity="error" sx={{ mb: 2 }}>{totpError}</Alert>}
+                <Button type="submit" variant="outlined" size="large" fullWidth disabled={totpBusy || code.length !== 6}>
+                  Se connecter avec un code
+                </Button>
+              </Box>
+            )}
             <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', justifyContent: 'center', mt: 3 }}>
               <Link component={NextLink} href="/terms" variant="body2" color="text.secondary">
                 Conditions d&apos;utilisation

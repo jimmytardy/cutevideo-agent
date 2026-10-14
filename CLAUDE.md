@@ -143,6 +143,7 @@ Fan-outs (e.g. `studio/media.py` multi-source search) use `bounded_gather()` (ag
 ### API (FastAPI, api/)
 
 All routes are under `/api/v1/`. Key route modules:
+- `auth.py` — Google OAuth login, plus optional login by Google Authenticator code (`POST /auth/totp/login`, RFC 6238 in `agent/core/totp.py`, no dependency): `TOTP_SECRET` + `TOTP_LOGIN_EMAIL` in `.env` (generate with `scripts/totp_setup.py <email>`), logs into the `User` with that email (Google login later re-attaches by email), Redis anti-replay + 5 failures / 15 min per IP
 - `agents.py` — agent runs / statuses of a project
 - `projects.py` — CRUD for projects
 - `content_planning.py` — content planner trigger + channel plan

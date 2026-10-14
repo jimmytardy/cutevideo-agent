@@ -51,6 +51,23 @@ export async function getGoogleLoginUrl(): Promise<{ authorization_url: string; 
   return res.json()
 }
 
+export async function getTotpEnabled(): Promise<boolean> {
+  const res = await fetch(`${BASE}/auth/totp/enabled`)
+  if (!res.ok) return false
+  return Boolean((await res.json()).enabled)
+}
+
+export async function loginWithTotp(email: string, code: string): Promise<string> {
+  const res = await fetch(`${BASE}/auth/totp/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, code }),
+  })
+  if (res.status === 429) throw new Error('Trop d’essais — réessayez dans 15 minutes.')
+  if (!res.ok) throw new Error('E-mail ou code invalide.')
+  return (await res.json()).access_token as string
+}
+
 export async function fetchMe(): Promise<AuthUser> {
   return fetcher(`${BASE}/auth/me`)
 }

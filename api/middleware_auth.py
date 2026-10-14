@@ -11,6 +11,8 @@ USER_ID_STATE_KEY: Final = "auth_user_id"
 PUBLIC_API_PREFIXES: Final = (
     "/api/v1/auth/google/login",
     "/api/v1/auth/google/callback",
+    "/api/v1/auth/totp/enabled",
+    "/api/v1/auth/totp/login",
     "/api/v1/channels/youtube/oauth/callback",
     "/health",
     "/docs",

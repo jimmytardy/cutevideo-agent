@@ -91,6 +91,9 @@ class Settings(BaseSettings):
     google_oauth_client_secret: str = ""
     google_oauth_redirect_uri: str = "http://localhost:8000/api/v1/auth/google/callback"
     api_keys_encryption_key: str = ""
+    # Connexion par code Google Authenticator (TOTP) : clé base32 + seul e-mail qu'elle déverrouille.
+    totp_secret: str = ""
+    totp_login_email: str = ""
 
     # TTS
     edge_tts_voice: str = "fr-FR-DeniseNeural"
