@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import json
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends
 
-from agent.core.config import settings
+from agent.core.config import load_agent_config, save_agent_config
 from api.deps import require_admin_user
 from agent.core.database import User
 
@@ -16,10 +14,7 @@ router = APIRouter(prefix="/api/v1/config", tags=["config"])
 @router.get("/agent")
 async def get_agent_config(_: User = Depends(require_admin_user)) -> dict[str, Any]:
     """Retourne la configuration courante des agents."""
-    path = Path(settings.config_path)
-    if not path.exists():
-        return {}
-    return json.loads(path.read_text(encoding="utf-8"))
+    return load_agent_config()
 
 
 @router.put("/agent")
@@ -28,9 +23,7 @@ async def update_agent_config(
     _: User = Depends(require_admin_user),
 ) -> dict[str, Any]:
     """Met à jour la configuration des agents."""
-    path = Path(settings.config_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(body, ensure_ascii=False, indent=2), encoding="utf-8")
+    save_agent_config(body)
     return body
 
 

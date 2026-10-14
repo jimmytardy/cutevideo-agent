@@ -10,12 +10,11 @@
 from __future__ import annotations
 
 import math
-import re
 from pathlib import Path
 
 import numpy as np
 
-from agent.skills.video.ffmpeg_runtime import run_ffmpeg, thread_args
+from agent.skills.video.ffmpeg_runtime import filter_thread_args, measure_loudness, run_ffmpeg, thread_args
 
 SR = 48000
 TARGET_LUFS = -14.0
@@ -111,21 +110,6 @@ def build_sfx_track(events: list[tuple[float, str]], duration: float, voice_peak
 # ── mixage ────────────────────────────────────────────────────────────────
 
 
-async def _measure(path: Path) -> tuple[float | None, float | None]:
-    """(LUFS intégrés, crête dBFS) via ebur128."""
-    import asyncio
-
-    proc = await asyncio.create_subprocess_exec(
-        "ffmpeg", "-nostats", "-i", str(path), "-map", "0:a:0", "-af", "ebur128=peak=sample",
-        "-f", "null", "-", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-    )
-    _, err = await proc.communicate()
-    text = err.decode(errors="replace")
-    lufs = re.findall(r"I:\s+(-?[\d.]+) LUFS", text)
-    peak = re.findall(r"Peak:\s+(-?[\d.]+) dBFS", text)
-    return (float(lufs[-1]) if lufs else None, float(peak[-1]) if peak else None)
-
-
 async def mix_short_audio(
     voice: Path,
     music: Path | None,
@@ -138,7 +122,7 @@ async def mix_short_audio(
     from studio.media import probe_media
 
     duration = (await probe_media(voice))["duration_s"]
-    voice_lufs, voice_peak = await _measure(voice)
+    voice_lufs, voice_peak = await measure_loudness(voice)
     voice_lufs = voice_lufs if voice_lufs is not None else -16.0
     inputs = ["-i", str(voice)]
     chains = ["[0:a]aformat=sample_rates=48000:channel_layouts=mono,asplit=2[v][vkey]"]
@@ -148,13 +132,13 @@ async def mix_short_audio(
         # Silences de début et de fin retirés : sinon intro muette pendant le hook et trou à chaque boucle.
         trimmed = work / "music_trim.wav"
         await run_ffmpeg([
-            "ffmpeg", "-y", "-i", str(music), "-vn",
+            "ffmpeg", "-y", *filter_thread_args(), "-i", str(music), "-vn",
             "-af", "silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.05,areverse,"
                    "silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.05,areverse",
             *thread_args(), "-ac", "2", "-ar", str(SR), "-c:a", "pcm_s16le", str(trimmed),
         ], error_prefix="Musique : retrait des silences")
         music = trimmed
-        music_lufs, _ = await _measure(music)
+        music_lufs, _ = await measure_loudness(music)
         rel_db = 20 * math.log10(max(music_volume, 1e-3) / 0.08)
         music_gain_db = (voice_lufs - MUSIC_BELOW_VOICE_DB + rel_db) - (music_lufs if music_lufs is not None else -16.0)
         fade_out = max(0.0, duration - 1.5)
@@ -178,21 +162,21 @@ async def mix_short_audio(
 
     pre = work / "mix_pre.wav"
     await run_ffmpeg([
-        "ffmpeg", "-y", *inputs, "-filter_complex", ";".join(chains), "-map", "[mix]",
+        "ffmpeg", "-y", *filter_thread_args(), *inputs, "-filter_complex", ";".join(chains), "-map", "[mix]",
         *thread_args(), "-c:a", "pcm_s16le", "-ar", str(SR), str(pre),
     ], error_prefix="Mixage voix/musique/bruitages")
 
     # Gain puis limiteur : le limiteur rogne les crêtes et fait perdre ~1 dB, d'où une passe de recalage.
-    mix_lufs, _ = await _measure(pre)
+    mix_lufs, _ = await measure_loudness(pre)
     gain = TARGET_LUFS - mix_lufs if mix_lufs is not None else 0.0
     final_lufs = None
     for _ in range(3):
         await run_ffmpeg([
-            "ffmpeg", "-y", "-i", str(pre),
+            "ffmpeg", "-y", *filter_thread_args(), "-i", str(pre),
             "-af", f"volume={gain:.2f}dB,alimiter=limit=0.84:attack=3:release=60:level=disabled",
             *thread_args(), "-c:a", "aac", "-b:a", "192k", "-ar", str(SR), str(out),
         ], error_prefix="Normalisation loudness")
-        final_lufs, _ = await _measure(out)
+        final_lufs, _ = await measure_loudness(out)
         if final_lufs is None or abs(final_lufs - TARGET_LUFS) <= 0.3:
             break
         gain += min(4.0, TARGET_LUFS - final_lufs)

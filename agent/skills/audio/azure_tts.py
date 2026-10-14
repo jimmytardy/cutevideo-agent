@@ -55,7 +55,7 @@ async def synthesize_ssml(
     await normalize_wav(tmp_path, output_path, mastering=mastering)
     tmp_path.unlink(missing_ok=True)
 
-    from agent.skills.audio.tts import probe_duration
+    from agent.skills.video.ffmpeg_runtime import probe_duration
 
     duration = await probe_duration(output_path)
     logger.debug("Azure TTS généré : %.1f s → %s", duration, output_path)

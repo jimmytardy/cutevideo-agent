@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Literal, TypeVar
+from typing import Any, Literal, TypeVar
 
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
@@ -172,6 +172,28 @@ ModelT = TypeVar("ModelT", bound=BaseModel)
 
 class ContractError(ValueError):
     """Fichier de contrat absent ou invalide (message destiné à Claude)."""
+
+
+def resolve_in_run_dir(run_dir: Path, rel: str, *, within: str | None = None) -> Path:
+    """Chemin absolu de `rel`, refusé s'il sort du run dir (ou du sous-dossier `within`)."""
+    root = (run_dir / within if within else run_dir).resolve()
+    path = (run_dir / rel).resolve()
+    if not path.is_relative_to(root):
+        where = f"{within}/" if within else "du run dir"
+        raise ContractError(f"chemin hors {where} interdit : {rel}")
+    return path
+
+
+def read_json(path: Path, default: Any = None) -> Any:
+    """JSON d'un fichier du run dir, `default` s'il n'existe pas."""
+    if not path.exists():
+        return default
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def write_json(path: Path, data: Any, *, indent: int = 2) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=indent), encoding="utf-8")
 
 
 def load_contract(path: Path, model: type[ModelT]) -> ModelT:

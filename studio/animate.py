@@ -15,8 +15,8 @@ from pathlib import Path
 from typing import Any, Literal
 
 from agent.skills.video.ffmpeg_runtime import filter_thread_args, run_ffmpeg, thread_args
-from studio.assets import SHORT_FPS, SHORT_HEIGHT, SHORT_WIDTH
-from studio.contracts import ContractError
+from studio.assets import SHORT_FPS, SHORT_HEIGHT, SHORT_WIDTH, WORKSPACE_LIB
+from studio.contracts import ContractError, resolve_in_run_dir
 from studio.media import extract_frames, record_credit
 from studio.sandbox import SandboxError, run_sandboxed, scripts_supported
 
@@ -24,7 +24,6 @@ AnimationPolicy = Literal["off", "templates", "scripts"]
 ANIMATION_POLICIES: tuple[AnimationPolicy, ...] = ("off", "templates", "scripts")
 TEMPLATES_DIR = Path(__file__).resolve().parent / "anim_templates"
 TEMPLATES = ("title", "counter", "bars", "list", "compare", "steps", "map", "before_after", "paradox")
-WORKSPACE_LIB = Path(__file__).resolve().parent / "workspace" / "anim" / "lib"
 MAX_DURATION_S = 12.0
 SCRIPT_KINDS = {".html": "html", ".htm": "html", ".py": "python"}
 
@@ -127,8 +126,8 @@ async def animate_script(run_dir: Path, script_rel: str, duration: float, name: 
     if not scripts_supported():
         raise ContractError("scripts d'animation indisponibles : aucun bac à sable (bwrap / studio-sandbox)")
     anim_dir = (run_dir / "anim").resolve()
-    script = (run_dir / script_rel).resolve()
-    if not script.is_relative_to(anim_dir) or not script.is_file():
+    script = resolve_in_run_dir(run_dir, script_rel, within="anim")
+    if not script.is_file():
         raise ContractError(f"le script doit être un fichier existant de anim/ : {script_rel}")
     kind = SCRIPT_KINDS.get(script.suffix.lower())
     if kind is None:

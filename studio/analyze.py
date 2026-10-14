@@ -26,12 +26,12 @@ from typing import Any
 import numpy as np
 
 from agent.skills.video.ffmpeg_runtime import filter_thread_args, run_ffmpeg, thread_args
+from studio.assets import FONT_FILE, SHEET_COLS, TILE_H, TILE_W
+from studio.contracts import read_json, write_json
 
 logger = logging.getLogger(__name__)
 
 ANALYSIS_FPS = 5
-TILE_W, TILE_H = 270, 480
-SHEET_COLS = 4
 SHEET_MAX_TILES = 16
 CUT_MIN_GAP_S = 0.4
 GEMINI_MODEL = os.getenv("STUDIO_GEMINI_MODEL", "gemini-2.5-flash")
@@ -94,8 +94,6 @@ def _detect_cuts(frames: list[Path]) -> tuple[list[float], list[float]]:
 
 def _label_tile(src: Path, label: str, *, highlight: bool = False):
     from PIL import Image, ImageDraw, ImageFont
-
-    from studio.textfx import FONT_FILE
 
     img = Image.open(src).convert("RGB")
     draw = ImageDraw.Draw(img)
@@ -445,7 +443,7 @@ async def analyze_video(
     # Coupes connues par la timeline (les coupes entre animations au même fond échappent à la détection).
     if timeline_file and timeline_file.exists():
         try:
-            clips = json.loads(timeline_file.read_text(encoding="utf-8"))["clips"]
+            clips = read_json(timeline_file)["clips"]
             if abs(float(clips[-1]["end"]) - duration) <= 0.6:
                 cuts = [round(float(c["start"]), 2) for c in clips[1:]]
                 cuts_source = "timeline"
@@ -497,7 +495,7 @@ async def analyze_video(
         wav = work / "audio.wav"
         await _extract_wav(video, wav)
         if words_file and words_file.exists():
-            words = json.loads(words_file.read_text(encoding="utf-8"))
+            words = read_json(words_file)
         else:
             from agent.skills.audio.whisper_utils import transcribe_to_words
 
@@ -511,13 +509,13 @@ async def analyze_video(
         _refine_pauses(result["speech"], series, audio_metrics.get("speech_rms_db"))
         audio_png = out_dir / "audio.png"
         await asyncio.to_thread(_plot_audio, series, words, cuts, audio_png)
-        (out_dir / "words.json").write_text(json.dumps(words, ensure_ascii=False, indent=1), encoding="utf-8")
+        write_json(out_dir / "words.json", words, indent=1)
     result["flags"] = _flags(result)
     result["read"] = {**sheets, "audio": _rel(run_dir, audio_png) if audio_png else None}
     shutil.rmtree(work, ignore_errors=True)
 
     path = out_dir / "analysis.json"
-    path.write_text(json.dumps(result, ensure_ascii=False, indent=1), encoding="utf-8")
+    write_json(path, result, indent=1)
     # Sortie compacte pour Claude : les séries longues restent dans analysis.json.
     summary = {k: v for k, v in result.items() if k not in ("grid", "transcript")}
     summary["visual"] = {k: v for k, v in result["visual"].items() if k != "motion_by_s"}

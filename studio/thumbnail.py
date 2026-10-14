@@ -6,10 +6,12 @@ import shutil
 from pathlib import Path
 
 from agent.skills.video.ffmpeg_runtime import filter_thread_args, run_ffmpeg, thread_args
-from studio.media import IMAGE_EXTENSIONS, probe_media
+from studio.contracts import resolve_in_run_dir
+from studio.assets import IMAGE_EXTENSIONS, SHORT_HEIGHT, SHORT_WIDTH
+from studio.media import probe_media
 from studio.textfx import block_height, drawtext_chain, fit_fontsize, wrap_lines
 
-SIZES = {"9:16": (1080, 1920), "16:9": (1280, 720)}
+SIZES = {"9:16": (SHORT_WIDTH, SHORT_HEIGHT), "16:9": (1280, 720)}
 MAX_CHARS = {"9:16": 12, "16:9": 18}
 
 
@@ -19,8 +21,8 @@ def _parse_background(run_dir: Path, background: str) -> tuple[Path, float | Non
     if "@" in background:
         background, at = background.rsplit("@", 1)
         seek = float(at)
-    path = (run_dir / background).resolve()
-    if not path.is_relative_to(run_dir.resolve()) or not path.exists():
+    path = resolve_in_run_dir(run_dir, background)
+    if not path.exists():
         raise ValueError(f"fond introuvable : {background}")
     return path, seek
 
@@ -68,10 +70,12 @@ async def compose_thumbnail(
         f"drawbox=x=0:y=0:w=iw:h=ih:color=black@0.18:t=fill,{text_filters}"
     )
     seek_args = ["-ss", f"{seek:.2f}"] if seek is not None else []
-    await run_ffmpeg([
-        "ffmpeg", "-y", *filter_thread_args(), *seek_args, "-i", str(src),
-        "-vf", vf, "-frames:v", "1", *thread_args(), str(out),
-    ], error_prefix="Miniature")
-    shutil.rmtree(work, ignore_errors=True)
+    try:
+        await run_ffmpeg([
+            "ffmpeg", "-y", *filter_thread_args(), *seek_args, "-i", str(src),
+            "-vf", vf, "-frames:v", "1", *thread_args(), str(out),
+        ], error_prefix="Miniature")
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
     info = await probe_media(out)
     return {"path": str(out.relative_to(run_dir.resolve())), "width": info["width"], "height": info["height"]}

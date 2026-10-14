@@ -27,6 +27,8 @@ import uuid
 from pathlib import Path
 from typing import Literal
 
+from agent.core.env import env_float, env_int
+
 SandboxMode = Literal["bwrap", "container", "none"]
 EXEC_SCRIPT = Path(__file__).resolve().parent / "sandbox_exec.py"
 DEFAULT_TIMEOUT_S = 300.0
@@ -34,8 +36,8 @@ DEFAULT_TIMEOUT_S = 300.0
 
 # Garde-fous ressources (VPS partagé, sans swap) : un rendu Chromium ne doit jamais
 # pousser la machine à l'OOM global.
-MIN_FREE_MB = int(os.getenv("STUDIO_SANDBOX_MIN_FREE_MB", "1200"))
-MEMORY_WAIT_S = float(os.getenv("STUDIO_SANDBOX_MEMORY_WAIT_S", "180"))
+MIN_FREE_MB = env_int("STUDIO_SANDBOX_MIN_FREE_MB", 1200)
+MEMORY_WAIT_S = env_float("STUDIO_SANDBOX_MEMORY_WAIT_S", 180.0)
 MEMORY_MAX = os.getenv("STUDIO_SANDBOX_MEMORY_MAX", "1G")
 CPU_QUOTA = os.getenv("STUDIO_SANDBOX_CPU_QUOTA", "150%")
 

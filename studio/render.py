@@ -6,7 +6,6 @@ Toutes les encodes passent par `run_ffmpeg()` avec les garde-fous CPU
 
 from __future__ import annotations
 
-import json
 import logging
 import shutil
 from pathlib import Path
@@ -18,7 +17,7 @@ from agent.skills.video.ffmpeg_runtime import (
     run_ffmpeg,
     thread_args,
 )
-from studio.assets import SHORT_FPS, SHORT_HEIGHT, SHORT_WIDTH
+from studio.assets import IMAGE_EXTENSIONS, SHORT_FPS, SHORT_HEIGHT, SHORT_WIDTH
 from studio.audiomix import mix_short_audio
 from studio.contracts import (
     TIMELINE_DURATION_TOLERANCE_S,
@@ -26,6 +25,9 @@ from studio.contracts import (
     Timeline,
     TimelineClip,
     load_contract,
+    read_json,
+    resolve_in_run_dir,
+    write_json,
 )
 from studio.kenburns import build_static_filter, build_zoom_filter
 from studio.media import probe_media
@@ -34,19 +36,11 @@ from studio.textfx import drawtext_chain, fit_fontsize, wrap_lines
 
 logger = logging.getLogger(__name__)
 
-IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".tif", ".tiff"}
 SHORT_ZOOM_FACTOR = 0.08
 CLIP_TEXT_FONTSIZE = 80
 CLIP_TEXT_MAX_CHARS = 18
 # Haut du bloc de texte, en fraction de la hauteur (les sous-titres sont en bas).
 _TEXT_TOP = {"top": 0.12, "center": 0.42, "bottom": 0.66}
-
-
-def _resolve(run_dir: Path, rel: str) -> Path:
-    path = (run_dir / rel).resolve()
-    if not path.is_relative_to(run_dir.resolve()):
-        raise ContractError(f"chemin hors du run dir interdit : {rel}")
-    return path
 
 
 def _clip_text_filter(clip: TimelineClip, work: Path, idx: int) -> str:
@@ -100,9 +94,7 @@ async def _render_clip(clip: TimelineClip, src: Path, out: Path, work: Path, idx
 
 
 def _load_words(path: Path) -> list[WordSegment]:
-    if not path.exists():
-        return []
-    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw = read_json(path, [])
     return [WordSegment(word=w["word"], start=float(w["start"]), end=float(w["end"])) for w in raw]
 
 
@@ -111,7 +103,7 @@ async def render_timeline(run_dir: Path, timeline_path: Path, output_path: Path)
     run_dir = run_dir.resolve()
     timeline = load_contract(timeline_path, Timeline)
 
-    voice = _resolve(run_dir, timeline.voice)
+    voice = resolve_in_run_dir(run_dir, timeline.voice)
     if not voice.exists():
         raise ContractError(f"voix introuvable : {timeline.voice}")
     voice_duration = (await probe_media(voice))["duration_s"]
@@ -123,12 +115,12 @@ async def render_timeline(run_dir: Path, timeline_path: Path, output_path: Path)
 
     sources: list[Path] = []
     for clip in timeline.clips:
-        src = _resolve(run_dir, clip.media)
+        src = resolve_in_run_dir(run_dir, clip.media)
         if not src.exists():
             raise ContractError(f"média introuvable : {clip.media}")
         sources.append(src)
 
-    output_path = _resolve(run_dir, str(output_path))
+    output_path = resolve_in_run_dir(run_dir, str(output_path))
     output_path.parent.mkdir(parents=True, exist_ok=True)
     work = run_dir / ".render" / output_path.stem
     if work.exists():
@@ -150,7 +142,7 @@ async def render_timeline(run_dir: Path, timeline_path: Path, output_path: Path)
         error_prefix="Concat clips",
     )
 
-    music = _resolve(run_dir, timeline.music) if timeline.music else None
+    music = resolve_in_run_dir(run_dir, timeline.music) if timeline.music else None
     if music is not None and not music.exists():
         raise ContractError(f"musique introuvable : {timeline.music}")
     audio = work / "audio.m4a"
@@ -159,7 +151,7 @@ async def render_timeline(run_dir: Path, timeline_path: Path, output_path: Path)
         voice, music, audio, music_volume=timeline.music_volume, sfx_events=sfx_events, work=work
     )
 
-    words = _load_words(_resolve(run_dir, timeline.words)) if timeline.subtitles else []
+    words = _load_words(resolve_in_run_dir(run_dir, timeline.words)) if timeline.subtitles else []
     vf_args: list[str] = []
     if words:
         style = SubtitleStyle(position=timeline.subtitle_position, keywords=timeline.subtitle_keywords)
@@ -201,18 +193,13 @@ async def render_timeline(run_dir: Path, timeline_path: Path, output_path: Path)
         "mix": mix,
         "credits": credits,
     }
-    (output_path.with_suffix(".render.json")).write_text(
-        json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    write_json(output_path.with_suffix(".render.json"), summary)
     return summary
 
 
 def _used_credits(run_dir: Path, timeline: Timeline) -> list[dict]:
     """Crédits des médias effectivement utilisés (depuis media/credits.json)."""
-    credits_path = run_dir / "media" / "credits.json"
-    if not credits_path.exists():
-        return []
-    registry = json.loads(credits_path.read_text(encoding="utf-8"))
+    registry = read_json(run_dir / "media" / "credits.json", {})
     used: list[dict] = []
     seen: set[str] = set()
     paths = [c.media for c in timeline.clips] + ([timeline.music] if timeline.music else [])

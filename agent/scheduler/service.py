@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from agent.core.database import AsyncSessionFactory, SchedulerRun
 from agent.scheduler import jobs
+from agent.scheduler.distribution_slots import PARIS
 
 logger = logging.getLogger(__name__)
 
@@ -29,13 +30,13 @@ class SchedulerService:
     def setup(self) -> None:
         self._scheduler.add_job(
             jobs.run_content_planner,
-            CronTrigger(hour=6, minute=0, timezone="Europe/Paris"),
+            CronTrigger(hour=6, minute=0, timezone=PARIS),
             id="content_planner_daily",
             replace_existing=True,
         )
         self._scheduler.add_job(
             jobs.run_pending_projects_morning,
-            CronTrigger(hour=6, minute=30, timezone="Europe/Paris"),
+            CronTrigger(hour=6, minute=30, timezone=PARIS),
             id="run_pending_projects_morning",
             replace_existing=True,
         )

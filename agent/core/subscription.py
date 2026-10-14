@@ -12,7 +12,6 @@ from agent.core.database import Channel, Project, SubscriptionPlan, User, Video
 
 class SubscriptionLimits(BaseModel):
     max_channels: int = 1
-    max_market_analyses_per_month: int = 2
     max_projects_per_month: int = 5
     max_total_storage_bytes: int = 2 * 1024**3
     daily_quotas_short: int = 1
@@ -76,7 +75,6 @@ async def resolve_user_limits(session: AsyncSession, user: User) -> Subscription
     if is_unlimited(plan):
         return SubscriptionLimits(
             max_channels=9999,
-            max_market_analyses_per_month=9999,
             max_projects_per_month=9999,
             max_total_storage_bytes=10**15,
             daily_quotas_short=9999,

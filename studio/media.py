@@ -24,9 +24,9 @@ import aiohttp
 
 from agent.core.concurrency import bounded_gather
 from agent.skills.media.rights_check import filter_publishable
-from agent.skills.video.ffmpeg_runtime import filter_thread_args, run_ffmpeg, thread_args
-from studio.assets import max_ai_images
-from studio.textfx import FONT_FILE
+from agent.skills.video.ffmpeg_runtime import filter_thread_args, measure_loudness, run_ffmpeg, thread_args
+from studio.assets import FONT_FILE, IMAGE_EXTENSIONS, SHEET_COLS, TILE_H, TILE_W, max_ai_images
+from studio.contracts import read_json, write_json
 
 logger = logging.getLogger(__name__)
 
@@ -37,26 +37,12 @@ SOURCES = (
 DEFAULT_SOURCES = ("pexels", "pixabay", "unsplash", "coverr", "wikimedia")
 MAX_RESULTS_PER_SOURCE = 6
 DOWNLOAD_TIMEOUT_S = 90
-TILE_W, TILE_H = 270, 480
-SHEET_COLS = 4
 
-IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".tif", ".tiff", ".bmp"}
 
 
 
 
 # ── registres JSON du run dir ─────────────────────────────────────────────
-
-
-def _read_json(path: Path, default: Any) -> Any:
-    if not path.exists():
-        return default
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def _write_json(path: Path, data: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _candidates_path(run_dir: Path) -> Path:
@@ -68,9 +54,9 @@ def _credits_path(run_dir: Path) -> Path:
 
 
 def record_credit(run_dir: Path, rel_path: str, entry: dict[str, Any]) -> None:
-    credits = _read_json(_credits_path(run_dir), {})
+    credits = read_json(_credits_path(run_dir), {})
     credits[rel_path] = entry
-    _write_json(_credits_path(run_dir), credits)
+    write_json(_credits_path(run_dir), credits)
 
 
 def _credit_entry(item: dict[str, Any]) -> dict[str, Any]:
@@ -121,7 +107,7 @@ async def search_media(
     raw = [item for batch in batches for item in batch]
     accepted, _rejected = filter_publishable(raw)
 
-    cache = _read_json(_candidates_path(run_dir), {})
+    cache = read_json(_candidates_path(run_dir), {})
     out: list[dict[str, Any]] = []
     for item in accepted:
         if not item.get("url"):
@@ -140,12 +126,12 @@ async def search_media(
             "height": item.get("height"),
         }
         out.append({k: v for k, v in entry.items() if v not in (None, "")})
-    _write_json(_candidates_path(run_dir), cache)
+    write_json(_candidates_path(run_dir), cache)
     return out
 
 
 def _candidate(run_dir: Path, cid: str) -> dict[str, Any]:
-    cache = _read_json(_candidates_path(run_dir), {})
+    cache = read_json(_candidates_path(run_dir), {})
     if cid not in cache:
         raise ValueError(f"candidat inconnu : {cid} (lance d'abord search-media)")
     return cache[cid]
@@ -218,7 +204,7 @@ async def generate_ai_image(run_dir: Path, prompt: str, name: str, aspect: str =
     from agent.core.config import settings
     from agent.skills.media_sources.ai_image import generate_image
 
-    credits = _read_json(_credits_path(run_dir), {})
+    credits = read_json(_credits_path(run_dir), {})
     used = sum(1 for c in credits.values() if c.get("source") == "ai_image")
     if used >= max_ai_images():
         raise RuntimeError(
@@ -261,7 +247,7 @@ async def fetch_music(run_dir: Path, mood: str) -> dict[str, Any]:
 
     out_dir = run_dir / "media" / "music"
     # Piste plus longue que la voix (+ marge pour le retrait des silences) : évite une boucle audible.
-    voice = _read_json(run_dir / "voice.json", {})
+    voice = read_json(run_dir / "voice.json", {})
     min_duration = int(float(voice.get("duration_s") or 0) + 6)
     path = await fetch_music_for_mood(mood, output_dir=out_dir, min_duration_s=min_duration)
     if not path:
@@ -314,11 +300,7 @@ async def probe_media(path: Path) -> dict[str, Any]:
 
 async def loudness(path: Path) -> float | None:
     """Loudness intégrée (LUFS) via le filtre ebur128."""
-    _code, _out, err = await _run_capture([
-        "ffmpeg", "-nostats", "-i", str(path), "-map", "0:a:0", "-af", "ebur128", "-f", "null", "-",
-    ])
-    matches = re.findall(r"I:\s+(-?[\d.]+) LUFS", err)
-    return float(matches[-1]) if matches else None
+    return (await measure_loudness(path))[0]
 
 
 # Repères des zones (planches d'animation) : bande des sous-titres et colonne d'icônes TikTok, à l'échelle tuile.

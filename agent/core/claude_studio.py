@@ -11,7 +11,6 @@ L'orchestrateur Python ne fait plus que :
 
 from __future__ import annotations
 
-import json
 import logging
 import shutil
 import uuid
@@ -37,6 +36,7 @@ from studio.contracts import (
     StudioResult,
     Thumbnail,
     load_contract,
+    read_json,
 )
 from studio.launcher import ClaudeRunError, default_runs_dir, prepare_run_dir, run_claude
 
@@ -282,10 +282,7 @@ class ClaudeStudioRunner:
 
     @staticmethod
     def _load_credits(final_video: Path) -> list[dict[str, Any]]:
-        summary = final_video.with_suffix(".render.json")
-        if not summary.exists():
-            return []
-        return list(json.loads(summary.read_text(encoding="utf-8")).get("credits") or [])
+        return list(read_json(final_video.with_suffix(".render.json"), {}).get("credits") or [])
 
     def _thumbnail_config(self) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
         try:

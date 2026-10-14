@@ -147,7 +147,8 @@ async def synthesize_gemini_tts(
     tmp_path = output_path.with_suffix(".gemini.wav")
     _write_pcm_wav(tmp_path, audio_data)
 
-    from agent.skills.audio.tts import normalize_wav, probe_duration
+    from agent.skills.audio.tts import normalize_wav
+    from agent.skills.video.ffmpeg_runtime import probe_duration
 
     await normalize_wav(tmp_path, output_path, mastering=mastering)
     tmp_path.unlink(missing_ok=True)

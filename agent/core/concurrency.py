@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import uuid
 from collections.abc import Awaitable
 from typing import TypeVar
@@ -9,6 +8,7 @@ from typing import TypeVar
 from sqlalchemy import func, select, update
 
 from agent.core.database import AsyncSessionFactory, Channel, Project
+from agent.core.env import env_int
 
 _T = TypeVar("_T")
 
@@ -20,10 +20,7 @@ def fanout_concurrency() -> int:
     à N segments lance N tâches d'un coup (N TTS/ffmpeg/téléchargements en
     parallèle → pic CPU/RAM). Réglable via PIPELINE_FANOUT_CONCURRENCY.
     """
-    try:
-        return max(1, int(os.getenv("PIPELINE_FANOUT_CONCURRENCY", "3")))
-    except ValueError:
-        return 3
+    return env_int("PIPELINE_FANOUT_CONCURRENCY", 3, minimum=1)
 
 
 async def bounded_gather(

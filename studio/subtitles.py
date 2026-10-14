@@ -16,8 +16,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from agent.skills.audio.whisper_utils import WordSegment
+from studio.assets import FONTS_DIR, SHORT_HEIGHT, SHORT_WIDTH
 
-FONTS_DIR = Path(__file__).resolve().parent / "workspace" / "anim" / "lib" / "fonts"
 FONT_NAME = "Poppins ExtraBold"
 
 # Centre vertical du texte selon la position demandée (1920 px de haut).
@@ -106,7 +106,7 @@ def build_ass(words: list[WordSegment], style: SubtitleStyle) -> str:
     y = POSITIONS_Y.get(style.position, POSITIONS_Y["high"])
     keywords = {_norm(k) for kw in style.keywords for k in kw.split() if _norm(k)}
     header = (
-        "[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 1920\nWrapStyle: 2\n"
+        f"[Script Info]\nScriptType: v4.00+\nPlayResX: {SHORT_WIDTH}\nPlayResY: {SHORT_HEIGHT}\nWrapStyle: 2\n"
         "ScaledBorderAndShadow: yes\n\n[V4+ Styles]\n"
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, "
         "Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, "

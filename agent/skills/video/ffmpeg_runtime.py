@@ -17,16 +17,17 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
+from pathlib import Path
+
+from agent.core.env import env_int
 
 logger = logging.getLogger(__name__)
 
 
 def ffmpeg_threads() -> int:
     """Nombre max de threads par process ffmpeg (FFMPEG_THREADS, défaut 2)."""
-    try:
-        return max(1, int(os.getenv("FFMPEG_THREADS", "2")))
-    except ValueError:
-        return 2
+    return env_int("FFMPEG_THREADS", 2, minimum=1)
 
 
 def ffmpeg_preset(default: str = "medium") -> str:
@@ -67,8 +68,9 @@ def _get_semaphore() -> asyncio.Semaphore:
     return _FFMPEG_SEMAPHORE
 
 
-async def run_ffmpeg(cmd: list[str], *, error_prefix: str = "FFmpeg error") -> None:
-    """Exécute ffmpeg en série (sémaphore global) ; lève en cas d'échec.
+async def run_ffmpeg(cmd: list[str], *, error_prefix: str = "FFmpeg error", check: bool = True) -> str:
+    """Exécute ffmpeg en série (sémaphore global) et renvoie son stderr ; lève en cas d'échec
+    (sauf ``check=False``, pour les mesures qui lisent le stderr).
 
     Garantit qu'un seul process ffmpeg s'exécute à la fois dans tout le
     process Python, même si l'appelant fait du fan-out (asyncio.gather).
@@ -91,5 +93,44 @@ async def run_ffmpeg(cmd: list[str], *, error_prefix: str = "FFmpeg error") -> N
             raise
         finally:
             unregister(proc)
-    if proc.returncode != 0:
-        raise RuntimeError(f"{error_prefix}: {stderr.decode()[-2000:]}")
+    text = stderr.decode(errors="replace")
+    if check and proc.returncode != 0:
+        raise RuntimeError(f"{error_prefix}: {text[-2000:]}")
+    return text
+
+
+async def probe_duration(path: Path) -> float:
+    """Durée (s) d'un fichier audio/vidéo via ffprobe (sonde légère, hors sémaphore)."""
+    proc = await asyncio.create_subprocess_exec(
+        "ffprobe", "-v", "error", "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1", str(path),
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await proc.communicate()
+    raw = stdout.decode().strip()
+    if not raw:
+        raise RuntimeError(
+            f"ffprobe n'a retourné aucune durée pour {path} "
+            f"(code {proc.returncode}): {stderr.decode()[-300:]}"
+        )
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise RuntimeError(f"Durée invalide retournée par ffprobe pour {path}: {raw!r}") from exc
+
+
+async def measure_loudness(path: Path) -> tuple[float | None, float | None]:
+    """(loudness intégrée LUFS, crête dBFS) de la 1re piste audio via le filtre ebur128.
+
+    Décode tout le fichier : passe par la sémaphore et les plafonds de threads.
+    """
+    err = await run_ffmpeg(
+        [
+            "ffmpeg", "-nostats", *filter_thread_args(), "-i", str(path), *thread_args(),
+            "-map", "0:a:0", "-af", "ebur128=peak=sample", "-f", "null", "-",
+        ],
+        check=False,
+    )
+    lufs = re.findall(r"I:\s+(-?[\d.]+) LUFS", err)
+    peak = re.findall(r"Peak:\s+(-?[\d.]+) dBFS", err)
+    return (float(lufs[-1]) if lufs else None, float(peak[-1]) if peak else None)

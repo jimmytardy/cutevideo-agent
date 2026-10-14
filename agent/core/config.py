@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 from functools import lru_cache
 from pathlib import Path
@@ -168,13 +169,31 @@ def get_storage_settings() -> StorageSettings:
     )
 
 
+_agent_config_cache: tuple[Path, int, dict[str, Any]] | None = None
+
+
 def load_agent_config() -> dict[str, Any]:
-    """Charge la configuration JSON des agents."""
+    """Configuration JSON des agents (data/agent_config.json).
+
+    Relue seulement si le fichier a changé (mtime) ; renvoie une copie que
+    l'appelant peut modifier librement.
+    """
+    global _agent_config_cache
     path = Path(get_settings().config_path)
-    if not path.exists():
+    try:
+        mtime = path.stat().st_mtime_ns
+    except FileNotFoundError:
         return {}
-    with path.open(encoding="utf-8") as f:
-        return json.load(f)
+    if _agent_config_cache is None or _agent_config_cache[:2] != (path, mtime):
+        with path.open(encoding="utf-8") as f:
+            _agent_config_cache = (path, mtime, json.load(f))
+    return copy.deepcopy(_agent_config_cache[2])
+
+
+def save_agent_config(config: dict[str, Any]) -> None:
+    path = Path(get_settings().config_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
 settings = get_settings()

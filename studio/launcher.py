@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
+from agent.core.env import env_float, env_int, env_optional_float
 from studio.assets import max_ai_images
 from studio.contracts import Brief
 
@@ -60,12 +61,10 @@ def prepare_run_dir(run_dir: Path, brief: Brief) -> Path:
 @dataclass
 class LaunchConfig:
     model: str = field(default_factory=lambda: os.getenv("CLAUDE_STUDIO_MODEL", "claude-opus-5-5"))
-    timeout_s: float = field(default_factory=lambda: float(os.getenv("CLAUDE_STUDIO_TIMEOUT_S", "3600")))
-    max_turns: int = field(default_factory=lambda: int(os.getenv("CLAUDE_STUDIO_MAX_TURNS", "400")))
+    timeout_s: float = field(default_factory=lambda: env_float("CLAUDE_STUDIO_TIMEOUT_S", 3600.0))
+    max_turns: int = field(default_factory=lambda: env_int("CLAUDE_STUDIO_MAX_TURNS", 400, minimum=1))
     max_budget_usd: float | None = field(
-        default_factory=lambda: float(os.environ["CLAUDE_STUDIO_MAX_BUDGET_USD"])
-        if os.getenv("CLAUDE_STUDIO_MAX_BUDGET_USD")
-        else None
+        default_factory=lambda: env_optional_float("CLAUDE_STUDIO_MAX_BUDGET_USD")
     )
     claude_bin: str = field(default_factory=lambda: os.getenv("CLAUDE_BIN", "claude"))
 

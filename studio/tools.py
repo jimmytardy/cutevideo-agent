@@ -26,19 +26,12 @@ os.chdir(REPO_ROOT)
 
 from agent.core.config import load_agent_config  # noqa: E402
 from studio import media  # noqa: E402
-from studio.contracts import ContractError  # noqa: E402
-
-
-def _inside(run_dir: Path, rel: str) -> Path:
-    path = (run_dir / rel).resolve()
-    if not path.is_relative_to(run_dir):
-        raise ContractError(f"chemin hors du run dir interdit : {rel}")
-    return path
+from studio.contracts import ContractError, read_json, resolve_in_run_dir, write_json  # noqa: E402
 
 
 def _read_brief(run_dir: Path) -> dict[str, Any]:
     try:
-        data = json.loads((run_dir / "brief.json").read_text(encoding="utf-8"))
+        data = read_json(run_dir / "brief.json", {})
     except (OSError, ValueError):
         return {}
     return data if isinstance(data, dict) else {}
@@ -85,10 +78,10 @@ async def cmd_music(args: argparse.Namespace, run_dir: Path) -> Any:
 async def cmd_tts(args: argparse.Namespace, run_dir: Path) -> Any:
     from agent.skills.audio.tts import generate_tts
 
-    text = _inside(run_dir, args.text_file).read_text(encoding="utf-8").strip()
+    text = resolve_in_run_dir(run_dir, args.text_file).read_text(encoding="utf-8").strip()
     if not text:
         raise ValueError(f"{args.text_file} est vide")
-    out = _inside(run_dir, args.out)
+    out = resolve_in_run_dir(run_dir, args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     tts_cfg = load_agent_config().get("tts", {})
     short_cfg = tts_cfg.get("short", {})
@@ -160,7 +153,7 @@ async def cmd_transcribe(args: argparse.Namespace, run_dir: Path) -> Any:
     # `small` par défaut : le texte est connu, Whisper ne sert qu'au calage mot à mot,
     # et large-v3 (~3 Go de RAM) fait swapper les petites machines.
     model = args.model or os.getenv("STUDIO_WHISPER_MODEL", "small")
-    audio = _inside(run_dir, args.audio)
+    audio = resolve_in_run_dir(run_dir, args.audio)
     if not audio.exists():
         raise FileNotFoundError(f"{args.audio} introuvable")
     words = await transcribe_to_words([audio], model_name=model, language=args.language)
@@ -169,10 +162,10 @@ async def cmd_transcribe(args: argparse.Namespace, run_dir: Path) -> Any:
     if args.text_file:
         from studio.align import align_words
 
-        script = _inside(run_dir, args.text_file).read_text(encoding="utf-8")
+        script = resolve_in_run_dir(run_dir, args.text_file).read_text(encoding="utf-8")
         payload = align_words(payload, script)
-    out = _inside(run_dir, args.out)
-    out.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
+    out = resolve_in_run_dir(run_dir, args.out)
+    write_json(out, payload, indent=1)
     return {
         "path": args.out,
         "words": len(payload),
@@ -184,7 +177,7 @@ async def cmd_transcribe(args: argparse.Namespace, run_dir: Path) -> Any:
 
 async def cmd_cues(args: argparse.Namespace, run_dir: Path) -> Any:
     """Mots d'un plan avec leur instant relatif au début du plan (valeurs `at` du kit d'animation)."""
-    words = json.loads(_inside(run_dir, args.words).read_text(encoding="utf-8"))
+    words = read_json(resolve_in_run_dir(run_dir, args.words), [])
     start, end = args.start, args.end if args.end is not None else float("inf")
     cues = [
         {"word": w["word"], "at": round(w["start"] - start, 2), "end": round(w["end"] - start, 2)}
@@ -197,24 +190,24 @@ async def cmd_cues(args: argparse.Namespace, run_dir: Path) -> Any:
 async def cmd_render(args: argparse.Namespace, run_dir: Path) -> Any:
     from studio.render import render_timeline
 
-    return await render_timeline(run_dir, _inside(run_dir, args.timeline), Path(args.out))
+    return await render_timeline(run_dir, resolve_in_run_dir(run_dir, args.timeline), Path(args.out))
 
 
 async def cmd_frames(args: argparse.Namespace, run_dir: Path) -> Any:
-    video = _inside(run_dir, args.video)
-    out_dir = _inside(run_dir, args.out or f"review/{video.stem}")
+    video = resolve_in_run_dir(run_dir, args.video)
+    out_dir = resolve_in_run_dir(run_dir, args.out or f"review/{video.stem}")
     return await media.extract_frames(run_dir, video, args.every, out_dir)
 
 
 async def cmd_analyze(args: argparse.Namespace, run_dir: Path) -> Any:
     from studio.analyze import analyze_video
 
-    video = _inside(run_dir, args.video)
+    video = resolve_in_run_dir(run_dir, args.video)
     if not video.exists():
         raise FileNotFoundError(f"{args.video} introuvable")
-    out_dir = _inside(run_dir, args.out or f"review/{video.stem}/analysis")
-    words = _inside(run_dir, args.words) if args.words else None
-    timeline = _inside(run_dir, args.timeline) if args.timeline else None
+    out_dir = resolve_in_run_dir(run_dir, args.out or f"review/{video.stem}/analysis")
+    words = resolve_in_run_dir(run_dir, args.words) if args.words else None
+    timeline = resolve_in_run_dir(run_dir, args.timeline) if args.timeline else None
     return await analyze_video(
         run_dir, video, out_dir, engine=args.engine, words_file=words, timeline_file=timeline,
         every_s=args.every, context=args.context or "",
@@ -228,7 +221,7 @@ async def cmd_thumbnail(args: argparse.Namespace, run_dir: Path) -> Any:
         run_dir,
         args.background,
         args.text,
-        _inside(run_dir, args.out),
+        resolve_in_run_dir(run_dir, args.out),
         aspect=args.aspect,
         position=args.position,
         color=args.color,
@@ -254,7 +247,7 @@ async def cmd_animate(args: argparse.Namespace, run_dir: Path) -> Any:
 
 
 async def cmd_probe(args: argparse.Namespace, run_dir: Path) -> Any:
-    path = _inside(run_dir, args.path)
+    path = resolve_in_run_dir(run_dir, args.path)
     info = await media.probe_media(path)
     if info["has_audio"] and args.loudness:
         info["loudness_lufs"] = await media.loudness(path)
@@ -273,7 +266,7 @@ async def cmd_validate(args: argparse.Namespace, run_dir: Path) -> Any:
         "result": contracts.StudioResult,
     }
     model = models[args.kind]
-    contracts.load_contract(_inside(run_dir, args.path), model)
+    contracts.load_contract(resolve_in_run_dir(run_dir, args.path), model)
     return {"path": args.path, "valid": True}
 
 

@@ -12,6 +12,7 @@ import os
 import shutil
 import tempfile
 
+from agent.core.env import env_float
 from agent.core.llm_usage import LlmUsageRecord, estimate_llm_cost_usd, record_llm_usage
 
 
@@ -62,7 +63,7 @@ async def call_claude_cli(
     if not claude_cli_available():
         raise ClaudeCliError(f"CLI Claude introuvable : {claude_cli_bin()} (npm i -g @anthropic-ai/claude-code)")
     full_prompt = "\n\n".join(p.strip() for p in (cacheable_context, prompt) if p and p.strip())
-    timeout_s = float(os.getenv("CLAUDE_CLI_LLM_TIMEOUT_S", "600"))
+    timeout_s = env_float("CLAUDE_CLI_LLM_TIMEOUT_S", 600.0)
 
     with tempfile.TemporaryDirectory(prefix="claude-llm-") as cwd:
         proc = await asyncio.create_subprocess_exec(

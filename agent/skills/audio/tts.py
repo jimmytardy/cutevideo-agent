@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 from pathlib import Path
 from typing import Any, Literal
@@ -10,6 +9,7 @@ from agent.skills.audio.gemini_tts import (
     DEFAULT_GEMINI_LANGUAGE,
     DEFAULT_GEMINI_TTS_MODEL,
 )
+from agent.skills.video.ffmpeg_runtime import filter_thread_args, probe_duration, run_ffmpeg, thread_args
 
 logger = logging.getLogger(__name__)
 
@@ -46,11 +46,10 @@ async def normalize_wav(
     """
     from agent.skills.audio.mastering import build_audio_filter
 
-    from agent.skills.video.ffmpeg_runtime import run_ffmpeg, thread_args
-
     audio_filter = await build_audio_filter(mastering)
     cmd = [
         "ffmpeg", "-y",
+        *filter_thread_args(),
         "-i", str(src),
         *thread_args(),
         "-ar", "48000",
@@ -61,29 +60,6 @@ async def normalize_wav(
     ]
     await run_ffmpeg(cmd, error_prefix="FFmpeg TTS convert error")
     return dst
-
-
-async def probe_duration(path: Path) -> float:
-    cmd = [
-        "ffprobe", "-v", "error",
-        "-show_entries", "format=duration",
-        "-of", "default=noprint_wrappers=1:nokey=1",
-        str(path),
-    ]
-    proc = await asyncio.create_subprocess_exec(
-        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-    )
-    stdout, stderr = await proc.communicate()
-    raw = stdout.decode().strip()
-    if not raw:
-        raise RuntimeError(
-            f"ffprobe n'a retourné aucune durée pour {path} "
-            f"(code {proc.returncode}): {stderr.decode()[-300:]}"
-        )
-    try:
-        return float(raw)
-    except ValueError as exc:
-        raise RuntimeError(f"Durée invalide retournée par ffprobe pour {path}: {raw!r}") from exc
 
 
 def resolve_engine(
