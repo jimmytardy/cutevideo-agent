@@ -9,6 +9,8 @@ d'image, pas de vidéo, pas de tokens facturés quand c'est possible) :
 - gcp          : chargement du compte de service + obtention d'un token OAuth
 - azure_speech : POST issueToken (token éphémère, aucune synthèse)
 - runway       : GET /v1/organization (infos compte, aucune génération)
+- postforme    : GET /v1/social-accounts?limit=1 (lecture seule)
+- zernio       : GET /v1/accounts (lecture seule)
 
 Principe : on ne bloque l'enregistrement **que** sur une erreur d'authentification
 claire (clé invalide / refusée). Les erreurs ambiguës (réseau, 5xx, dépendance
@@ -50,6 +52,10 @@ async def validate_api_key(
         "gcp": lambda: _validate_gcp(key),
         "azure_speech": lambda: _validate_azure(key, metadata or {}),
         "runway": lambda: _validate_runway(key),
+        "postforme": lambda: _validate_bearer_get(
+            key, "https://api.postforme.dev/v1/social-accounts?limit=1", "Post for Me"
+        ),
+        "zernio": lambda: _validate_bearer_get(key, "https://zernio.com/api/v1/accounts", "Zernio"),
     }
     validator = validators.get(provider)
     if validator is None:
@@ -173,3 +179,10 @@ async def _validate_runway(key: str) -> None:
         )
     if resp.status_code in (401, 403):
         raise ApiKeyValidationError("Clé Runway invalide ou non autorisée.")
+
+
+async def _validate_bearer_get(key: str, url: str, label: str) -> None:
+    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        resp = await client.get(url, headers={"Authorization": f"Bearer {key}"})
+    if resp.status_code in (401, 403):
+        raise ApiKeyValidationError(f"Clé {label} invalide ou non autorisée.")

@@ -13,12 +13,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from agent.core.config import settings
 from agent.core.database import AsyncSessionFactory, UserApiKey
 
-Provider = Literal["anthropic", "gemini", "fal", "gcp", "runway", "azure_speech"]
+Provider = Literal[
+    "anthropic", "gemini", "fal", "gcp", "runway", "azure_speech", "postforme", "zernio"
+]
 KeySource = Literal["user", "platform", "none"]
 KeyTier = Literal["free", "paid"]
 
 ALLOWED_PROVIDERS: frozenset[str] = frozenset(
-    {"anthropic", "gemini", "fal", "gcp", "runway", "azure_speech"}
+    {"anthropic", "gemini", "fal", "gcp", "runway", "azure_speech", "postforme", "zernio"}
 )
 
 FREE_GEMINI_PURPOSES: frozenset[str] = frozenset(

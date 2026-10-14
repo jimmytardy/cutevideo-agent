@@ -11,7 +11,7 @@ from agent.core.channel_config import ChannelRuntimeConfig
 from agent.core.config import settings
 from agent.core.database import AsyncSessionFactory, Channel, Project, Publication, Video
 from agent.core.storage import get_public_video_url_async, resolve_local_path_for_upload
-from agent.skills.publisher import composio_client
+from agent.skills.publisher.tiktok_providers import build_caption, get_tiktok_publisher
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ def channel_supports_platform(channel: Channel, platform: str) -> bool:
     if platform == "youtube":
         return bool(channel.youtube_channel_id)
     if platform == "tiktok":
-        return composio_client.tiktok_is_connected(channel)
+        return get_tiktok_publisher(channel).is_connected(channel)
     if platform == "instagram":
         return bool(channel.instagram_page_id)
     return False
@@ -85,7 +85,7 @@ async def publish_scheduled(
                 publication, channel, channel_config, video, title, description, tags
             )
         if platform == "tiktok":
-            return await _publish_tiktok(publication, channel, video, title)
+            return await _publish_tiktok(publication, channel, video, title, tags)
         if platform == "instagram":
             return await _publish_instagram(publication, channel, video, title, tags)
         await _mark_failed(publication.id, f"unknown_platform:{platform}")
@@ -221,18 +221,24 @@ async def _publish_tiktok(
     publication: Publication,
     channel: Channel,
     video: Video,
-    caption: str,
+    title: str,
+    tags: list[str],
 ) -> Publication | None:
+    publisher = get_tiktok_publisher(channel)
+    privacy = str((channel.tiktok_publish_defaults or {}).get("privacy_level") or "PUBLIC_TO_EVERYONE")
     video_url = await get_public_video_url_async(video)
-    publish_id = await composio_client.publish_tiktok_video(
-        channel=channel,
+    post_id, url = await publisher.publish(
+        channel,
         video_url=video_url,
-        caption=caption,
+        caption=build_caption(title, tags),
+        title=title,
+        privacy=privacy,
+        external_id=str(publication.id),
     )
     return await _mark_published(
         publication.id,
-        platform_video_id=publish_id,
-        platform_url=None,
+        platform_video_id=post_id,
+        platform_url=url,
     )
 
 

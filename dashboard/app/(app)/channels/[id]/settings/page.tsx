@@ -46,6 +46,7 @@ import {
 } from '@/lib/channelSettingsForm'
 
 import { useUnsavedChangesWarning } from '@/lib/useUnsavedChangesWarning'
+import TikTokPublishingPanel from '@/components/TikTokPublishingPanel'
 
 
 
@@ -369,6 +370,7 @@ export default function ChannelSettingsPage({ params }: Props) {
         <Tab label="Général" />
         <Tab label="Voix & TTS" />
         <Tab label="IA & médias" />
+        <Tab label="Publication" />
       </Tabs>
 
       {tab === 0 && (
@@ -859,6 +861,8 @@ export default function ChannelSettingsPage({ params }: Props) {
 
         </>
       )}
+
+      {tab === 3 && <TikTokPublishingPanel channelId={id} />}
 
     </PageContainer>
 

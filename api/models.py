@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -215,14 +215,25 @@ class ChannelResponse(BaseModel):
 class ChannelIntegrationsResponse(BaseModel):
     tiktok_connected: bool
     tiktok_enabled: bool
+    tiktok_provider: str = "composio"
+    tiktok_username: str | None = None
     youtube_configured: bool
     instagram_configured: bool
 
 
 class TikTokConnectResponse(BaseModel):
     redirect_url: str
-    connection_id: str
+    connection_id: str = ""
     state: str | None = None
+
+
+class TikTokFinishRequest(BaseModel):
+    state: str
+    params: dict[str, str] = {}
+
+
+class TikTokProviderUpdate(BaseModel):
+    provider: Literal["composio", "postforme", "zernio"]
 
 
 class ProjectCreate(BaseModel):

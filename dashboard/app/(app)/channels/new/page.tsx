@@ -466,7 +466,7 @@ export default function NewChannelWizardPage() {
               TikTok est facultatif. Vous pourrez connecter votre compte plus tard depuis la fiche chaîne.
             </Alert>
             <Alert severity="info">
-              Connectez le compte TikTok de cette chaîne via Composio (un compte par chaîne).
+              Connectez le compte TikTok de cette chaîne (un compte par chaîne). Le fournisseur (Post for Me, Zernio ou Composio) se choisit dans Paramètres → Publication.
             </Alert>
             <Button
               variant="outlined"

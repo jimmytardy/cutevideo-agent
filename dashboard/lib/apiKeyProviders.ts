@@ -5,6 +5,8 @@ export type ApiKeyProviderId =
   | 'gcp'
   | 'runway'
   | 'azure_speech'
+  | 'postforme'
+  | 'zernio'
 
 export type ApiKeyProviderInfo = {
   id: ApiKeyProviderId
@@ -107,6 +109,36 @@ export const API_KEY_PROVIDERS: ApiKeyProviderInfo[] = [
     ],
     docUrl: 'https://portal.azure.com/#create/Microsoft.CognitiveServicesSpeechServices',
     docLabel: 'Portail Azure — créer une ressource Speech',
+  },
+  {
+    id: 'postforme',
+    label: 'Post for Me (TikTok)',
+    shortDescription: 'Publication TikTok via l’appli auditée de Post for Me (comptes illimités, ~10 $/mois).',
+    keyFieldLabel: 'Clé API Post for Me',
+    tutorialTitle: 'Obtenir une clé Post for Me',
+    steps: [
+      'Créez un compte sur postforme.dev et choisissez le mode « Quickstart » (leurs identifiants TikTok, sans audit).',
+      'Ouvrez le tableau de bord → API Keys, puis créez une clé.',
+      'Collez-la ci-dessus et enregistrez.',
+      'Dans les paramètres de chaque chaîne, choisissez « Post for Me » comme fournisseur TikTok puis connectez le compte.',
+    ],
+    docUrl: 'https://app.postforme.dev',
+    docLabel: 'Post for Me — tableau de bord',
+  },
+  {
+    id: 'zernio',
+    label: 'Zernio (TikTok)',
+    shortDescription: 'Publication TikTok via Zernio (2 comptes gratuits, puis facturation par compte).',
+    keyFieldLabel: 'Clé API Zernio (sk_…)',
+    tutorialTitle: 'Obtenir une clé Zernio',
+    steps: [
+      'Créez un compte sur zernio.com.',
+      'Ouvrez Settings → API Keys et créez une clé (elle commence par sk_).',
+      'Collez-la ci-dessus et enregistrez.',
+      'Dans les paramètres de chaque chaîne, choisissez « Zernio » comme fournisseur TikTok puis connectez le compte.',
+    ],
+    docUrl: 'https://zernio.com/dashboard',
+    docLabel: 'Zernio — tableau de bord',
   },
 ]
 

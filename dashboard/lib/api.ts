@@ -194,9 +194,13 @@ export interface YouTubeChannelItem {
   custom_url: string
 }
 
+export type TikTokProvider = 'composio' | 'postforme' | 'zernio'
+
 export interface ChannelIntegrations {
   tiktok_connected: boolean
   tiktok_enabled: boolean
+  tiktok_provider: TikTokProvider
+  tiktok_username: string | null
   youtube_configured: boolean
   instagram_configured: boolean
 }
@@ -417,6 +421,26 @@ export async function connectTikTok(channelId: string): Promise<{ redirect_url: 
     `${BASE}/channels/${channelId}/connect/tiktok`,
     { method: 'POST' },
   )
+}
+
+export async function finishTikTokConnect(
+  channelId: string,
+  state: string,
+  params: Record<string, string>,
+): Promise<ChannelIntegrations> {
+  return apiJson<ChannelIntegrations>(`${BASE}/channels/${channelId}/connect/tiktok/finish`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ state, params }),
+  })
+}
+
+export async function setTikTokProvider(channelId: string, provider: TikTokProvider): Promise<ChannelIntegrations> {
+  return apiJson<ChannelIntegrations>(`${BASE}/channels/${channelId}/tiktok-provider`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ provider }),
+  })
 }
 
 export async function createProject(

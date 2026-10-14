@@ -12,7 +12,9 @@ from agent.core.concurrency import can_start_pipeline, count_running_pipelines
 from agent.core.database import Channel, Project, User, get_db
 from agent.core.queue import queue
 from agent.core.subscription import QuotaExceededError, check_can_create_channel
-from agent.skills.publisher import composio_client
+from agent.core.config import settings
+from agent.skills.publisher import tiktok_providers
+from agent.skills.publisher.tiktok_providers import get_tiktok_publisher, provider_account, provider_name
 from api.authorization import channel_owner_clause, get_user_channel
 from api.deps import get_current_user
 from api.models import (
@@ -22,6 +24,8 @@ from api.models import (
     ChannelUpdate,
     ProjectResponse,
     TikTokConnectResponse,
+    TikTokFinishRequest,
+    TikTokProviderUpdate,
 )
 
 logger = logging.getLogger(__name__)
@@ -185,6 +189,18 @@ async def get_channel_status(
     }
 
 
+def _integrations(channel: Channel) -> ChannelIntegrationsResponse:
+    provider = provider_name(channel)
+    return ChannelIntegrationsResponse(
+        tiktok_connected=get_tiktok_publisher(channel).is_connected(channel),
+        tiktok_enabled=channel.tiktok_enabled,
+        tiktok_provider=provider,
+        tiktok_username=provider_account(channel, provider).get("username"),
+        youtube_configured=bool(channel.youtube_channel_id),
+        instagram_configured=bool(channel.instagram_page_id),
+    )
+
+
 @router.get("/{channel_id}/integrations", response_model=ChannelIntegrationsResponse)
 async def get_channel_integrations(
     channel_id: uuid.UUID,
@@ -192,12 +208,24 @@ async def get_channel_integrations(
     current_user: User = Depends(get_current_user),
 ) -> ChannelIntegrationsResponse:
     channel = await get_user_channel(db, channel_id, current_user)
-    return ChannelIntegrationsResponse(
-        tiktok_connected=composio_client.tiktok_is_connected(channel),
-        tiktok_enabled=channel.tiktok_enabled,
-        youtube_configured=bool(channel.youtube_channel_id),
-        instagram_configured=bool(channel.instagram_page_id),
-    )
+    return _integrations(channel)
+
+
+@router.put("/{channel_id}/tiktok-provider", response_model=ChannelIntegrationsResponse)
+async def set_tiktok_provider(
+    channel_id: uuid.UUID,
+    body: TikTokProviderUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ChannelIntegrationsResponse:
+    """Choisit le fournisseur de publication TikTok de la chaîne (Composio, Post for Me, Zernio)."""
+    channel = await get_user_channel(db, channel_id, current_user)
+    config = dict(channel.config or {})
+    config["tiktok"] = {**tiktok_providers.tiktok_settings(channel), "provider": body.provider}
+    channel.config = config
+    await db.commit()
+    await db.refresh(channel)
+    return _integrations(channel)
 
 
 @router.post("/{channel_id}/connect/tiktok", response_model=TikTokConnectResponse)
@@ -210,22 +238,77 @@ async def connect_tiktok(
     if not channel.tiktok_enabled:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="TikTok désactivé pour cette chaîne")
 
-    try:
-        oauth = await composio_client.initiate_tiktok_oauth(channel)
-    except RuntimeError as e:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e)) from e
-
+    provider = provider_name(channel)
     state = create_oauth_state(
         user_id=current_user.id,
         channel_id=channel_id,
         purpose="tiktok_connect",
-        extra={"connection_id": oauth["connection_id"]},
+        extra={"provider": provider},
     )
+    # Retour sur une page du dashboard : la redirection navigateur ne porte pas le jeton,
+    # c'est la page qui finalise via POST /connect/tiktok/finish.
+    redirect_url = f"{settings.api_base_url.rstrip('/')}/channels/{channel_id}/tiktok-connected?state={state}"
+    try:
+        oauth = await get_tiktok_publisher(channel).start_connect(channel, redirect_url)
+    except Exception as e:
+        logger.warning("Connexion TikTok (%s) impossible pour %s : %s", provider, channel.slug, e)
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e)) from e
+
+    extra = oauth.get("extra") or {}
+    if extra.get("profile_id"):
+        channel.config = tiktok_providers.with_provider_account(
+            channel, provider, {"profile_id": extra["profile_id"]}
+        )
+        await db.commit()
+    if provider == "composio":
+        # Flux historique : le callback GET attend le state « composio » avec le connection_id.
+        state = create_oauth_state(
+            user_id=current_user.id,
+            channel_id=channel_id,
+            purpose="tiktok_connect",
+            extra={"provider": provider, "connection_id": extra.get("connection_id")},
+        )
     return TikTokConnectResponse(
         redirect_url=oauth["redirect_url"],
-        connection_id=oauth["connection_id"],
+        connection_id=str(extra.get("connection_id") or ""),
         state=state,
     )
+
+
+@router.post("/{channel_id}/connect/tiktok/finish", response_model=ChannelIntegrationsResponse)
+async def finish_tiktok_connect(
+    channel_id: uuid.UUID,
+    body: TikTokFinishRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ChannelIntegrationsResponse:
+    try:
+        payload = decode_oauth_state(body.state, expected_purpose="tiktok_connect")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if payload.get("channel_id") != str(channel_id):
+        raise HTTPException(status_code=400, detail="State channel_id invalide")
+
+    channel = await get_user_channel(db, channel_id, current_user)
+    extra = payload.get("extra") or {}
+    provider = str(extra.get("provider") or provider_name(channel))
+    publisher = tiktok_providers._PUBLISHERS.get(provider)
+    if publisher is None:
+        raise HTTPException(status_code=400, detail=f"Fournisseur TikTok inconnu : {provider}")
+    try:
+        account = await publisher.finish_connect(
+            channel, body.params, {**provider_account(channel, provider), **extra}
+        )
+    except Exception as e:
+        logger.error("Finalisation TikTok (%s) échouée pour %s : %s", provider, channel.slug, e)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from e
+
+    if provider == "composio":
+        channel.composio_tiktok_account_id = account["account_id"]
+    channel.config = tiktok_providers.with_provider_account(channel, provider, account)
+    await db.commit()
+    await db.refresh(channel)
+    return _integrations(channel)
 
 
 @router.get("/{channel_id}/connect/tiktok/callback")
@@ -246,6 +329,8 @@ async def tiktok_oauth_callback(
     channel = await get_user_channel(db, channel_id, current_user)
 
     try:
+        from agent.skills.publisher import composio_client
+
         account_id = await composio_client.wait_for_tiktok_connection(connection_id, channel)
     except Exception as e:
         logger.error("Callback TikTok échoué pour %s : %s", channel.slug, e)

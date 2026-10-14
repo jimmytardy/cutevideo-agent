@@ -511,7 +511,8 @@
       "#éducatif",
       "#youtube"
     ],
-    "youtube_category_id": "27"
+    "youtube_category_id": "27",
+    "tiktok_provider": "composio"
   },
   "llm": {
     "default_model": "claude-opus-5-5",
