@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import uuid
 from dataclasses import dataclass
 from typing import Literal
 
-from cryptography.fernet import Fernet, InvalidToken
+from cryptography.fernet import Fernet, InvalidToken, MultiFernet
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -58,14 +59,24 @@ class GcpCredentials:
     adc_path: str | None = None
 
 
-def _fernet() -> Fernet:
+def _legacy_fernet() -> Fernet:
+    """Clé dérivée du JWT secret, utilisée tant que API_KEYS_ENCRYPTION_KEY n'était pas définie."""
+    return Fernet(base64.urlsafe_b64encode(settings.jwt_secret_key.encode()[:32].ljust(32, b"0")))
+
+
+def _configured_fernet(raw: str) -> Fernet:
+    """Clé Fernet (base64 url-safe) ou 32 octets en hexadécimal (`openssl rand -hex 32`)."""
+    if re.fullmatch(r"[0-9a-fA-F]{64}", raw):
+        return Fernet(base64.urlsafe_b64encode(bytes.fromhex(raw)))
+    return Fernet(raw.encode())
+
+
+def _fernet() -> MultiFernet:
+    """Chiffre avec API_KEYS_ENCRYPTION_KEY ; déchiffre aussi les clés de l'ancienne clé dérivée."""
     raw = settings.api_keys_encryption_key.strip()
     if not raw:
-        # Dev fallback — dérivé du JWT secret (ne pas utiliser en prod sans clé dédiée)
-        raw = base64.urlsafe_b64encode(
-            settings.jwt_secret_key.encode()[:32].ljust(32, b"0")
-        ).decode()
-    return Fernet(raw.encode() if not raw.startswith("gAAAA") else raw)
+        return MultiFernet([_legacy_fernet()])
+    return MultiFernet([_configured_fernet(raw), _legacy_fernet()])
 
 
 def encrypt_api_key(plain: str) -> str:
