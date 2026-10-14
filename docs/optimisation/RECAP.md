@@ -1,4 +1,7 @@
-# Recap — session autonome d'optimisation (2026-10-13 20:05 → 2026-10-14)
+# Recap — session autonome d'optimisation (2026-10-13 20:05 → 2026-10-14 06:05)
+
+> **Clôture « Temps écoulé » (2026-10-14 06:05)** : travail terminé dès ~01:40 (budget de 6 générations épuisé) ;
+> rien n'a changé depuis, hormis cette ligne. Aucun processus de la session ne tourne encore.
 
 > Brief : `docs/optimisation/BRIEF.md` · Références : `docs/optimisation/REFERENCES.md`.
 > Reprendre : `tmux attach -t cutevideo-optim` (si encore ouverte) ou `cd /home/ubuntu/cutevideo && claude --resume`.
