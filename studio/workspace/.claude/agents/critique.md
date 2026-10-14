@@ -21,7 +21,7 @@ comme un monteur. Tu ne modifies rien d'autre que `critique_<N>.json`.
 Grille (`scores`, total = `score`) :
 - `hook` (0-20) : en 2 s, image forte + phrase-paradoxe qui ouvre une question ? Premier mot à 0 s, mouvement immédiat.
 - `retention` (0-15) : relances toutes les 5-8 s, nouvel élément visuel toutes les ~2 s, aucun plan figé > 3 s,
-  débit ~2,8-3,4 mots/s, pas de pause > 0,6 s.
+  débit ~2,9-3,5 mots/s, pas de pause > 0,6 s.
 - `valeur` (0-15) : une idée claire, vraie, surprenante ; chiffres mis à l'échelle ; zéro jargon.
 - `visuels` (0-20) : chaque plan illustre littéralement ce qui est dit, au bon moment ; finition (rien de coupé,
   pas de vide, contrastes) ; charte cohérente (thème, accent, objet-héros) ; contenu dans y 170-1180.

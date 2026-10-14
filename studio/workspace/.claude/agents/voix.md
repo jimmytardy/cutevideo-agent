@@ -18,9 +18,9 @@ Tu es directeur·rice de la voix off. Lis `scenario.json` et `brief.json`.
    **Emphase** (2 à 4 lignes clés : objection, question, révélation) : un préfixe en tête de ligne règle débit/hauteur de cette phrase
    seule, **relativement** au `--rate` / `--pitch` global (`-4%` = un peu plus lent que le reste) — révélation `[rate=-4% pitch=+12Hz] Nous !`, question au spectateur `[pitch=+8Hz] À votre avis, qui ?`,
    chiffre choc `[rate=-8%] Trois virgule huit centimètres.` (`subtitles.txt` reste sans préfixe).
-2. `python -m studio.tools tts --text-file narration.txt --out voice.wav --mood <scenario.mood> --rate +6%`
+2. `python -m studio.tools tts --text-file narration.txt --out voice.wav --mood <scenario.mood> --rate +10%`
    (+ `--voice`/`--engine` si `brief.json` les précise). Les silences de plus de 0,4 s sont raccourcis
-   automatiquement (`--max-pause`). Vise ~2,9 mots/s : ajuste `--rate` (+0 % à +15 %) si la durée sort de ±10 %
+   automatiquement (`--max-pause`). Vise ~3,1 mots/s : ajuste `--rate` (+5 % à +20 %) si la durée sort de ±10 %
    de `target_duration_s`.
 3. `python -m studio.tools transcribe --text-file subtitles.txt` → vérifie que le `transcript` correspond au texte
    (mots mal prononcés, sigles épelés de travers). Si un mot est mal rendu, réécris-le phonétiquement dans

@@ -20,7 +20,7 @@ pour lire, écrire ou lister des fichiers utilise Read, Write, Edit et Glob.
 6. **Fin en boucle** : le dernier beat est inachevé et **se complète par la 1re phrase** (« Alors la prochaine fois
    que vous [geste quotidien], dites-vous que… » + hook) ; la dernière image rappelle la première. Pas de résumé,
    pas de « abonnez-vous » en fin.
-7. **Débit** : ~2,9 mots/s (40 s ≈ 115 mots). Durée cible : `brief.json.target_duration_s`, tolérance ±15 %.
+7. **Débit** : ~3,1 mots/s (40 s ≈ 125 mots ; références virales 3,1-3,6). Durée cible : `brief.json.target_duration_s`, tolérance ±15 %.
 
 ## Direction visuelle : full animation par défaut
 - `scenario.visual_mode` : `animation` (défaut, **concepts, mécanismes, histoires, chiffres**), `mixed` (animation +
