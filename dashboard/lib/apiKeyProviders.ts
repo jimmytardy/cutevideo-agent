@@ -3,7 +3,6 @@ export type ApiKeyProviderId =
   | 'anthropic'
   | 'fal'
   | 'gcp'
-  | 'runway'
   | 'azure_speech'
   | 'postforme'
   | 'zernio'
@@ -79,21 +78,6 @@ export const API_KEY_PROVIDERS: ApiKeyProviderInfo[] = [
     ],
     docUrl: 'https://cloud.google.com/vertex-ai/docs/generative-ai/image/overview',
     docLabel: 'Documentation Imagen 3 (Vertex AI)',
-  },
-  {
-    id: 'runway',
-    label: 'Runway',
-    shortDescription: 'Génération de clips vidéo IA (Gen-3 / Gen-4) pour enrichir vos montages.',
-    keyFieldLabel: 'Clé API Runway',
-    tutorialTitle: 'Obtenir une clé Runway',
-    steps: [
-      'Connectez-vous à Runway avec un compte disposant de crédits API.',
-      'Ouvrez les paramètres du compte ou la section développeur / API.',
-      'Générez une clé API et copiez-la.',
-      'Collez-la ci-dessus pour activer la génération vidéo Runway.',
-    ],
-    docUrl: 'https://docs.dev.runwayml.com/',
-    docLabel: 'Documentation API Runway',
   },
   {
     id: 'azure_speech',

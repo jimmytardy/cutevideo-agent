@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from agent.core.agent_llm_constraints import (
-    allowed_models_for_agent,
     normalize_agent_preference,
 )
 from agent.core.llm_resolver import AgentLlmPreference

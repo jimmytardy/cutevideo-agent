@@ -20,6 +20,7 @@ cutevideo-imgen.json
 # Node
 node_modules/
 .next/
+*.tsbuildinfo
 .vercel/
 
 # Données générées

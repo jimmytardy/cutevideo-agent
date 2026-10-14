@@ -8,10 +8,6 @@ from agent.core.config import get_pipeline_settings
 DEFAULT_WORK_PATHS = (Path("./tmp"), Path("./output"))
 
 
-class DiskSpaceError(RuntimeError):
-    """Espace disque insuffisant pour démarrer un pipeline."""
-
-
 def get_free_bytes(paths: tuple[Path, ...] | None = None) -> int:
     """Retourne l'espace libre minimal parmi les chemins de travail."""
     work_paths = paths or DEFAULT_WORK_PATHS
@@ -39,8 +35,3 @@ def format_disk_wait_message() -> str:
         f"En attente : espace disque insuffisant "
         f"({free_gb:.1f} Go libres, {required_gb:.1f} Go requis)"
     )
-
-
-def ensure_disk_for_pipeline() -> None:
-    if not is_disk_sufficient():
-        raise DiskSpaceError(format_disk_wait_message())

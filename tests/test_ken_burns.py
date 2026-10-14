@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from agent.skills.video.ken_burns import _build_static_filter, _build_zoom_filter
+from studio.kenburns import build_static_filter, build_zoom_filter
 
 
 def test_ken_burns_filter_is_centered_without_pan() -> None:
-    vf = _build_zoom_filter(
+    vf = build_zoom_filter(
         1920, 1080, 25, 125,
         zoom_factor=0.03,
         pan_enabled=False,
@@ -18,7 +18,7 @@ def test_ken_burns_filter_is_centered_without_pan() -> None:
 
 
 def test_ken_burns_filter_linear_zoom() -> None:
-    vf = _build_zoom_filter(
+    vf = build_zoom_filter(
         1080, 1920, 30, 150,
         zoom_factor=0.03,
         pan_enabled=False,
@@ -29,7 +29,7 @@ def test_ken_burns_filter_linear_zoom() -> None:
 
 
 def test_ken_burns_filter_pan_when_enabled() -> None:
-    vf = _build_zoom_filter(
+    vf = build_zoom_filter(
         1920, 1080, 25, 125,
         zoom_factor=0.03,
         pan_enabled=True,
@@ -39,10 +39,10 @@ def test_ken_burns_filter_pan_when_enabled() -> None:
 
 
 def test_ken_burns_static_when_zoom_zero() -> None:
-    vf = _build_zoom_filter(
+    vf = build_zoom_filter(
         1920, 1080, 25, 125,
         zoom_factor=0.0,
         pan_enabled=False,
         pan_direction=0,
     )
-    assert vf == _build_static_filter(1920, 1080, 25)
+    assert vf == build_static_filter(1920, 1080, 25)

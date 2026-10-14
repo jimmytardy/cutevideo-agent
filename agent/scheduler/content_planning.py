@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime, timedelta, timezone
+from datetime import date
 from typing import Any
 
 from sqlalchemy import select
 
-from agent.core.channel_config import ChannelRuntimeConfig, resolve_channel_config
+from agent.core.channel_config import ChannelRuntimeConfig
 from agent.core.database import AsyncSessionFactory, Channel, Project
-from agent.scheduler.distribution_slots import paris_day_bounds, paris_now, to_utc
 
 
 def build_editorial_identity(channel: Channel) -> dict[str, str]:
@@ -101,17 +100,6 @@ async def count_planner_projects_for_publish_date(
         if (p.config or {}).get("source") == "content_planner_agent"
         and (p.config or {}).get("target_publish_date") == target
         and p.status in ("pending", "running", "approved")
-    )
-
-
-async def count_planner_projects_today(channel_id: uuid.UUID, day: date | None = None) -> int:
-    """Rétrocompat — compte par date de publication cible (= demain par défaut)."""
-    from agent.scheduler.editorial_calendar import publication_target_day
-
-    if day is not None:
-        return await count_planner_projects_for_publish_date(channel_id, day)
-    return await count_planner_projects_for_publish_date(
-        channel_id, publication_target_day()
     )
 
 

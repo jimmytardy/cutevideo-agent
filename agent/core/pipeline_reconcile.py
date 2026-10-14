@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import uuid
 
 from sqlalchemy import select
 
@@ -50,7 +49,6 @@ async def reconcile_orphan_running_projects(*, worker_id: str) -> int:
             continue
 
         await stop_running_agent_runs(project.id, reason=_RECONCILE_REASON)
-        await queue.clear_agent_statuses(str(project.id))
 
         async with AsyncSessionFactory() as session:
             channel = await session.get(Channel, project.channel_id)

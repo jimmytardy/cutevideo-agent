@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from agent.core.channel_config import AiFallbackConfig, AiImagePlan, ChannelRuntimeConfig
 from agent.core.config import load_agent_config

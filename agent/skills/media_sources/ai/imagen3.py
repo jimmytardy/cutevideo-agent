@@ -4,13 +4,17 @@ import base64
 import json
 import logging
 import uuid
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import aiohttp
 
 from agent.core.config import load_agent_config, settings
 from agent.skills.media_sources.ai.base import ImageGenerationRequest, ImageGenerationResult
 from agent.skills.media_sources.ai.prompt_builder import build_documentary_prompt
+
+
+if TYPE_CHECKING:
+    from agent.core.api_keys import GcpCredentials
 
 logger = logging.getLogger(__name__)
 
@@ -33,8 +37,6 @@ async def _get_gcp_access_token(
     gcp_credentials: "GcpCredentials | None" = None,
 ) -> tuple[str | None, str | None, str | None]:
     """Retourne (token, project_id, location)."""
-    from agent.core.api_keys import GcpCredentials
-
     try:
         import google.auth
         import google.auth.transport.requests

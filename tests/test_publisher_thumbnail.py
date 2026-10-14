@@ -153,3 +153,13 @@ def test_ai_disclosure_from_used_media_credits() -> None:
     assert credits_contain_ai_media([{"media": "media/a.png", "source": "ai_image"}])
     assert not credits_contain_ai_media([{"media": "media/b.jpg", "source": "pexels"}])
     assert not credits_contain_ai_media(None)
+
+
+def test_thumbnail_stream_media_type() -> None:
+    from pathlib import Path
+
+    from api.routes.projects import _media_type_for_path
+
+    assert _media_type_for_path(Path("t/thumb.JPG")) == "image/jpeg"
+    assert _media_type_for_path(Path("t/thumb.png")) == "image/png"
+    assert _media_type_for_path(Path("t/x.bin")) == "application/octet-stream"

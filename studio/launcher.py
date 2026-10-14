@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
+from studio.assets import max_ai_images
 from studio.contracts import Brief
 
 logger = logging.getLogger(__name__)
@@ -90,11 +91,11 @@ def build_command(cfg: LaunchConfig, prompt: str = "/make-video") -> list[str]:
     return cmd
 
 
-def _brief_animations(run_dir: Path) -> str:
+def _read_brief(run_dir: Path) -> Brief | None:
     try:
-        return Brief.model_validate_json((run_dir / "brief.json").read_text(encoding="utf-8")).animations
+        return Brief.model_validate_json((run_dir / "brief.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return "off"
+        return None
 
 
 def build_env(run_dir: Path) -> dict[str, str]:
@@ -103,9 +104,14 @@ def build_env(run_dir: Path) -> dict[str, str]:
     env["PATH"] = f"{python_bin}{os.pathsep}{env.get('PATH', '')}"
     env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(REPO_ROOT), env.get("PYTHONPATH")]))
     env["STUDIO_RUN_DIR"] = str(run_dir)
-    # Niveau d'animation lu ici, avant que Claude ne puisse toucher brief.json : les outils
-    # `animate*` ne font confiance qu'à cette variable.
-    env["STUDIO_ANIMATIONS"] = _brief_animations(run_dir)
+    # Politiques lues ici, avant que Claude ne puisse toucher brief.json : les outils
+    # (`animate*`, `ai-image`) ne font confiance qu'à ces variables.
+    brief = _read_brief(run_dir)
+    env["STUDIO_ANIMATIONS"] = brief.animations if brief else "off"
+    if brief is None:
+        env["STUDIO_MAX_AI_IMAGES"] = "0"
+    elif brief.max_ai_images is not None:
+        env["STUDIO_MAX_AI_IMAGES"] = str(min(brief.max_ai_images, max_ai_images()))
     # Rendus et transcriptions dépassent les 2 min par défaut du Bash de Claude Code.
     env.setdefault("BASH_DEFAULT_TIMEOUT_MS", "1200000")
     env.setdefault("BASH_MAX_TIMEOUT_MS", "1800000")

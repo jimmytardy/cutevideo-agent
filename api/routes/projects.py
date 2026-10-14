@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from datetime import datetime, timezone
 
-from agent.core.database import AgentRun, Channel, CriticReport, Project, Publication, Scenario, User, Video, get_db
+from agent.core.database import Channel, CriticReport, Project, Publication, Scenario, User, Video, get_db
 from agent.core.subscription import QuotaExceededError, check_can_create_project
 from agent.skills.pipeline_progress import AgentProgressData, compute_pipeline_progress
 from agent.core.pipeline_launcher import dequeue_pipeline, enqueue_pipeline, request_pipeline_cancel
@@ -288,24 +288,14 @@ async def get_final_preview(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> FinalPreviewResponse:
-    from agent.core.final_preview import (
-        build_duration_warnings,
-        resolve_preview_video,
-        subtitles_available_for_video,
-    )
+    from agent.core.final_preview import build_duration_warnings, resolve_preview_video
     from agent.core.channel_config import resolve_channel_config
 
     project = await get_user_project(db, project_id, current_user)
 
     video = await resolve_preview_video(db, project_id)
     if video is None:
-        return FinalPreviewResponse(
-            video=None,
-            stream_url=None,
-            subtitles_available=False,
-            subtitles_download_url=None,
-            duration_warnings=[],
-        )
+        return FinalPreviewResponse(video=None, stream_url=None)
 
     channel_result = await db.execute(select(Channel).where(Channel.id == project.channel_id))
     channel = channel_result.scalar_one_or_none()
@@ -317,22 +307,9 @@ async def get_final_preview(
             min_duration_tiktok=channel_config.min_duration_tiktok,
         )
 
-    stream_url = f"/api/v1/projects/{project_id}/videos/{video.id}/stream"
-    subs_available = subtitles_available_for_video(video, project_id)
-    subs_url = f"/api/v1/projects/{project_id}/subtitles/download" if subs_available else None
-    subs_note = (
-        "Sous-titres au format .srt (non incrustés dans la vidéo longue). "
-        "À associer à la vidéo lors de la publication YouTube."
-        if subs_available and video.video_type == "long"
-        else None
-    )
-
     return FinalPreviewResponse(
         video=VideoResponse.model_validate(video),
-        stream_url=stream_url,
-        subtitles_available=subs_available,
-        subtitles_download_url=subs_url,
-        subtitles_note=subs_note,
+        stream_url=f"/api/v1/projects/{project_id}/videos/{video.id}/stream",
         duration_warnings=duration_warnings,
     )
 
@@ -629,6 +606,14 @@ async def get_project_pipeline_progress(
             name: _progress_item(item) for name, item in snapshot.post_production.items()
         },
     )
+
+
+_MEDIA_TYPE_BY_EXT = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+}
 
 
 def _media_type_for_path(path: Path) -> str:

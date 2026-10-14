@@ -19,7 +19,7 @@ Tu es directeur·rice de la voix off. Lis `scenario.json` et `brief.json`.
    seule, **relativement** au `--rate` / `--pitch` global (`-4%` = un peu plus lent que le reste) — révélation `[rate=-4% pitch=+12Hz] Nous !`, question au spectateur `[pitch=+8Hz] À votre avis, qui ?`,
    chiffre choc `[rate=-8%] Trois virgule huit centimètres.` (`subtitles.txt` reste sans préfixe).
 2. `python -m studio.tools tts --text-file narration.txt --out voice.wav --mood <scenario.mood> --rate +10%`
-   (+ `--voice`/`--engine` si `brief.json` les précise). Les silences de plus de 0,4 s sont raccourcis
+   (moteur et voix de la chaîne : lus dans `brief.json` par l'outil). Les silences de plus de 0,4 s sont raccourcis
    automatiquement (`--max-pause`). Vise ~3,1 mots/s : ajuste `--rate` (+5 % à +20 %) si la durée sort de ±10 %
    de `target_duration_s`.
 3. `python -m studio.tools transcribe --text-file subtitles.txt` → vérifie que le `transcript` correspond au texte

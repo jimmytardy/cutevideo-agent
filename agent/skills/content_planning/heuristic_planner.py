@@ -5,7 +5,6 @@ from typing import Any
 
 from rapidfuzz import fuzz
 
-from typing import Any
 
 from agent.core.content_plan_models import DailyContentPlan, ThemeAnalysis, VideoTopicPlan
 

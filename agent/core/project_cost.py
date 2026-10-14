@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from agent.core.database import AgentRun, AsyncSessionFactory, Project
-from agent.core.llm_usage import LlmUsageRecord
 
 StopReason = Literal["approved", "max_iterations", "cost_cap", "unknown"]
 
@@ -36,53 +35,6 @@ class ProjectCostBreakdown(BaseModel):
     by_agent: list[AgentCostRow] = Field(default_factory=list)
     by_iteration: list[IterationCostRow] = Field(default_factory=list)
     elapsed_s: float = 0.0
-
-
-async def persist_standalone_agent_run(
-    project_id: uuid.UUID,
-    agent_name: str,
-    iteration: int,
-    usage: LlmUsageRecord,
-    *,
-    status: str = "success",
-    output_json: dict | None = None,
-) -> None:
-    """Enregistre un run agent hors BaseAgent (ex. video_analyst)."""
-    now = datetime.now(timezone.utc)
-    async with AsyncSessionFactory() as session:
-        run = AgentRun(
-            project_id=project_id,
-            agent_name=agent_name,
-            status=status,
-            iteration=iteration,
-            output_json=output_json,
-            started_at=now,
-            ended_at=now,
-            cost_estimate_usd=usage.cost_usd,
-            llm_input_tokens=usage.input_tokens,
-            llm_output_tokens=usage.output_tokens,
-            llm_model=usage.model,
-        )
-        session.add(run)
-        await session.commit()
-
-
-async def sum_project_llm_cost_usd(project_id: uuid.UUID) -> float:
-    async with AsyncSessionFactory() as session:
-        result = await session.execute(
-            select(func.coalesce(func.sum(AgentRun.cost_estimate_usd), 0.0)).where(
-                AgentRun.project_id == project_id
-            )
-        )
-        total = result.scalar_one()
-        return float(total or 0.0)
-
-
-async def project_cost_exceeded(project_id: uuid.UUID, cap_usd: float) -> bool:
-    if cap_usd <= 0:
-        return False
-    total = await sum_project_llm_cost_usd(project_id)
-    return total >= cap_usd
 
 
 async def project_cost_breakdown(
@@ -164,24 +116,3 @@ async def project_cost_breakdown(
         by_iteration=sorted(by_iter_map.values(), key=lambda r: r.iteration),
         elapsed_s=round(elapsed_s, 1),
     )
-
-
-async def persist_cost_summary(
-    project_id: uuid.UUID,
-    *,
-    stop_reason: StopReason,
-    total_usd: float,
-    iterations_used: int,
-) -> None:
-    async with AsyncSessionFactory() as session:
-        project = await session.get(Project, project_id)
-        if project is None:
-            return
-        config = dict(project.config or {})
-        config["cost_summary"] = {
-            "stop_reason": stop_reason,
-            "total_usd": round(total_usd, 6),
-            "iterations_used": iterations_used,
-        }
-        project.config = config
-        await session.commit()

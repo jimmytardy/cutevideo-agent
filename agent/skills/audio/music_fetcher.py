@@ -14,20 +14,6 @@ IA_METADATA_URL = "https://archive.org/metadata/{identifier}"
 IA_DOWNLOAD_URL = "https://archive.org/download/{identifier}/{filename}"
 AUDIO_EXTENSIONS = (".mp3", ".ogg", ".wav", ".flac", ".m4a")
 
-# Thème de chaîne → requête de recherche musicale
-_THEME_QUERIES: dict[str, str] = {
-    "histoire":    "documentary ambient cinematic",
-    "france":      "ambient documentary calm",
-    "nature":      "nature peaceful ambient",
-    "animaux":     "nature wildlife ambient",
-    "science":     "science ambient electronic",
-    "art":         "classical piano ambient",
-    "finance":     "corporate background calm",
-    "psychologie": "calm introspective ambient",
-    "true_crime":  "suspense dark ambient mystery",
-    "tech":        "electronic technology ambient",
-    "default":     "ambient background music",
-}
 
 # Mood YouTube/TikTok → requête de recherche musicale
 _MOOD_QUERIES: dict[str, str] = {
@@ -40,22 +26,6 @@ _MOOD_QUERIES: dict[str, str] = {
     "tension":      "tension suspense thriller",
     "revelateur":   "epic reveal cinematic",
 }
-
-
-async def fetch_background_music(
-    theme_category: str = "default",
-    output_dir: Path | None = None,
-) -> Path | None:
-    """Cherche et télécharge une piste de musique de fond adaptée au thème de chaîne."""
-    query = _THEME_QUERIES.get(theme_category.lower(), _THEME_QUERIES["default"])
-    output_dir = output_dir or Path("./tmp/music")
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    for fetcher in (_fetch_freesound, _fetch_internet_archive):
-        path = await fetcher(query, output_dir)
-        if path:
-            return path
-    return None
 
 
 async def fetch_music_for_mood(

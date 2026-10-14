@@ -8,9 +8,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.core.auth import create_oauth_state, decode_oauth_state
-from agent.core.concurrency import can_start_pipeline, count_running_pipelines
 from agent.core.database import Channel, Project, User, get_db
-from agent.core.queue import queue
 from agent.core.subscription import QuotaExceededError, check_can_create_channel
 from agent.core.config import settings
 from agent.skills.publisher import tiktok_providers
@@ -31,10 +29,6 @@ from api.models import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/channels", tags=["channels"])
-
-
-def _channel_to_response(channel: Channel) -> ChannelResponse:
-    return ChannelResponse.model_validate(channel)
 
 
 @router.get("", response_model=list[ChannelResponse])
@@ -158,35 +152,6 @@ async def list_channel_projects(
         )
         for p, name in result.all()
     ]
-
-
-@router.get("/{channel_id}/status")
-async def get_channel_status(
-    channel_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> dict:
-    channel = await get_user_channel(db, channel_id, current_user)
-    running = await count_running_pipelines(channel_id)
-    slot_free = await can_start_pipeline(channel_id)
-
-    result = await db.execute(
-        select(Project).where(Project.channel_id == channel_id, Project.status == "running")
-    )
-    running_projects = result.scalars().all()
-    agent_statuses: dict[str, dict[str, str]] = {}
-    for project in running_projects:
-        agent_statuses[str(project.id)] = await queue.get_all_agent_statuses(str(project.id))
-
-    return {
-        "channel_id": str(channel_id),
-        "slug": channel.slug,
-        "running_pipelines": running,
-        "max_concurrent_pipelines": channel.max_concurrent_pipelines,
-        "slot_available": slot_free,
-        "running_project_ids": [str(p.id) for p in running_projects],
-        "agent_statuses": agent_statuses,
-    }
 
 
 def _integrations(channel: Channel) -> ChannelIntegrationsResponse:
@@ -348,33 +313,3 @@ async def tiktok_oauth_callback(
         "channel_slug": channel.slug,
         "composio_tiktok_account_id": account_id,
     }
-
-
-@router.get("/{channel_id}/runway-status")
-async def get_runway_status(
-    channel_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> dict:
-    channel = await get_user_channel(db, channel_id, current_user)
-
-    from agent.core.channel_config import resolve_channel_config
-    from agent.core.runway_budget import get_monthly_runway_cost_usd, get_runway_credit_error
-    from agent.core.subscription import resolve_user_limits
-
-    limits = await resolve_user_limits(db, current_user)
-    cfg = resolve_channel_config(channel, subscription_limits=limits)
-    runway_cfg = cfg.runway
-    spent = await get_monthly_runway_cost_usd(str(channel_id))
-    credit_error = await get_runway_credit_error(str(channel_id))
-
-    return {
-        "enabled": runway_cfg.enabled,
-        "monthly_budget_usd": runway_cfg.monthly_budget_usd,
-        "spent_usd": round(spent, 2),
-        "remaining_usd": round(max(0.0, runway_cfg.monthly_budget_usd - spent), 2),
-        "credit_error": credit_error,
-        "model": runway_cfg.model,
-        "cost_per_clip_usd": round(runway_cfg.default_duration_s * runway_cfg.cost_per_second_usd, 2),
-    }
-

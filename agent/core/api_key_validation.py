@@ -8,7 +8,6 @@ d'image, pas de vidéo, pas de tokens facturés quand c'est possible) :
 - fal          : POST sans payload valide -> 422 si la clé est bonne, 401 sinon
 - gcp          : chargement du compte de service + obtention d'un token OAuth
 - azure_speech : POST issueToken (token éphémère, aucune synthèse)
-- runway       : GET /v1/organization (infos compte, aucune génération)
 - postforme    : GET /v1/social-accounts?limit=1 (lecture seule)
 - zernio       : GET /v1/accounts (lecture seule)
 
@@ -30,7 +29,6 @@ from agent.core.config import settings
 logger = logging.getLogger(__name__)
 
 _TIMEOUT = 15.0
-_RUNWAY_API_VERSION = "2024-11-06"
 
 
 class ApiKeyValidationError(ValueError):
@@ -51,7 +49,6 @@ async def validate_api_key(
         "fal": lambda: _validate_fal(key),
         "gcp": lambda: _validate_gcp(key),
         "azure_speech": lambda: _validate_azure(key, metadata or {}),
-        "runway": lambda: _validate_runway(key),
         "postforme": lambda: _validate_bearer_get(
             key, "https://api.postforme.dev/v1/social-accounts?limit=1", "Post for Me"
         ),
@@ -166,19 +163,6 @@ async def _validate_azure(key: str, metadata: dict) -> None:
         raise ApiKeyValidationError(
             "Clé Azure Speech invalide ou région incorrecte."
         )
-
-
-async def _validate_runway(key: str) -> None:
-    headers = {
-        "Authorization": f"Bearer {key}",
-        "X-Runway-Version": _RUNWAY_API_VERSION,
-    }
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-        resp = await client.get(
-            "https://api.dev.runwayml.com/v1/organization", headers=headers
-        )
-    if resp.status_code in (401, 403):
-        raise ApiKeyValidationError("Clé Runway invalide ou non autorisée.")
 
 
 async def _validate_bearer_get(key: str, url: str, label: str) -> None:

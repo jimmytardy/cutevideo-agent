@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import uuid
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer

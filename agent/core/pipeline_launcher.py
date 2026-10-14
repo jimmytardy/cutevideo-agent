@@ -2,10 +2,8 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Any
 
 from agent.core.pipeline_queue import (
-    PipelineAlreadyQueuedError,
     QueueStatus,
     enqueue_pipeline_task,
     remove_from_queue,
@@ -19,20 +17,9 @@ async def enqueue_pipeline(
     project_id: uuid.UUID,
     *,
     user_id: uuid.UUID | None = None,
-    start_from: str | None = None,
-    critic_feedback: list[dict[str, Any]] | None = None,
-    critic_start_from: str | None = None,
-    resume_iteration: int | None = None,
 ) -> QueueStatus:
     """Enqueue un pipeline dans la file prioritaire Redis."""
-    return await enqueue_pipeline_task(
-        project_id,
-        user_id=user_id,
-        start_from=start_from,
-        critic_feedback=critic_feedback,
-        critic_start_from=critic_start_from,
-        resume_iteration=resume_iteration,
-    )
+    return await enqueue_pipeline_task(project_id, user_id=user_id)
 
 
 async def dequeue_pipeline(project_id: uuid.UUID) -> bool:

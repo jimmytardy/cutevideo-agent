@@ -137,7 +137,7 @@ async def _purge_old_project_dirs(cutoff: datetime) -> PurgeReport:
                     elif f.is_dir():
                         shutil.rmtree(f)
                     report.dirs_removed += 1
-                except OSError as e:
+                except OSError:
                     report.errors.append(str(f))
 
     return report

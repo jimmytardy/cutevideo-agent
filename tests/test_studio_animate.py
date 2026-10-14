@@ -101,10 +101,15 @@ def test_build_brief_carries_channel_policy() -> None:
 
     cfg = SimpleNamespace(content_language="fr", short_duration_s=45, tts_short=SimpleNamespace(voice="", engine=""),
                           tts_voice="v", tts_engine="edge", quality_max_iterations=2, min_critic_score=80,
-                          editorial_tone="", studio_animations="templates")
+                          editorial_tone="", studio_animations="templates",
+                          ai_fallback=SimpleNamespace(enabled=False, max_ai_images_per_video=10))
     ctx = SimpleNamespace(channel_config=cfg, content_plan=None, theme="t", niche_prompt="",
-                          target_duration_seconds=30, max_critic_iterations=2)
-    assert build_brief(ctx).animations == "templates"  # type: ignore[arg-type]
+                          target_duration_seconds=30, max_critic_iterations=2,
+                          channel=SimpleNamespace(creative_brief="  Pas de sensationnalisme.  "))
+    brief = build_brief(ctx)  # type: ignore[arg-type]
+    assert brief.animations == "templates"
+    assert brief.creative_brief == "Pas de sensationnalisme."
+    assert brief.max_ai_images == 0
 
 
 @pytest.mark.parametrize(("policy", "args"), [

@@ -17,7 +17,6 @@ from agent.core.subscription import (
     SubscriptionLimits,
     apply_subscription_caps,
     is_unlimited,
-    resolve_display_max_critic_iterations,
     resolve_effective_max_critic_iterations,
 )
 from agent.core.database import SubscriptionPlan
@@ -84,7 +83,7 @@ def test_subscription_apply_caps() -> None:
         "pipeline": {"max_critic_iterations": 5},
         "production": {"mode": "mixed"},
         "tts": {"engine": "azure"},
-        "whisper": {"model": "large-v3"},
+        "whisper": {"model": "small"},
         "media_sources": {
             "enable_ai_fallback": True,
             "ai_fallback": {"enabled": True, "plan": "flux_pro"},
@@ -147,11 +146,6 @@ def test_resolve_effective_max_critic_iterations_free_user() -> None:
         channel_max=5,
         limits=limits,
     ) == 2
-
-
-def test_resolve_display_max_critic_iterations_defaults_to_five() -> None:
-    assert resolve_display_max_critic_iterations(None) == 5
-    assert resolve_display_max_critic_iterations(8) == 8
 
 
 def test_admin_plan_unlimited() -> None:

@@ -4,7 +4,6 @@ import json
 import logging
 import uuid
 from datetime import date, datetime, timezone
-from pathlib import Path
 from typing import Any
 
 from sqlalchemy import func, or_, select
@@ -19,7 +18,6 @@ from agent.core.database import (
     Scenario,
     Video,
 )
-from agent.core.learning_context import load_channel_context
 from agent.scheduler.distribution_slots import (
     DailyQuotas,
     filter_occupied_slots,
@@ -45,9 +43,6 @@ SLOT_PICK_PROMPT = """Chaîne : {channel_name} ({theme_category})
 Plateforme : {platform}
 Type vidéo : {video_type}
 Titre : {title}
-
-Contexte apprentissage :
-{learning_context}
 
 Créneaux candidats (UTC ISO, du plus proche au plus lointain) :
 {slots_json}
@@ -237,18 +232,18 @@ class DistributionAgent(BaseAgent):
         if len(candidates) <= 1:
             return 0
         try:
-            learning = await load_channel_context(channel.id)
             prompt = SLOT_PICK_PROMPT.format(
                 channel_name=channel.name,
                 theme_category=channel.theme_category,
                 platform=platform,
                 video_type=video.video_type or "long",
                 title=title,
-                learning_context=learning.format_for_prompt(),
                 slots_json=json.dumps([c.isoformat() for c in candidates], ensure_ascii=False),
                 max_index=len(candidates) - 1,
             )
-            raw = await self._call_claude(prompt, system=SLOT_PICK_SYSTEM, max_tokens=256)
+            raw = await self._call_llm_for_channel(
+                channel.id, prompt, system=SLOT_PICK_SYSTEM, max_tokens=256
+            )
             data = self._parse_json(raw)
             return int(data.get("slot_index", 0))
         except Exception as e:

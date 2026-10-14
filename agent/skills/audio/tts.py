@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
@@ -10,7 +9,6 @@ from agent.core.config import settings
 from agent.skills.audio.gemini_tts import (
     DEFAULT_GEMINI_LANGUAGE,
     DEFAULT_GEMINI_TTS_MODEL,
-    DEFAULT_GEMINI_VOICE,
 )
 
 logger = logging.getLogger(__name__)
@@ -18,17 +16,6 @@ logger = logging.getLogger(__name__)
 GeminiTtsApplyTo = Literal["off", "shorts", "long", "both"]
 
 _NOT_PASSED = object()
-
-
-@dataclass(frozen=True)
-class ResolvedTtsSettings:
-    engine: str
-    voice: str
-    gemini_model: str = DEFAULT_GEMINI_TTS_MODEL
-    gemini_language_code: str = DEFAULT_GEMINI_LANGUAGE
-    gemini_api_key: str | None = None
-    azure_speech_key: str | None = None
-    azure_speech_region: str | None = None
 
 
 def _resolved_gemini_key(gemini_api_key: str | None | object) -> str:
@@ -119,82 +106,6 @@ def resolve_engine(
             azure_speech_key=azure_speech_key,
         )
     return engine
-
-
-def should_use_gemini_tts(
-    gemini_apply_to: str,
-    *,
-    is_short: bool,
-    gemini_api_key: str | None | object = _NOT_PASSED,
-) -> bool:
-    if gemini_apply_to == "off":
-        return False
-    if not _resolved_gemini_key(gemini_api_key):
-        return False
-    if gemini_apply_to == "both":
-        return True
-    if gemini_apply_to == "shorts":
-        return is_short
-    if gemini_apply_to == "long":
-        return not is_short
-    return False
-
-
-def resolve_tts_settings(
-    *,
-    default_engine: str,
-    default_voice: str,
-    gemini_apply_to: str = "off",
-    gemini_voice: str = DEFAULT_GEMINI_VOICE,
-    gemini_model: str = DEFAULT_GEMINI_TTS_MODEL,
-    gemini_language_code: str = DEFAULT_GEMINI_LANGUAGE,
-    is_short: bool = False,
-    gemini_api_key: str | None | object = _NOT_PASSED,
-    azure_speech_key: str | None | object = _NOT_PASSED,
-    azure_speech_region: str | None | object = _NOT_PASSED,
-) -> ResolvedTtsSettings:
-    """Résout le moteur et la voix effectifs selon le format vidéo et les clés API."""
-    effective_gemini = _resolved_gemini_key(gemini_api_key)
-    effective_azure = _resolved_azure_key(azure_speech_key)
-    effective_region = _resolved_azure_region(azure_speech_region)
-
-    requested_engine = (default_engine or settings.tts_engine or "azure").strip().lower()
-    use_gemini = requested_engine == "gemini" or should_use_gemini_tts(
-        gemini_apply_to, is_short=is_short, gemini_api_key=gemini_api_key
-    )
-    gemini_voice_effective = default_voice if requested_engine == "gemini" else gemini_voice
-
-    if use_gemini:
-        if effective_gemini:
-            return ResolvedTtsSettings(
-                engine="gemini",
-                voice=gemini_voice_effective,
-                gemini_model=gemini_model,
-                gemini_language_code=gemini_language_code,
-                gemini_api_key=effective_gemini or None,
-                azure_speech_key=effective_azure or None,
-                azure_speech_region=effective_region,
-            )
-        scope = "shorts" if is_short else "long"
-        logger.warning(
-            "Gemini TTS demandé pour %s mais clé Gemini absente — moteur par défaut (%s)",
-            scope,
-            default_engine if requested_engine != "gemini" else "azure",
-        )
-
-    return ResolvedTtsSettings(
-        engine=resolve_engine(
-            default_engine if requested_engine != "gemini" else "azure",
-            gemini_api_key=gemini_api_key,
-            azure_speech_key=azure_speech_key,
-        ),
-        voice=default_voice,
-        gemini_model=gemini_model,
-        gemini_language_code=gemini_language_code,
-        gemini_api_key=effective_gemini or None,
-        azure_speech_key=effective_azure or None,
-        azure_speech_region=effective_region,
-    )
 
 
 async def generate_tts(

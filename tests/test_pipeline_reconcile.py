@@ -92,10 +92,6 @@ async def test_reconcile_requeues_orphan_without_lease() -> None:
             new=AsyncMock(return_value=1),
         ) as mock_stop,
         patch(
-            "agent.core.pipeline_reconcile.queue.clear_agent_statuses",
-            new=AsyncMock(),
-        ) as mock_clear,
-        patch(
             "agent.core.pipeline_reconcile.enqueue_pipeline_task",
             new=AsyncMock(),
         ) as mock_enqueue,
@@ -107,7 +103,6 @@ async def test_reconcile_requeues_orphan_without_lease() -> None:
         project_id,
         reason="Worker interrompu — reprise automatique",
     )
-    mock_clear.assert_awaited_once_with(str(project_id))
     mock_enqueue.assert_awaited_once_with(
         project_id,
         user_id=user_id,

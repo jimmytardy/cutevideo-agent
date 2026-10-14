@@ -19,7 +19,7 @@ from agent.core.pipeline_lease import (
     release_lease,
     renew_lease,
 )
-from agent.core.pipeline_queue import dequeue_next_eligible, migrate_legacy_pipeline_queue
+from agent.core.pipeline_queue import dequeue_next_eligible
 from agent.core.pipeline_reconcile import reconcile_orphan_running_projects
 from agent.core.queue import queue
 from agent.core.subprocess_registry import kill_all
@@ -91,7 +91,6 @@ async def _process_task(payload: dict) -> None:
     global _current_pipeline_task
 
     project_id = uuid.UUID(payload["project_id"])
-    start_from = payload.get("start_from")
 
     await acquire_lease(project_id, WORKER_ID)
     stop_renew = asyncio.Event()
@@ -99,11 +98,7 @@ async def _process_task(payload: dict) -> None:
 
     project_token = bind_project(project_id)
     pipeline_task = asyncio.create_task(
-        Orchestrator().run_pipeline(
-            project_id,
-            start_from=start_from,
-            already_claimed=True,
-        )
+        Orchestrator().run_pipeline(project_id, already_claimed=True)
     )
     _current_pipeline_task = pipeline_task
     stop_watcher = asyncio.Event()
@@ -192,9 +187,6 @@ async def run_worker() -> None:
     while not shutdown.is_set():
         try:
             await queue.connect()
-            migrated = await migrate_legacy_pipeline_queue()
-            if migrated:
-                logger.info("[%s] %d tâche(s) migrée(s) depuis l'ancienne queue", WORKER_ID, migrated)
             reconciled = await reconcile_orphan_running_projects(worker_id=WORKER_ID)
             if reconciled:
                 logger.info(

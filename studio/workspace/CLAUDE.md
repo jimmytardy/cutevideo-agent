@@ -101,7 +101,8 @@ fichiers de `anim/` sont accessibles. Python (numpy, matplotlib, Pillow) : lis `
 ## Fichiers (contrats validés par `python -m studio.tools validate --kind <kind> --path <fichier>`)
 
 `brief.json` (fourni, lecture seule) : `theme`, `niche`, `angle`, `language`, `target_duration_s`, `voice`,
-`tts_engine`, `max_iterations`, `min_score`, `editorial_tone`, `content_plan`, `animations` (off | templates | scripts).
+`tts_engine`, `max_iterations`, `min_score`, `editorial_tone`, `creative_brief` (charte éditoriale de la chaîne : ton,
+style narratif, interdits — à respecter), `content_plan`, `animations` (off | templates | scripts).
 
 `scenario.json` (scénariste) :
 ```json

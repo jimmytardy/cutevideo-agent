@@ -7,7 +7,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.core.database import Video
-from agent.core.subtitle_paths import resolve_project_srt_path
 
 
 def video_is_streamable(video: Video) -> bool:
@@ -38,19 +37,6 @@ async def resolve_preview_video(session: AsyncSession, project_id: uuid.UUID) ->
     short_candidates = [v for v in videos if is_short_preview_video_type(v.video_type)]
     pool = short_candidates or videos
     return max(pool, key=_preview_sort_key)
-
-
-def subtitles_available_for_video(video: Video | None, project_id: uuid.UUID) -> bool:
-    """SRT sidecar — pertinent pour les vidéos longues sans burn-in."""
-    if video is None:
-        return resolve_project_srt_path(project_id) is not None
-    if video.video_type == "long":
-        return resolve_project_srt_path(project_id, video_id=video.id) is not None
-    if video.video_type == "short_master":
-        return False
-    if (video.video_type or "").startswith("short_"):
-        return False
-    return resolve_project_srt_path(project_id, video_id=video.id) is not None
 
 
 def is_short_preview_video_type(video_type: str | None) -> bool:

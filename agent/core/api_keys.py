@@ -14,13 +14,13 @@ from agent.core.config import settings
 from agent.core.database import AsyncSessionFactory, UserApiKey
 
 Provider = Literal[
-    "anthropic", "gemini", "fal", "gcp", "runway", "azure_speech", "postforme", "zernio"
+    "anthropic", "gemini", "fal", "gcp", "azure_speech", "postforme", "zernio"
 ]
 KeySource = Literal["user", "platform", "none"]
 KeyTier = Literal["free", "paid"]
 
 ALLOWED_PROVIDERS: frozenset[str] = frozenset(
-    {"anthropic", "gemini", "fal", "gcp", "runway", "azure_speech", "postforme", "zernio"}
+    {"anthropic", "gemini", "fal", "gcp", "azure_speech", "postforme", "zernio"}
 )
 
 FREE_GEMINI_PURPOSES: frozenset[str] = frozenset(
@@ -109,11 +109,6 @@ async def get_user_api_key_row(
     return result.scalar_one_or_none()
 
 
-async def user_has_provider(session: AsyncSession, user_id: uuid.UUID, provider: str) -> bool:
-    row = await get_user_api_key_row(session, user_id, provider)
-    return row is not None
-
-
 def _platform_key(provider: str) -> tuple[str | None, dict | None]:
     if provider == "anthropic":
         return (settings.anthropic_api_key or None, None)
@@ -121,8 +116,6 @@ def _platform_key(provider: str) -> tuple[str | None, dict | None]:
         return (settings.google_gemini_api_key or None, None)
     if provider == "fal":
         return (settings.fal_key or None, None)
-    if provider == "runway":
-        return (settings.runway_api_key or None, None)
     if provider == "azure_speech":
         meta = {"region": settings.azure_speech_region}
         return (settings.azure_speech_key or None, meta)
@@ -168,7 +161,7 @@ async def resolve_api_key(
         allow_platform = purpose in FREE_GEMINI_PURPOSES or tier == "free"
     elif provider == "azure_speech" and purpose == "tts_azure":
         allow_platform = bool(platform_key)
-    elif provider in ("fal", "gcp", "runway") and tier == "paid":
+    elif provider in ("fal", "gcp") and tier == "paid":
         allow_platform = bool(platform_key)
 
     if allow_platform and platform_key:
@@ -203,26 +196,6 @@ async def fetch_api_key(
         return await resolve_api_key(
             session, user_id, provider, purpose=purpose, tier=tier
         )
-
-
-async def require_api_key(
-    session: AsyncSession,
-    user_id: uuid.UUID | None,
-    provider: Provider,
-    *,
-    purpose: str,
-    tier: KeyTier = "free",
-) -> ApiKeyContext:
-    """Résout une clé API ou lève ApiKeyNotConfiguredError."""
-    ctx = await resolve_api_key(
-        session, user_id, provider, purpose=purpose, tier=tier
-    )
-    if not ctx.key:
-        raise ApiKeyNotConfiguredError(
-            f"Clé {provider} non configurée pour cet utilisateur "
-            f"(purpose={purpose}). Ajoutez-la dans Compte → Clés API."
-        )
-    return ctx
 
 
 def parse_gcp_credentials(ctx: ApiKeyContext) -> GcpCredentials | None:

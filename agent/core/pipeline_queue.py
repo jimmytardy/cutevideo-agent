@@ -15,7 +15,6 @@ from agent.core.database import AsyncSessionFactory, Channel, Project, User
 from agent.core.disk_guard import format_disk_wait_message, is_disk_sufficient
 from agent.core.pipeline_lease import has_active_lease
 from agent.core.queue import (
-    LEGACY_PIPELINE_QUEUE,
     PIPELINE_PAYLOAD_PREFIX,
     PIPELINE_ZQUEUE,
     queue,
@@ -116,10 +115,6 @@ async def enqueue_pipeline_task(
     project_id: uuid.UUID,
     *,
     user_id: uuid.UUID | None = None,
-    start_from: str | None = None,
-    critic_feedback: list[dict[str, Any]] | None = None,
-    critic_start_from: str | None = None,
-    resume_iteration: int | None = None,
     reconcile_orphan: bool = False,
 ) -> QueueStatus:
     """Ajoute un pipeline à la file prioritaire."""
@@ -161,10 +156,6 @@ async def enqueue_pipeline_task(
         "score": score,
         "enqueued_at_ms": enqueued_at_ms,
         "queued_at": queued_at.isoformat(),
-        "start_from": start_from,
-        "critic_feedback": critic_feedback,
-        "critic_start_from": critic_start_from,
-        "resume_iteration": resume_iteration,
     }
 
     await queue.client.set(_payload_key(project_key), json.dumps(payload))
@@ -438,37 +429,3 @@ async def dequeue_next_eligible() -> DequeueResult:
 
     all_blocked = blocked_count > 0
     return DequeueResult(payload=None, all_blocked=all_blocked)
-
-
-async def migrate_legacy_pipeline_queue() -> int:
-    """Migre l'ancienne list Redis FIFO vers la ZSET prioritaire."""
-    await queue.connect()
-    migrated = 0
-    while True:
-        raw = await queue.client.lpop(LEGACY_PIPELINE_QUEUE)
-        if raw is None:
-            break
-        payload = json.loads(raw)
-        project_id = uuid.UUID(payload["project_id"])
-        async with AsyncSessionFactory() as session:
-            project = await session.get(Project, project_id)
-            if project is None:
-                continue
-            channel = await session.get(Channel, project.channel_id)
-            user_id = channel.user_id if channel else None
-        if user_id is None:
-            continue
-        if await is_queued(project_id):
-            continue
-        await enqueue_pipeline_task(
-            project_id,
-            user_id=user_id,
-            start_from=payload.get("start_from"),
-            critic_feedback=payload.get("critic_feedback"),
-            critic_start_from=payload.get("critic_start_from"),
-            resume_iteration=payload.get("resume_iteration"),
-        )
-        migrated += 1
-    if migrated:
-        logger.info("Migration queue legacy : %d tâche(s) migrée(s)", migrated)
-    return migrated

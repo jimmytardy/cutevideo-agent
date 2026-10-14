@@ -5,11 +5,9 @@ import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
 import Paper from '@mui/material/Paper'
 import Chip from '@mui/material/Chip'
-import Button from '@mui/material/Button'
 import Alert from '@mui/material/Alert'
 import Stack from '@mui/material/Stack'
 import CircularProgress from '@mui/material/CircularProgress'
-import DownloadIcon from '@mui/icons-material/Download'
 import { authenticatedMediaUrl, fetcher, type FinalPreview } from '@/lib/api'
 
 const VIDEO_TYPE_LABELS: Record<string, string> = {
@@ -106,35 +104,8 @@ export default function FinalPreviewSection({ projectId, refreshInterval = 5000 
         {video.iteration > 0 && (
           <Chip size="small" label={`Itération ${video.iteration}`} variant="outlined" />
         )}
-        {data.subtitles_available && data.subtitles_download_url && (
-          <Button
-            size="small"
-            variant="outlined"
-            startIcon={<DownloadIcon />}
-            component="a"
-            href={
-              data.subtitles_download_url
-                ? authenticatedMediaUrl(data.subtitles_download_url)
-                : undefined
-            }
-            download
-          >
-            Télécharger les sous-titres (.srt)
-          </Button>
-        )}
       </Stack>
 
-      {data.subtitles_note && (
-        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-          {data.subtitles_note}
-        </Typography>
-      )}
-
-      {video.video_type === 'long' && !data.subtitles_available && (
-        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-          Les sous-titres .srt apparaîtront ici une fois l&apos;étape Sous-titreur terminée.
-        </Typography>
-      )}
     </Paper>
   )
 }

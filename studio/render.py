@@ -18,13 +18,7 @@ from agent.skills.video.ffmpeg_runtime import (
     run_ffmpeg,
     thread_args,
 )
-from agent.skills.video.ken_burns import (
-    SHORT_FPS,
-    SHORT_HEIGHT,
-    SHORT_WIDTH,
-    _build_static_filter,
-    _build_zoom_filter,
-)
+from studio.assets import SHORT_FPS, SHORT_HEIGHT, SHORT_WIDTH
 from studio.audiomix import mix_short_audio
 from studio.contracts import (
     TIMELINE_DURATION_TOLERANCE_S,
@@ -33,6 +27,7 @@ from studio.contracts import (
     TimelineClip,
     load_contract,
 )
+from studio.kenburns import build_static_filter, build_zoom_filter
 from studio.media import probe_media
 from studio.subtitles import SubtitleStyle, ass_filter, write_ass
 from studio.textfx import drawtext_chain, fit_fontsize, wrap_lines
@@ -67,10 +62,10 @@ async def _render_clip(clip: TimelineClip, src: Path, out: Path, work: Path, idx
     if is_image:
         n_frames = max(int(duration * SHORT_FPS), 1)
         if clip.motion == "static":
-            vf = _build_static_filter(SHORT_WIDTH, SHORT_HEIGHT, SHORT_FPS)
+            vf = build_static_filter(SHORT_WIDTH, SHORT_HEIGHT, SHORT_FPS)
         else:
             pan = {"pan_left": -1, "pan_right": 1}.get(clip.motion, 0)
-            vf = _build_zoom_filter(
+            vf = build_zoom_filter(
                 SHORT_WIDTH,
                 SHORT_HEIGHT,
                 SHORT_FPS,
@@ -81,7 +76,7 @@ async def _render_clip(clip: TimelineClip, src: Path, out: Path, work: Path, idx
             )
         inputs = ["-loop", "1", "-i", str(src)]
     else:
-        vf = _build_static_filter(SHORT_WIDTH, SHORT_HEIGHT, SHORT_FPS)
+        vf = build_static_filter(SHORT_WIDTH, SHORT_HEIGHT, SHORT_FPS)
         # Boucle la source si elle est plus courte que le créneau.
         inputs = ["-stream_loop", "-1", "-ss", str(clip.video_offset), "-i", str(src)]
 

@@ -9,44 +9,16 @@
     "lease_ttl_seconds": 60,
     "lease_renew_interval_seconds": 30,
     "reconcile_interval_seconds": 600,
-    "max_fact_check_iterations": 3,
     "max_critic_iterations": 5,
-    "min_critic_score": 90,
-    "min_voice_score": 6,
-    "min_short_structure_score": 11,
-    "min_image_duration_s": 4,
-    "min_image_duration_short_s": 1.5,
-    "max_static_shot_s": 8,
-    "images_per_segment": 4,
-    "visual_beats": {
-      "enabled": true,
-      "min_beats_per_short_segment": 4,
-      "max_beats_per_segment": 8,
-      "min_diagram_duration_s": 6.0,
-      "min_diagram_duration_short_s": 4.0
-    }
-  },
-  "production": {
-    "short_derivation_strategy": "hybrid",
-    "short_derivation_mode": "free_sources_only",
-    "hybrid_teaser_max_clips": 2
+    "min_critic_score": 90
   },
   "tts": {
     "engine": "azure",
     "voice": "fr-FR-Vivienne:DragonHDLatestNeural",
     "fallback_voice": "fr-FR-RemyMultilingualNeural",
-    "default_style": "narration-relaxed",
-    "default_rate": "+0%",
-    "insert_pauses": true,
-    "comma_pauses": false,
-    "oralize": true,
     "short": {
       "engine": "azure",
       "voice": "fr-FR-Vivienne:DragonHDLatestNeural"
-    },
-    "long": {
-      "engine": "gemini",
-      "voice": "Leda"
     },
     "gemini": {
       "apply_to": "off",
@@ -56,330 +28,15 @@
     }
   },
   "video": {
-    "long": {
-      "width": 1920,
-      "height": 1080,
-      "fps": 25,
-      "bitrate": "8M",
-      "audio_bitrate": "192k"
-    },
-    "perception": {
-      "enabled": true,
-      "max_assets_per_video": 20,
-      "model": "gemini-2.5-flash"
-    },
-    "ken_burns": {
-      "enabled": true,
-      "zoom_factor": 0.03,
-      "pan_enabled": false
-    },
-    "grade": {
-      "lut_by_theme": {
-        "histoire": "data/luts/vintage_warm.cube",
-        "science": "data/luts/cool_teal.cube",
-        "default": "data/luts/neutral.cube"
-      }
-    },
-    "texture": {
-      "grain": 8,
-      "vignette": true,
-      "vignette_angle": 0.22,
-      "light_leak": false,
-      "light_leak_opacity": 0.12,
-      "vhs": false,
-      "vhs_shift": 2,
-      "by_theme": {
-        "histoire": {
-          "grain": 12,
-          "vignette": true,
-          "light_leak": true
-        },
-        "true_crime": {
-          "grain": 10,
-          "vhs": true
-        }
-      }
-    },
-    "transitions": {
-      "enabled": true,
-      "duration_s": 0.4,
-      "catalog": [
-        "fade",
-        "dissolve",
-        "circleopen",
-        "circleclose",
-        "pixelize",
-        "wiperight",
-        "wipeleft",
-        "wipedown",
-        "wipeup",
-        "diagtl",
-        "diagtr",
-        "hlslice",
-        "hrslice",
-        "vuslice",
-        "vdslice",
-        "fadeblack",
-        "fadewhite",
-        "glitch",
-        "flash_impact"
-      ],
-      "impact": {
-        "glitch_frames": 6,
-        "glitch_noise": 35,
-        "flash_duration_s": 0.15
-      },
-      "mood_defaults": {
-        "dramatique": "dissolve",
-        "tension": "dissolve",
-        "mysterieux": "dissolve",
-        "energique": "wipeleft",
-        "humoristique": "wiperight",
-        "calme": "fade"
-      },
-      "visual_type_defaults": {
-        "scientific_diagram": "fade",
-        "infographic": "dissolve",
-        "sports_action": "wipeleft",
-        "archival_footage": "fade",
-        "quote_card": "fade",
-        "statistic_highlight": "circleopen"
-      }
-    },
     "short": {
-      "width": 1080,
-      "height": 1920,
-      "fps": 30,
-      "bitrate": "6M",
-      "max_duration_youtube": 120,
-      "max_duration_tiktok": 120,
-      "max_duration_instagram": 120,
       "min_duration_tiktok": 60
-    },
-    "short_montage_profile": {
-      "ken_burns": {
-        "zoom_factor": 0.08,
-        "pan_enabled": true
-      },
-      "transitions": {
-        "duration_s": 0.2,
-        "mood_defaults": {
-          "energique": "pixelize",
-          "humoristique": "wipeleft"
-        }
-      },
-      "beat_slot_s": 2.5,
-      "beat_snap_tolerance_s": 0.15,
-      "dynamic_recut_enabled": false,
-      "sfx": {
-        "beat_cuts_enabled": true,
-        "max_cues_per_minute": 12
-      }
-    },
-    "long_montage_profile": {
-      "beat_snap_tolerance_s": 0.15,
-      "sfx": {
-        "beat_cuts_enabled": true,
-        "max_cues_per_minute": 10,
-        "text_pop_enabled": true
-      },
-      "inter_segment_flash": true,
-      "inter_segment_flash_duration_s": 0.15,
-      "pacing": {
-        "hook_transition": "fadewhite",
-        "mood_transitions": {
-          "energique": "wipeleft",
-          "dramatique": "dissolve",
-          "tension": "fadeblack"
-        }
-      }
-    },
-    "jl_cuts": {
-      "enabled": false,
-      "max_audio_lead_s": 0.3,
-      "max_audio_trail_s": 0.3
     }
   },
   "whisper": {
     "model": "large-v3",
     "language": "fr"
   },
-  "subtitles": {
-    "enabled": true,
-    "style": "karaoke",
-    "max_words_per_line": 3,
-    "pause_threshold_ms": 400,
-    "font_name": "DejaVu Sans",
-    "font_size": 68,
-    "primary_color": "#FFFFFF",
-    "highlight_color": "#FFE600",
-    "outline_color": "#000000",
-    "outline_width": 4,
-    "vertical_position": 0.65,
-    "margin_v": 120,
-    "active_word_scale": 115,
-    "uppercase_highlight": true,
-    "uppercase_word_scale": 120
-  },
   "media_sources": {
-    "prefer_video": true,
-    "video_clips_per_segment": 2,
-    "images_per_segment": 3,
-    "priority_by_theme": {
-      "histoire": [
-        "gallica",
-        "europeana",
-        "wikimedia"
-      ],
-      "france": [
-        "gallica",
-        "europeana",
-        "wikimedia"
-      ],
-      "nature": [
-        "unsplash",
-        "pexels",
-        "pixabay",
-        "coverr",
-        "wikimedia"
-      ],
-      "animaux": [
-        "unsplash",
-        "pexels",
-        "pixabay",
-        "coverr",
-        "wikimedia"
-      ],
-      "science": [
-        "nasa",
-        "wikimedia",
-        "pexels",
-        "pixabay",
-        "coverr"
-      ],
-      "art": [
-        "europeana",
-        "wikimedia"
-      ],
-      "sport": [
-        "pexels",
-        "pixabay",
-        "coverr",
-        "wikimedia",
-        "unsplash"
-      ],
-      "true_crime": [
-        "wikimedia",
-        "pexels",
-        "internet_archive",
-        "pixabay",
-        "coverr"
-      ],
-      "entertainment": [
-        "coverr",
-        "pexels",
-        "pixabay",
-        "wikimedia"
-      ],
-      "humour": [
-        "coverr",
-        "pexels",
-        "pixabay",
-        "wikimedia"
-      ],
-      "default": [
-        "pexels",
-        "pixabay",
-        "coverr",
-        "wikimedia",
-        "unsplash"
-      ]
-    },
-    "priority_by_visual_type": {
-      "sports_action": [
-        "pexels",
-        "pixabay",
-        "coverr",
-        "wikimedia",
-        "unsplash"
-      ],
-      "stadium_establishing": [
-        "pexels",
-        "unsplash",
-        "pixabay",
-        "coverr",
-        "wikimedia"
-      ],
-      "viral_fail": [
-        "coverr",
-        "pexels",
-        "pixabay",
-        "wikimedia"
-      ],
-      "reaction_clip": [
-        "coverr",
-        "pexels",
-        "pixabay",
-        "wikimedia"
-      ],
-      "ranking_moment": [
-        "coverr",
-        "pexels",
-        "pixabay",
-        "wikimedia"
-      ],
-      "space_photo": [
-        "nasa",
-        "wikimedia",
-        "pexels"
-      ],
-      "archival_footage": [
-        "gallica",
-        "europeana",
-        "wikimedia",
-        "internet_archive"
-      ],
-      "crime_documentary": [
-        "wikimedia",
-        "pexels",
-        "internet_archive",
-        "pixabay"
-      ],
-      "artwork": [
-        "europeana",
-        "wikimedia",
-        "unsplash"
-      ]
-    },
-    "ai_only_visual_types": [
-      "scientific_diagram",
-      "infographic",
-      "data_chart",
-      "cross_section",
-      "timeline",
-      "map",
-      "quote_card",
-      "statistic_highlight",
-      "text_card",
-      "headline_overlay",
-      "battle_map",
-      "versus_card",
-      "lower_third",
-      "countdown_timer",
-      "ui_mockup",
-      "microscope_view",
-      "meme_template",
-      "cartoon",
-      "satirical_illustration",
-      "visual_pun"
-    ],
-    "min_width_px": 1280,
-    "relevance_min_score": 60,
-    "max_search_iterations": 3,
-    "min_passing_candidates_multiplier": 1.5,
-    "relevance_min_score_high_precision": 75,
-    "niche_threshold_candidates": 2,
-    "enable_post_selection_audit": true,
     "niche_fallback_rates": {
       "histoire": 0.05,
       "france": 0.05,
@@ -423,8 +80,7 @@
         "fast_model": "imagen-3.0-fast-generate-001"
       },
       "license": "synthetic-ai-generated"
-    },
-    "forced_best_min_score": 40
+    }
   },
   "editorial_calendar": {
     "publication_lead_days": 1
@@ -433,8 +89,6 @@
     "freshness_days": 30,
     "default_long_duration_seconds": 1800,
     "default_short_duration_s": 90,
-    "min_short_duration_s": 60,
-    "max_short_duration_s": 120,
     "evergreen_default": [
       "Portrait d'une figure emblématique du thème",
       "Mythe ou idée reçue à déconstruire",
@@ -521,40 +175,12 @@
       "content_planner_agent": "economy"
     },
     "max_tokens": {
-      "content_planner_agent": 2048,
-      "critic_agent": 2048,
-      "comments_agent": 1024,
-      "art_director_agent": 512,
-      "metadata_agent": 2048,
-      "montage_planner_agent": 16384,
-      "fact_checker_agent": 4096,
-      "hook_optimizer_agent": 4096,
-      "diagram_specialist_agent": 4096
+      "content_planner_agent": 2048
     },
-    "engagement_run_weekdays": [
-      0,
-      3
-    ],
     "planner_llm_weekdays": [
       0,
       3
-    ],
-    "learning_context_max_insights": 8,
-    "max_publications_per_engagement_run": 40
-  },
-  "onboarding": {
-    "market_research": {
-      "platforms": [
-        "youtube",
-        "tiktok",
-        "instagram"
-      ],
-      "region": "FR",
-      "language": "fr",
-      "max_youtube_channels": 10,
-      "max_youtube_videos": 15,
-      "max_tokens": 16000
-    }
+    ]
   },
   "storage": {
     "retention_days": 30,
@@ -562,22 +188,6 @@
     "storage_buffer_bytes": 524288000,
     "presign_ttl_seconds": 3600,
     "delete_local_after_upload": true
-  },
-  "runway": {
-    "enabled": false,
-    "monthly_budget_usd": 20.0,
-    "cost_per_second_usd": 0.05,
-    "default_duration_s": 5,
-    "model": "gen4_turbo",
-    "resolution": "1280:720",
-    "max_clips_per_video": 3,
-    "max_clips_per_short": 1
-  },
-  "audio_mix": {
-    "music_volume_with_voice": 0.06,
-    "music_volume_ambient_only": 0.04,
-    "music_volume_no_voice": 0.1,
-    "ducking_enabled": true
   },
   "editorial": {
     "format_rotation": {
@@ -816,8 +426,7 @@
     "gemini-3.5-flash": {
       "input_per_mtok_usd": 0.15,
       "output_per_mtok_usd": 0.6
-    },
-    "gemini-video-per-minute-usd": 0.05
+    }
   },
   "audio_mastering": {
     "enabled": true,

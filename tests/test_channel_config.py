@@ -39,7 +39,6 @@ def test_subscription_disables_ai_fallback_on_free_plan() -> None:
     }
     limits = SubscriptionLimits(enable_ai_fallback=False)
     cfg = resolve_channel_config(channel, subscription_limits=limits)  # type: ignore[arg-type]
-    assert cfg.media_sources.enable_ai_fallback is False
     assert cfg.ai_fallback.enabled is False
 
 
@@ -54,4 +53,5 @@ def test_subscription_allows_ai_fallback_on_paid_plan() -> None:
     }
     limits = SubscriptionLimits(enable_ai_fallback=True)
     cfg = resolve_channel_config(channel, subscription_limits=limits)  # type: ignore[arg-type]
-    assert cfg.media_sources.enable_ai_fallback is True
+    # Plan payant : le choix de la chaîne (désactivé) est respecté.
+    assert cfg.ai_fallback.enabled is False

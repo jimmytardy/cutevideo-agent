@@ -11,7 +11,7 @@ import pytest
 
 from agent.core import claude_cli_llm
 from agent.core.agent_llm_constraints import CLAUDE_CLI_MODELS, normalize_agent_preference
-from agent.core.llm_resolver import AgentLlmPreference, call_llm, parse_agent_preferences
+from agent.core.llm_resolver import call_llm, parse_agent_preferences
 
 
 def _fake_cli(tmp_path: Path, *, result: str, is_error: bool = False) -> Path:

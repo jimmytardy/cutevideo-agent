@@ -82,6 +82,17 @@ def test_build_env_prefers_subscription(monkeypatch: pytest.MonkeyPatch, tmp_pat
     assert build_env(tmp_path)["ANTHROPIC_API_KEY"] == "sk-test"
 
 
+@pytest.mark.parametrize(("brief_cap", "platform_cap", "expected"), [(0, "4", "0"), (2, "4", "2"), (10, "4", "4")])
+def test_build_env_caps_ai_images_from_brief(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, brief_cap: int, platform_cap: str, expected: str
+) -> None:
+    monkeypatch.setenv("STUDIO_MAX_AI_IMAGES", platform_cap)
+    (tmp_path / "brief.json").write_text(
+        json.dumps({"theme": "t", "max_ai_images": brief_cap}), encoding="utf-8"
+    )
+    assert build_env(tmp_path)["STUDIO_MAX_AI_IMAGES"] == expected
+
+
 def test_prepare_run_dir_copies_workspace(tmp_path: Path) -> None:
     run_dir = prepare_run_dir(tmp_path / "run", Brief(theme="Les volcans", target_duration_s=30))
     assert (run_dir / "CLAUDE.md").exists()

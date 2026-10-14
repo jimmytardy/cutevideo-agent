@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
 
 from agent.core.api_keys import GcpCredentials
 
@@ -34,10 +33,3 @@ class ImageGenerationResult:
     license: str
     title: str
     provider_plan: str
-
-
-class ImageProvider(Protocol):
-    plan_id: str
-
-    async def generate(self, request: ImageGenerationRequest) -> ImageGenerationResult | None:
-        """Génère une image et la sauvegarde localement."""

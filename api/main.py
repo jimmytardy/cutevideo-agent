@@ -25,13 +25,11 @@ from api.routes import (
     config,
     content_planning,
     distribution,
-    markets,
     me,
     projects,
     pipeline_queue,
     scheduler,
     cost,
-    media_serve,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -107,14 +105,12 @@ app.include_router(channels.router)
 app.include_router(projects.router)
 app.include_router(pipeline_queue.router)
 app.include_router(agents.router)
-app.include_router(media_serve.router)
 app.include_router(analytics.router)
 app.include_router(content_planning.router)
 app.include_router(distribution.router)
 app.include_router(config.router)
 app.include_router(scheduler.router)
 app.include_router(cost.router)
-app.include_router(markets.router)
 
 
 @app.exception_handler(Exception)

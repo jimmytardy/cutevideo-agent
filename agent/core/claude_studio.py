@@ -29,7 +29,6 @@ from agent.core.database import (
     Scenario,
     Video,
 )
-from agent.core.queue import queue
 from studio.contracts import (
     Brief,
     ContractError,
@@ -74,8 +73,10 @@ def build_brief(ctx: "PipelineContext") -> Brief:
         max_iterations=max(1, min(ctx.max_critic_iterations or cfg.quality_max_iterations, 6)),
         min_score=cfg.min_critic_score,
         editorial_tone=cfg.editorial_tone,
+        creative_brief=(ctx.channel.creative_brief or "").strip(),
         content_plan=plan or None,
         animations=cfg.studio_animations,
+        max_ai_images=cfg.ai_fallback.max_ai_images_per_video if cfg.ai_fallback.enabled else 0,
     )
 
 
@@ -117,7 +118,6 @@ class _ProgressRecorder:
             session.add(run)
             await session.commit()
             self.runs[data["id"]] = run.id
-        await queue.set_agent_status(self.pid, name, "running")
 
     async def _end(self, data: dict[str, Any]) -> None:
         name = ROLE_AGENT_NAMES.get(data["role"])
@@ -138,7 +138,6 @@ class _ProgressRecorder:
                 )
             )
             await session.commit()
-        await queue.set_agent_status(self.pid, name, status)
         if data["role"] == "critique" and not data["is_error"]:
             self.iteration += 1
 

@@ -25,7 +25,6 @@ from agent.core.database import (
     Scenario,
     Video,
 )
-from agent.core.queue import queue
 from agent.core.storage import delete_s3_object
 
 logger = logging.getLogger(__name__)
@@ -57,7 +56,6 @@ async def clear_creation_artifacts(project_id: uuid.UUID, session: AsyncSession)
         await session.delete(video)
     await session.execute(delete(Scenario).where(Scenario.project_id == project_id))
     await session.execute(delete(AgentRun).where(AgentRun.project_id == project_id))
-    await queue.clear_agent_statuses(str(project_id))
     await session.flush()
 
 
@@ -124,7 +122,6 @@ async def delete_project_completely(
     await session.execute(delete(Scenario).where(Scenario.project_id == project_id))
     await session.execute(delete(AgentRun).where(AgentRun.project_id == project_id))
 
-    await queue.clear_agent_statuses(str(project_id))
 
     for directory in [Path(f"./tmp/{project_id}"), *_studio_dirs(project_id)]:
         if directory.exists():

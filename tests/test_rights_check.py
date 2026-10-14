@@ -1,14 +1,9 @@
 from __future__ import annotations
 
-import uuid
-from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
-from agent.core.database import MediaAsset
 from agent.skills.media.rights_check import (
-    build_credits_block,
     enrich_candidate,
     filter_publishable,
     is_publishable,
@@ -98,40 +93,3 @@ def test_enrich_candidate_extracts_author_from_pexels() -> None:
     assert item["license"] == "pexels"
     assert item["source_url"] == "https://images.pexels.com/photo.jpg"
     assert item["requires_attribution"] is False
-
-
-def test_build_credits_block_dedup_and_format() -> None:
-    project_id = uuid.uuid4()
-    assets = [
-        MediaAsset(
-            project_id=project_id,
-            source="wikimedia",
-            source_url="https://commons.wikimedia.org/file1.jpg",
-            license="CC-BY",
-            author="Alice",
-            requires_attribution=True,
-            asset_type="image",
-        ),
-        MediaAsset(
-            project_id=project_id,
-            source="wikimedia",
-            source_url="https://commons.wikimedia.org/file1.jpg",
-            license="CC-BY",
-            author="Alice",
-            requires_attribution=True,
-            asset_type="image",
-        ),
-        MediaAsset(
-            project_id=project_id,
-            source="pexels",
-            license="pexels",
-            author="Bob",
-            requires_attribution=False,
-            asset_type="image",
-        ),
-    ]
-    block = build_credits_block(assets)
-    assert block.startswith("Crédits :")
-    assert block.count("Alice") == 1
-    assert "CC-BY" in block
-    assert "Bob" not in block

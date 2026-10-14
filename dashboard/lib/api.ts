@@ -101,73 +101,6 @@ export interface Channel {
   updated_at: string
 }
 
-export interface ThemeVariant {
-  content_angle: string
-  slug: string
-  name: string
-  theme_category: string
-  niche_prompt: string
-  suggested_tags: string[]
-}
-
-export interface RecommendedTheme extends ThemeVariant {
-  differentiation_score: number
-  competition_level: string
-  why_you_can_win: string
-  risks: string[]
-}
-
-export interface MarketAnalysisReport {
-  id?: string | null
-  user_prompt: string
-  market_summary: string
-  saturation_verdict: string
-  differentiation_verdict: string
-  platforms_analyzed: string[]
-  platform_insights: {
-    platform: string
-    trend_summary: string
-    winning_formats: string[]
-    audience_signals: string[]
-    hashtag_or_keyword_hints: string[]
-    data_source: string
-  }[]
-  top_competitors: {
-    platform: string
-    name: string
-    handle_or_url: string
-    subscriber_count: number | null
-    video_count: number | null
-    positioning: string
-    strengths: string[]
-    weaknesses: string[]
-    content_formats: string[]
-  }[]
-  niche_opportunities: {
-    niche_name: string
-    potential_score: number
-    competition_level: string
-    rationale: string
-    differentiation_angle: string
-  }[]
-  recommended_themes: RecommendedTheme[]
-  avoid: string[]
-  next_steps: string[]
-}
-
-export interface MarketAnalysisListItem {
-  id: string
-  prompt: string
-  saturation_verdict: string | null
-  market_summary: string | null
-  platforms_analyzed: string[] | null
-  created_at: string
-}
-
-export interface MarketAnalysisDetail extends MarketAnalysisListItem {
-  report: MarketAnalysisReport | null
-}
-
 export interface ChannelBrandKit {
   slug: string
   name: string
@@ -301,9 +234,6 @@ export interface Video {
 export interface FinalPreview {
   video: Video | null
   stream_url: string | null
-  subtitles_available: boolean
-  subtitles_download_url: string | null
-  subtitles_note: string | null
   duration_warnings: string[]
 }
 
@@ -379,20 +309,6 @@ export function swrOnErrorRetry(
 }
 
 export { fetcher }
-
-export interface RunwayStatus {
-  enabled: boolean
-  monthly_budget_usd: number
-  spent_usd: number
-  remaining_usd: number
-  credit_error: boolean
-  model: string
-  cost_per_clip_usd: number
-}
-
-export async function fetchRunwayStatus(channelId: string): Promise<RunwayStatus> {
-  return fetcher(`${BASE}/channels/${channelId}/runway-status`)
-}
 
 export async function fetchChannels(activeOnly = false): Promise<Channel[]> {
   const q = activeOnly ? '?active_only=true' : ''
@@ -565,9 +481,9 @@ export async function completeOnboarding(channelId: string): Promise<Channel> {
 }
 
 export interface ChannelUpdatePayload {
-  theme_category?: unknown
-  theme_prompt?: unknown
-  niche_prompt?: unknown
+  theme_category?: string
+  theme_prompt?: string
+  niche_prompt?: string
   creative_brief?: string | null
   config?: Record<string, unknown>
 }
@@ -592,15 +508,7 @@ export interface ChannelCostEstimate {
 }
 
 export interface ChannelCostPreviewRequest {
-  ai_fallback: {
-    plan?: unknown
-    enabled?: boolean
-    fallback_chain?: unknown[]
-    max_images_per_segment?: number
-    max_ai_images_per_video?: number
-    max_ai_images_per_week?: number | null
-    fallback_rate_override?: number | null
-  }
+  ai_fallback: Record<string, unknown>
 }
 
 export async function updateChannel(
@@ -731,14 +639,6 @@ export async function checkTopicSimilarity(
 ): Promise<SimilarityCheck> {
   const params = new URLSearchParams({ channel_id: channelId, theme })
   return fetcher(`${BASE}/projects/check-similarity?${params}`)
-}
-
-export async function listMarketAnalyses(): Promise<MarketAnalysisListItem[]> {
-  return apiJson<MarketAnalysisListItem[]>(`${BASE}/markets`)
-}
-
-export async function getMarketAnalysis(id: string): Promise<MarketAnalysisDetail> {
-  return apiJson<MarketAnalysisDetail>(`${BASE}/markets/${id}`)
 }
 
 // ── Claude Studio ────────────────────────────────────────────────────────

@@ -33,16 +33,6 @@ async def _raise_if_cancelled(project_id: uuid.UUID) -> None:
         raise asyncio.CancelledError()
 
 
-# Étapes du pipeline Claude Studio (noms historiques, cf. claude_studio.ROLE_AGENT_NAMES).
-AGENT_ORDER = [
-    "scenario_agent",
-    "narrator_agent",
-    "editor_agent",
-    "thumbnail_agent",
-    "critic_agent",
-]
-
-
 @dataclass
 class PipelineContext:
     project_id: uuid.UUID
@@ -65,7 +55,6 @@ class Orchestrator:
     async def run_pipeline(
         self,
         project_id: uuid.UUID,
-        start_from: str | None = None,
         *,
         already_claimed: bool = False,
     ) -> None:
@@ -136,10 +125,6 @@ class Orchestrator:
             from agent.core.claude_studio import ClaudeStudioRunner
             from agent.core.storage import cleanup_local_videos_for_project
 
-            if start_from:
-                logger.info(
-                    "start_from=%s ignoré : Claude Studio relance la création complète", start_from
-                )
             await ClaudeStudioRunner(ctx).run()
             await cleanup_local_videos_for_project(project_id)
 

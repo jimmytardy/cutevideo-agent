@@ -27,10 +27,6 @@ def platform_for_video_type(video_type: str | None) -> str | None:
     return None
 
 
-def is_long_video_type(video_type: str | None) -> bool:
-    return (video_type or "long") == "long"
-
-
 def channel_supports_platform(channel: Channel, platform: str) -> bool:
     if platform == "youtube":
         return bool(channel.youtube_channel_id)

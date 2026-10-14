@@ -1,221 +1,173 @@
 import type { Channel } from '@/lib/api'
 
-export type ChannelSettingsForm = Record<string, unknown>
+/** Valeur d'un champ numérique : nombre côté API, chaîne pendant la saisie. */
+type NumericInput = number | string
 
-function resolveTtsProfiles(tts: Record<string, unknown>) {
-  const gemini = (tts.gemini as Record<string, unknown>) || {}
-  const defaultEngine = String(tts.engine || 'azure')
-  const defaultVoice = String(tts.voice || 'fr-FR-Vivienne:DragonHDLatestNeural')
-  const shortRaw = tts.short as Record<string, unknown> | undefined
-  const longRaw = tts.long as Record<string, unknown> | undefined
+export interface ChannelSettingsForm {
+  theme_category: string
+  theme_prompt: string
+  niche_prompt: string
+  creative_brief: string
+  youtube_category_id: string
+  tone: string
+  production_mode: string
+  /** '' = hérite du défaut plateforme (data/agent_config.json → studio.animations). */
+  animations: string
+  short_duration_s: NumericInput
+  long_quota: NumericInput
+  short_quota: NumericInput
+  enabled_platforms: string[]
+  tts_short_engine: string
+  tts_short_voice: string
+  ai_plan: string
+  ai_fallback_chain: string
+  max_images_per_segment: NumericInput
+  max_ai_images_per_video: NumericInput
+  max_ai_images_per_week: NumericInput
+  fallback_rate_override: NumericInput
+}
 
-  let shortEngine = String(shortRaw?.engine || defaultEngine)
-  let shortVoice = String(shortRaw?.voice || defaultVoice)
-  let longEngine = String(longRaw?.engine || defaultEngine)
-  let longVoice = String(longRaw?.voice || defaultVoice)
+export type UpdateChannelForm = (patch: Partial<ChannelSettingsForm>) => void
 
-  if (!shortRaw && !longRaw && gemini.apply_to && gemini.apply_to !== 'off') {
-    const geminiVoice = String(gemini.voice || 'Leda')
-    if (gemini.apply_to === 'shorts' || gemini.apply_to === 'both') {
-      shortEngine = 'gemini'
-      shortVoice = geminiVoice
-    }
-    if (gemini.apply_to === 'long' || gemini.apply_to === 'both') {
-      longEngine = 'gemini'
-      longVoice = geminiVoice
-    }
+type Json = Record<string, unknown>
+
+const DEFAULT_VOICE = 'fr-FR-Vivienne:DragonHDLatestNeural'
+
+/** Clés de Channel.config qui ne sont plus lues par le backend : retirées à l'enregistrement. */
+const LEGACY_CONFIG_KEYS = ['runway', 'media_validation', 'subtitles', 'engagement', 'media_library']
+
+function section(config: Json, key: string): Json {
+  return (config[key] as Json) || {}
+}
+
+/** Profil voix des Shorts (le seul utilisé par Claude Studio), avec compat `gemini.apply_to`. */
+function resolveShortTts(tts: Json): { engine: string; voice: string } {
+  const shortRaw = tts.short as Json | undefined
+  const gemini = section(tts, 'gemini')
+  if (!shortRaw && (gemini.apply_to === 'shorts' || gemini.apply_to === 'both')) {
+    return { engine: 'gemini', voice: String(gemini.voice || 'Leda') }
   }
+  return {
+    engine: String(shortRaw?.engine || tts.engine || 'azure'),
+    voice: String(shortRaw?.voice || tts.voice || DEFAULT_VOICE),
+  }
+}
 
-  return { shortEngine, shortVoice, longEngine, longVoice }
+function optionalNumber(value: unknown): number | null {
+  if (value === '' || value === null || value === undefined) return null
+  const n = Number(value)
+  return Number.isNaN(n) ? null : n
 }
 
 export function channelToFormState(channel: Channel): ChannelSettingsForm {
-  const cfg = channel.config || {}
-  const pub = (cfg.publishing as Record<string, unknown>) || {}
-  const prod = (cfg.production as Record<string, unknown>) || {}
-  const editorial = (cfg.editorial as Record<string, unknown>) || {}
-  const tts = (cfg.tts as Record<string, unknown>) || {}
-  const ttsProfiles = resolveTtsProfiles(tts)
-  const media = (cfg.media_sources as Record<string, unknown>) || {}
-  const mediaValidation = (cfg.media_validation as Record<string, unknown>) || {}
-  const ai = (media.ai_fallback as Record<string, unknown>) || {}
-  const runway = (cfg.runway as Record<string, unknown>) || {}
-  const studio = (cfg.studio as Record<string, unknown>) || {}
+  const cfg = (channel.config || {}) as Json
+  const pub = section(cfg, 'publishing')
+  const prod = section(cfg, 'production')
+  const ai = section(section(cfg, 'media_sources'), 'ai_fallback')
+  const quotas = (pub.daily_quotas as Record<string, number>) || {}
+  const shortTts = resolveShortTts(section(cfg, 'tts'))
 
   return {
     theme_category: channel.theme_category || '',
     theme_prompt: channel.theme_prompt || '',
     niche_prompt: channel.niche_prompt || '',
     creative_brief: channel.creative_brief || '',
-    media_validation_template: mediaValidation.media_validation_template || '',
-    default_min_relevance_score: mediaValidation.default_min_relevance_score ?? '',
-    youtube_category_id: String((pub.youtube_category_id as string) || '27'),
-    tone: editorial.tone || '',
-    target_audience: editorial.target_audience || '',
-    differentiator: editorial.differentiator || '',
-    production_mode: prod.mode || 'mixed',
-    // '' = hérite du défaut plateforme (data/agent_config.json → studio.animations).
-    animations: studio.animations || '',
-    short_duration_s: prod.short_duration_s || 60,
-    min_short_duration_s: prod.min_short_duration_s || 60,
-    max_short_duration_s: prod.max_short_duration_s || 120,
-    long_quota: (pub.daily_quotas as Record<string, number>)?.long ?? 1,
-    short_quota: (pub.daily_quotas as Record<string, number>)?.short ?? 3,
+    youtube_category_id: String(pub.youtube_category_id || '27'),
+    tone: String(section(cfg, 'editorial').tone || ''),
+    production_mode: String(prod.mode || 'mixed'),
+    animations: String(section(cfg, 'studio').animations || ''),
+    short_duration_s: Number(prod.short_duration_s || 60),
+    long_quota: quotas.long ?? 1,
+    short_quota: quotas.short ?? 3,
     enabled_platforms: (pub.enabled_platforms as string[]) || ['youtube', 'tiktok', 'instagram'],
-    tts_style: tts.style || 'narration-relaxed',
-    tts_short_engine: ttsProfiles.shortEngine,
-    tts_short_voice: ttsProfiles.shortVoice,
-    tts_long_engine: ttsProfiles.longEngine,
-    tts_long_voice: ttsProfiles.longVoice,
-    ai_plan: ai.plan || 'flux_pro',
-    ai_fallback_chain: ((ai.fallback_chain as string[]) || ['imagen3'])[0] || 'imagen3',
-    max_images_per_segment: ai.max_images_per_segment ?? 2,
-    max_ai_images_per_video: ai.max_ai_images_per_video ?? 10,
-    max_ai_images_per_week: ai.max_ai_images_per_week ?? '',
-    fallback_rate_override: ai.fallback_rate_override ?? '',
-    runway_enabled: runway.enabled ?? false,
-    runway_monthly_budget_usd: runway.monthly_budget_usd ?? 20,
-    runway_max_clips_per_video: runway.max_clips_per_video ?? 3,
+    tts_short_engine: shortTts.engine,
+    tts_short_voice: shortTts.voice,
+    ai_plan: String(ai.plan || 'flux_pro'),
+    ai_fallback_chain: ((ai.fallback_chain as string[]) || ['imagen3'])[0] || '',
+    max_images_per_segment: Number(ai.max_images_per_segment ?? 2),
+    max_ai_images_per_video: Number(ai.max_ai_images_per_video ?? 10),
+    max_ai_images_per_week: (ai.max_ai_images_per_week as number | null) ?? '',
+    fallback_rate_override: (ai.fallback_rate_override as number | null) ?? '',
   }
 }
 
-function normalizeOptionalNumber(value: unknown): number | null {
-  if (value === '' || value === null || value === undefined) return null
-  const n = Number(value)
-  return Number.isNaN(n) ? null : n
-}
-
-export function normalizeFormForCompare(form: ChannelSettingsForm): ChannelSettingsForm {
-  const platforms = [...((form.enabled_platforms as string[]) || [])].sort()
+function normalizeForCompare(form: ChannelSettingsForm): Json {
   return {
-    theme_category: String(form.theme_category || ''),
-    theme_prompt: String(form.theme_prompt || ''),
-    niche_prompt: String(form.niche_prompt || ''),
-    creative_brief: String(form.creative_brief || '') || null,
-    media_validation_template: String(form.media_validation_template || ''),
-    default_min_relevance_score: normalizeOptionalNumber(form.default_min_relevance_score),
-    youtube_category_id: String(form.youtube_category_id || '27'),
-    tone: String(form.tone || ''),
-    target_audience: String(form.target_audience || ''),
-    differentiator: String(form.differentiator || ''),
-    production_mode: String(form.production_mode || 'mixed'),
-    animations: String(form.animations || ''),
+    ...form,
+    creative_brief: form.creative_brief || null,
     short_duration_s: Number(form.short_duration_s),
-    min_short_duration_s: Number(form.min_short_duration_s),
-    max_short_duration_s: Number(form.max_short_duration_s),
     long_quota: Number(form.long_quota),
     short_quota: Number(form.short_quota),
-    enabled_platforms: platforms,
-    tts_style: String(form.tts_style || ''),
-    tts_short_engine: String(form.tts_short_engine || 'azure'),
-    tts_short_voice: String(form.tts_short_voice || ''),
-    tts_long_engine: String(form.tts_long_engine || 'azure'),
-    tts_long_voice: String(form.tts_long_voice || ''),
-    ai_plan: String(form.ai_plan || 'off'),
-    ai_fallback_chain: String(form.ai_fallback_chain || ''),
+    enabled_platforms: [...form.enabled_platforms].sort(),
     max_images_per_segment: Number(form.max_images_per_segment),
     max_ai_images_per_video: Number(form.max_ai_images_per_video),
-    max_ai_images_per_week: normalizeOptionalNumber(form.max_ai_images_per_week),
-    fallback_rate_override: normalizeOptionalNumber(form.fallback_rate_override),
-    runway_enabled: Boolean(form.runway_enabled),
-    runway_monthly_budget_usd: Number(form.runway_monthly_budget_usd),
-    runway_max_clips_per_video: Number(form.runway_max_clips_per_video),
+    max_ai_images_per_week: optionalNumber(form.max_ai_images_per_week),
+    fallback_rate_override: optionalNumber(form.fallback_rate_override),
   }
 }
 
-export function channelSettingsFormsEqual(
-  a: ChannelSettingsForm,
-  b: ChannelSettingsForm,
-): boolean {
-  return JSON.stringify(normalizeFormForCompare(a)) === JSON.stringify(normalizeFormForCompare(b))
+export function channelSettingsFormsEqual(a: ChannelSettingsForm, b: ChannelSettingsForm): boolean {
+  return JSON.stringify(normalizeForCompare(a)) === JSON.stringify(normalizeForCompare(b))
+}
+
+/** Bloc `media_sources.ai_fallback` (enregistrement et aperçu de coût). */
+export function aiFallbackPayload(form: ChannelSettingsForm): Json {
+  return {
+    plan: form.ai_plan,
+    enabled: form.ai_plan !== 'off',
+    fallback_chain: form.ai_fallback_chain ? [form.ai_fallback_chain] : [],
+    max_images_per_segment: Number(form.max_images_per_segment),
+    max_ai_images_per_video: Number(form.max_ai_images_per_video),
+    max_ai_images_per_week: optionalNumber(form.max_ai_images_per_week),
+    fallback_rate_override: optionalNumber(form.fallback_rate_override),
+  }
 }
 
 export function buildChannelUpdatePayload(
   form: ChannelSettingsForm,
   channel: Channel,
 ): {
-  theme_category: unknown
-  theme_prompt: unknown
-  niche_prompt: unknown
+  theme_category: string
+  theme_prompt: string
+  niche_prompt: string
   creative_brief: string | null
-  config: Record<string, unknown>
+  config: Json
 } {
-  const existingConfig = (channel.config || {}) as Record<string, unknown>
-  const { animations: _previousAnimations, ...existingStudio } =
-    (existingConfig.studio as Record<string, unknown>) || {}
-  const studio = form.animations ? { ...existingStudio, animations: form.animations } : existingStudio
+  const config = { ...((channel.config || {}) as Json) }
+  for (const key of LEGACY_CONFIG_KEYS) delete config[key]
+
+  const { animations: _previousAnimations, ...studio } = section(config, 'studio')
+  const { min_short_duration_s: _min, max_short_duration_s: _max, ...production } = section(config, 'production')
+  const { long: _long, style: _style, ...tts } = section(config, 'tts')
 
   return {
     theme_category: form.theme_category,
     theme_prompt: form.theme_prompt,
     niche_prompt: form.niche_prompt,
-    creative_brief: form.creative_brief ? String(form.creative_brief) : null,
+    creative_brief: form.creative_brief || null,
     config: {
-      ...existingConfig,
-      studio,
-      editorial: {
-        ...((existingConfig.editorial as Record<string, unknown>) || {}),
-        tone: form.tone,
-        target_audience: form.target_audience,
-        differentiator: form.differentiator,
-      },
+      ...config,
+      studio: form.animations ? { ...studio, animations: form.animations } : studio,
+      editorial: { ...section(config, 'editorial'), tone: form.tone },
       production: {
-        ...((existingConfig.production as Record<string, unknown>) || {}),
+        ...production,
         mode: form.production_mode,
         short_duration_s: Number(form.short_duration_s),
-        min_short_duration_s: Number(form.min_short_duration_s),
-        max_short_duration_s: Number(form.max_short_duration_s),
       },
       publishing: {
-        ...((existingConfig.publishing as Record<string, unknown>) || {}),
+        ...section(config, 'publishing'),
         daily_quotas: { long: Number(form.long_quota), short: Number(form.short_quota) },
         enabled_platforms: form.enabled_platforms,
         youtube_category_id: form.youtube_category_id,
       },
       tts: {
-        ...((existingConfig.tts as Record<string, unknown>) || {}),
-        style: form.tts_style,
-        short: {
-          engine: form.tts_short_engine,
-          voice: form.tts_short_voice,
-        },
-        long: {
-          engine: form.tts_long_engine,
-          voice: form.tts_long_voice,
-        },
-        gemini: {
-          ...(((existingConfig.tts as Record<string, unknown>)?.gemini as Record<string, unknown>) || {}),
-          apply_to: 'off',
-        },
+        ...tts,
+        short: { engine: form.tts_short_engine, voice: form.tts_short_voice },
+        gemini: { ...section(tts, 'gemini'), apply_to: 'off' },
       },
       media_sources: {
-        ...((existingConfig.media_sources as Record<string, unknown>) || {}),
-        ai_fallback: {
-          plan: form.ai_plan,
-          enabled: form.ai_plan !== 'off',
-          fallback_chain: form.ai_fallback_chain ? [form.ai_fallback_chain] : [],
-          max_images_per_segment: Number(form.max_images_per_segment),
-          max_ai_images_per_video: Number(form.max_ai_images_per_video),
-          max_ai_images_per_week: form.max_ai_images_per_week
-            ? Number(form.max_ai_images_per_week)
-            : null,
-          fallback_rate_override: form.fallback_rate_override
-            ? Number(form.fallback_rate_override)
-            : null,
-        },
-      },
-      runway: {
-        ...((existingConfig.runway as Record<string, unknown>) || {}),
-        enabled: Boolean(form.runway_enabled),
-        monthly_budget_usd: Number(form.runway_monthly_budget_usd),
-        max_clips_per_video: Number(form.runway_max_clips_per_video),
-      },
-      media_validation: {
-        ...((existingConfig.media_validation as Record<string, unknown>) || {}),
-        media_validation_template: form.media_validation_template || '',
-        default_min_relevance_score: form.default_min_relevance_score
-          ? Number(form.default_min_relevance_score)
-          : null,
+        ...section(config, 'media_sources'),
+        ai_fallback: aiFallbackPayload(form),
       },
     },
   }

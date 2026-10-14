@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from agent.skills.video.ffmpeg_runtime import filter_thread_args, run_ffmpeg, thread_args
-from agent.skills.video.ken_burns import SHORT_FPS, SHORT_HEIGHT, SHORT_WIDTH
+from studio.assets import SHORT_FPS, SHORT_HEIGHT, SHORT_WIDTH
 from studio.contracts import ContractError
 from studio.media import extract_frames, record_credit
 from studio.sandbox import SandboxError, run_sandboxed, scripts_supported

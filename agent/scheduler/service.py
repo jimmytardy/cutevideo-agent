@@ -2,14 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
 from typing import Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import select
 
-from agent.core.config import settings
 from agent.core.database import AsyncSessionFactory, SchedulerRun
 from agent.scheduler import jobs
 
@@ -128,12 +126,6 @@ class SchedulerService:
             result = await session.execute(query)
             return list(result.scalars().all())
 
-    async def run_job_now(self, job_id: str) -> dict[str, Any]:
-        fn = jobs.JOB_REGISTRY.get(job_id)
-        if fn is None:
-            raise ValueError(f"Job inconnu : {job_id}")
-        result = await fn()
-        return {"job_id": job_id, "status": "completed", "result": result}
 
     def launch_job(self, job_id: str) -> dict[str, Any]:
         """Lance un job en tâche de fond et retourne immédiatement.

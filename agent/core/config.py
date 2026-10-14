@@ -57,13 +57,11 @@ class Settings(BaseSettings):
 
     composio_api_key: str = ""
     composio_tiktok_auth_config_id: str = ""
-    runway_api_key: str = ""
     google_gemini_api_key: str = ""
     fal_key: str = ""
     google_application_credentials: str = ""
     gcp_project_id: str = ""
     gcp_location: str = "europe-west1"
-    media_public_base_url: str = "http://localhost:8000"
     api_base_url: str = "http://localhost:8000"
     youtube_oauth_redirect_uri: str = "http://localhost:8000/api/v1/channels/youtube/oauth/callback"
 
@@ -76,9 +74,6 @@ class Settings(BaseSettings):
     storage_retention_days: int = 30
     s3_max_storage_bytes: int = 10 * 1024 * 1024 * 1024
     s3_storage_buffer_bytes: int = 500 * 1024 * 1024
-    aws_access_key_id: str = ""
-    aws_secret_access_key: str = ""
-    storage_backend: str = "local"
 
     # API
     cors_origins: str = "http://localhost:3000"
@@ -96,21 +91,11 @@ class Settings(BaseSettings):
     totp_login_email: str = ""
 
     # TTS
-    edge_tts_voice: str = "fr-FR-DeniseNeural"
     azure_speech_key: str = ""
     azure_speech_region: str = "westeurope"
     tts_engine: str = "azure"
 
-    # Runtime / Docker
-    port: int = 3000
-    internal_api_url: str = "http://127.0.0.1:8000"
-
     # Config pipeline
-    whisper_model: str = "large-v3"
-    max_critic_iterations: int = 5
-    min_critic_score: int = 90
-    min_short_structure_score: int = 15
-    min_image_duration_s: int = 4
     config_path: str = "./data/agent_config.json"
     pipeline_min_free_disk_bytes: int = 10 * 1024 * 1024 * 1024
     pipeline_queue_dequeue_max_attempts: int = 50

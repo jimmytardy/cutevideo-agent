@@ -17,7 +17,7 @@ def _ctx(**overrides) -> PipelineContext:
         theme_category="science",
         niche_prompt="vulgarisation animale",
         channel_config=ChannelRuntimeConfig(min_critic_score=85, editorial_tone="drôle"),
-        channel=MagicMock(),
+        channel=MagicMock(creative_brief=None),
         theme="Les flamants roses",
         target_duration_seconds=45,
         max_critic_iterations=3,

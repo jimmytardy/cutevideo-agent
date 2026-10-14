@@ -5,7 +5,6 @@ import re
 from typing import Any
 
 from agent.core.config import load_agent_config
-from agent.core.database import MediaAsset
 
 logger = logging.getLogger(__name__)
 
@@ -99,15 +98,13 @@ def requires_attribution_for(license_norm: str) -> bool:
     return license_norm in _ATTRIBUTION_REQUIRED
 
 
-def _item_license(item: dict[str, Any] | MediaAsset) -> str | None:
-    if isinstance(item, MediaAsset):
-        return normalize_license(item.license, source=item.source)
+def _item_license(item: dict[str, Any]) -> str | None:
     license_raw = item.get("license")
     source = item.get("source")
     return normalize_license(license_raw, source=source)
 
 
-def is_publishable(item: dict[str, Any] | MediaAsset) -> tuple[bool, str]:
+def is_publishable(item: dict[str, Any]) -> tuple[bool, str]:
     license_norm = _item_license(item)
     if not license_norm:
         return False, "license_unknown"
@@ -209,39 +206,3 @@ def filter_publishable(candidates: list[dict[str, Any]]) -> tuple[list[dict[str,
                 reason,
             )
     return accepted, rejected
-
-
-def media_asset_rights_fields(item: dict[str, Any]) -> dict[str, Any]:
-    enriched = enrich_candidate(item)
-    return {
-        "source_url": enriched.get("source_url") or enriched.get("url"),
-        "license": enriched.get("license"),
-        "attribution": enriched.get("attribution"),
-        "author": enriched.get("author"),
-        "requires_attribution": bool(enriched.get("requires_attribution")),
-    }
-
-
-def build_credits_block(assets: list[MediaAsset]) -> str:
-    seen: set[tuple[str, str, str]] = set()
-    lines: list[str] = []
-
-    for asset in assets:
-        if not asset.requires_attribution:
-            continue
-        author = (asset.author or asset.attribution or "Auteur inconnu").strip()
-        license_label = (asset.license or "licence inconnue").strip()
-        source_url = (asset.source_url or "").strip()
-        key = (author, license_label, source_url)
-        if key in seen:
-            continue
-        seen.add(key)
-        asset_label = "Vidéo" if asset.asset_type == "video" else "Image"
-        if source_url:
-            lines.append(f"{asset_label} : {author} — {license_label} — {source_url}")
-        else:
-            lines.append(f"{asset_label} : {author} — {license_label}")
-
-    if not lines:
-        return ""
-    return "Crédits :\n" + "\n".join(lines)

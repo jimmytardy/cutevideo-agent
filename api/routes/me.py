@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -26,7 +25,6 @@ from agent.core.llm_resolver import (
     parse_agent_preferences,
 )
 from agent.core.subscription import (
-    QuotaExceededError,
     count_user_channels,
     get_plan_for_user,
     is_unlimited,

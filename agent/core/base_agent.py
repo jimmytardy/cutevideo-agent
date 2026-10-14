@@ -3,23 +3,13 @@ from __future__ import annotations
 import logging
 import uuid
 from abc import ABC, abstractmethod
-from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-from typing import Any, Generic, TypeVar
+from typing import Generic, TypeVar
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.core.database import AgentRun, AsyncSessionFactory, User
-from agent.core.llm_config import compact_learning_context, resolve_max_tokens
+from agent.core.database import AgentRun, AsyncSessionFactory, Channel, User
 from agent.core.llm_resolver import call_llm
-from agent.core.llm_usage import (
-    LlmUsageRecord,
-    get_run_usage_accumulator,
-    record_llm_usage,
-    start_run_usage_tracking,
-)
-from agent.core.learning_context import load_channel_context
 
 logger = logging.getLogger(__name__)
 
@@ -68,104 +58,33 @@ OutputT = TypeVar("OutputT")
 
 
 class BaseAgent(ABC, Generic[InputT, OutputT]):
-    """Classe de base pour tous les agents spécialisés."""
+    """Base des agents Python restants (planner, distribution) : nom, logger, appel LLM."""
 
     name: str = "base_agent"
 
     def __init__(self) -> None:
         self._logger = logging.getLogger(f"agent.{self.name}")
-        self._user_id: uuid.UUID | None = None
-
-    def bind_user(self, user_id: uuid.UUID | None) -> None:
-        self._user_id = user_id
 
     @abstractmethod
     async def run(self, input_data: InputT) -> OutputT:
         """Point d'entrée principal de l'agent."""
         ...
 
-    async def start_run(self, project_id: uuid.UUID, input_data: Any, iteration: int = 1) -> AgentRun:
-        """Enregistre le début d'un run en DB."""
-        start_run_usage_tracking()
-        async with AsyncSessionFactory() as session:
-            run = AgentRun(
-                project_id=project_id,
-                agent_name=self.name,
-                status="running",
-                iteration=iteration,
-                input_json=self._serialize(input_data),
-                started_at=datetime.now(timezone.utc),
-            )
-            session.add(run)
-            await session.commit()
-            await session.refresh(run)
-            self._logger.info("Agent %s démarré — run %s", self.name, run.id)
-            return run
-
-    async def _persist_run_usage(self, run: AgentRun) -> None:
-        acc = get_run_usage_accumulator()
-        if acc is None or not acc.records:
-            return
-        async with AsyncSessionFactory() as session:
-            db_run = await session.get(AgentRun, run.id)
-            if db_run is None:
-                return
-            db_run.cost_estimate_usd = acc.total_cost_usd
-            db_run.llm_input_tokens = acc.total_input_tokens
-            db_run.llm_output_tokens = acc.total_output_tokens
-            db_run.llm_model = acc.primary_model
-            session.add(db_run)
-            await session.commit()
-
-    def _record_llm_usage(self, record: LlmUsageRecord) -> None:
-        record_llm_usage(record)
-
-    async def end_run(self, run: AgentRun, output_data: Any) -> None:
-        """Enregistre la fin réussie d'un run en DB."""
-        await self._persist_run_usage(run)
-        async with AsyncSessionFactory() as session:
-            run.status = "success"
-            run.output_json = self._serialize(output_data)
-            run.ended_at = datetime.now(timezone.utc)
-            session.add(run)
-            await session.commit()
-            self._logger.info("Agent %s terminé avec succès — run %s", self.name, run.id)
-
-    async def fail_run(self, run: AgentRun, error: Exception) -> None:
-        """Enregistre l'échec d'un run en DB."""
-        await self._persist_run_usage(run)
-        async with AsyncSessionFactory() as session:
-            run.status = "failed"
-            run.error = str(error)
-            run.ended_at = datetime.now(timezone.utc)
-            session.add(run)
-            await session.commit()
-            self._logger.error("Agent %s échoué — run %s : %s", self.name, run.id, error)
-
-    async def stop_run(self, run: AgentRun, reason: str = _STOPPED_BY_USER) -> None:
-        """Enregistre l'arrêt manuel d'un run en DB."""
-        await self._persist_run_usage(run)
-        async with AsyncSessionFactory() as session:
-            run.status = "stopped"
-            run.error = reason
-            run.ended_at = datetime.now(timezone.utc)
-            session.add(run)
-            await session.commit()
-            self._logger.info("Agent %s arrêté — run %s", self.name, run.id)
-
-    async def _call_claude(
+    async def _call_llm_for_channel(
         self,
+        channel_id: uuid.UUID,
         prompt: str,
+        system: str | None = None,
+        *,
         model: str | None = None,
         max_tokens: int | None = None,
-        system: str | None = None,
         cacheable_context: str | None = None,
     ) -> str:
-        """Appel LLM (Gemini par défaut, Anthropic si configuré) via llm_resolver."""
+        """Appel LLM (Gemini, Anthropic ou Claude CLI via llm_resolver) avec les clés
+        et préférences du propriétaire de la chaîne."""
         async with AsyncSessionFactory() as session:
-            user: User | None = None
-            if self._user_id is not None:
-                user = await session.get(User, self._user_id)
+            channel = await session.get(Channel, channel_id)
+            user = await session.get(User, channel.user_id) if channel and channel.user_id else None
             return await call_llm(
                 session,
                 user,
@@ -176,39 +95,3 @@ class BaseAgent(ABC, Generic[InputT, OutputT]):
                 cacheable_context=cacheable_context,
                 model_override=model,
             )
-
-    async def _call_claude_for_channel(
-        self,
-        channel_id: uuid.UUID,
-        prompt: str,
-        system: str | None = None,
-        *,
-        model: str | None = None,
-        max_tokens: int | None = None,
-        extra_cacheable: str | None = None,
-    ) -> str:
-        """Appel Claude avec contexte d'apprentissage chaîne en bloc cacheable."""
-        snapshot = await load_channel_context(channel_id)
-        context_block = compact_learning_context(snapshot)
-        if extra_cacheable:
-            context_block = f"{extra_cacheable.strip()}\n\n{context_block}"
-        return await self._call_claude(
-            prompt,
-            model=model,
-            max_tokens=max_tokens,
-            system=system,
-            cacheable_context=context_block,
-        )
-
-    @staticmethod
-    def _serialize(data: Any) -> dict | None:
-        """Sérialise un objet en dict pour stockage JSONB."""
-        if data is None:
-            return None
-        if isinstance(data, dict):
-            return data
-        if hasattr(data, "__dict__"):
-            return {k: str(v) for k, v in vars(data).items()}
-        if hasattr(data, "__dataclass_fields__"):
-            return asdict(data)  # type: ignore[arg-type]
-        return {"value": str(data)}

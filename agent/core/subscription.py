@@ -7,10 +7,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.core.database import Channel, MarketAnalysis, Project, SubscriptionPlan, User, Video
-
-
-DEFAULT_DISPLAY_CRITIC_ITERATIONS = 5
+from agent.core.database import Channel, Project, SubscriptionPlan, User, Video
 
 
 class SubscriptionLimits(BaseModel):
@@ -89,7 +86,7 @@ async def resolve_user_limits(session: AsyncSession, user: User) -> Subscription
             auto_publish_allowed=True,
             unlimited_critic_iterations=True,
             tts_allowed_engines=["edge", "azure", "gemini"],
-            whisper_model="large-v3",
+            whisper_model="small",
             enable_ai_fallback=True,
             pipeline_queue_priority=100,
         )
@@ -208,19 +205,6 @@ def resolve_effective_max_critic_iterations(
     return capped or min(channel_max, limits.max_critic_iterations)
 
 
-def resolve_display_max_critic_iterations(
-    effective_max: int | None,
-    *,
-    configured_override: int | None = None,
-) -> int:
-    """Nombre de lignes planifiées à afficher (défaut 5 si illimité)."""
-    if effective_max is not None:
-        return effective_max
-    if configured_override is not None:
-        return configured_override
-    return DEFAULT_DISPLAY_CRITIC_ITERATIONS
-
-
 async def count_user_channels(session: AsyncSession, user_id: uuid.UUID) -> int:
     result = await session.execute(
         select(func.count()).select_from(Channel).where(Channel.user_id == user_id)
@@ -236,17 +220,6 @@ async def count_user_projects_this_month(session: AsyncSession, user_id: uuid.UU
         .select_from(Project)
         .join(Channel, Channel.id == Project.channel_id)
         .where(Channel.user_id == user_id, Project.created_at >= month_start)
-    )
-    return int(result.scalar_one())
-
-
-async def count_user_market_analyses_this_month(session: AsyncSession, user_id: uuid.UUID) -> int:
-    now = datetime.now(timezone.utc)
-    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    result = await session.execute(
-        select(func.count())
-        .select_from(MarketAnalysis)
-        .where(MarketAnalysis.user_id == user_id, MarketAnalysis.created_at >= month_start)
     )
     return int(result.scalar_one())
 
@@ -283,24 +256,4 @@ async def check_can_create_project(session: AsyncSession, user: User) -> None:
         raise QuotaExceededError(
             "max_projects_per_month",
             f"Limite de {limits.max_projects_per_month} projet(s) / mois atteinte.",
-        )
-
-
-async def check_can_run_market_analysis(session: AsyncSession, user: User) -> None:
-    limits = await resolve_user_limits(session, user)
-    current = await count_user_market_analyses_this_month(session, user.id)
-    if current >= limits.max_market_analyses_per_month:
-        raise QuotaExceededError(
-            "max_market_analyses_per_month",
-            f"Limite de {limits.max_market_analyses_per_month} analyse(s) marché / mois atteinte.",
-        )
-
-
-async def check_storage_quota(session: AsyncSession, user: User, additional_bytes: int = 0) -> None:
-    limits = await resolve_user_limits(session, user)
-    used = await sum_user_storage_bytes(session, user.id)
-    if used + additional_bytes > limits.max_total_storage_bytes:
-        raise QuotaExceededError(
-            "max_total_storage_bytes",
-            "Quota de stockage total atteint pour votre abonnement.",
         )

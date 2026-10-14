@@ -6,7 +6,6 @@ from typing import Literal
 from agent.core.llm_resolver import (
     AgentLlmPreference,
     FREE_GEMINI_MODEL,
-    LLM_PREFERENCE_ALIAS,
     preference_agent_name,
 )
 
@@ -132,7 +131,3 @@ def normalize_preferences_map(
     for agent_name, pref in prefs.items():
         out[agent_name] = normalize_agent_preference(agent_name, pref)
     return out
-
-
-def linked_agents_for_api() -> dict[str, str]:
-    return dict(LLM_PREFERENCE_ALIAS)

@@ -98,10 +98,6 @@ def _ensure_bucket(client, bucket: str, region: str) -> None:
             raise
 
 
-def is_s3_storage_enabled() -> bool:
-    return bool(get_storage_settings().bucket)
-
-
 async def upload_file(local_path: Path, storage_key: str) -> None:
     await upload_media_file(local_path, storage_key, content_type="video/mp4")
 
@@ -129,91 +125,6 @@ async def upload_media_file(
     return file_size
 
 
-def build_temp_ai_storage_key(
-    channel_slug: str,
-    project_id: str,
-    segment_order: int,
-    candidate_id: str,
-) -> str:
-    cfg = get_storage_settings()
-    prefix = cfg.key_prefix.strip("/")
-    parts = [
-        p
-        for p in (
-            prefix,
-            "temp",
-            channel_slug,
-            project_id,
-            "ai",
-            str(segment_order),
-            f"{candidate_id}.jpg",
-        )
-        if p
-    ]
-    return "/".join(parts)
-
-
-async def delete_s3_objects(keys: list[str]) -> None:
-    for key in keys:
-        if key:
-            await delete_s3_object(key)
-
-
-async def register_temp_ai_key(project_id: uuid.UUID, key: str) -> None:
-    if not key:
-        return
-    from sqlalchemy import select
-
-    from agent.core.database import AsyncSessionFactory, Project
-
-    async with AsyncSessionFactory() as session:
-        result = await session.execute(select(Project).where(Project.id == project_id))
-        project = result.scalar_one_or_none()
-        if project is None:
-            return
-        config = dict(project.config or {})
-        keys = list(config.get("temp_ai_image_keys") or [])
-        if key not in keys:
-            keys.append(key)
-        config["temp_ai_image_keys"] = keys
-        project.config = config
-        await session.commit()
-
-
-async def cleanup_temp_ai_images(
-    project_id: uuid.UUID,
-    *,
-    keep_keys: list[str] | None = None,
-) -> None:
-    from sqlalchemy import select
-
-    from agent.core.database import AsyncSessionFactory, Project
-
-    async with AsyncSessionFactory() as session:
-        result = await session.execute(select(Project).where(Project.id == project_id))
-        project = result.scalar_one_or_none()
-        if project is None:
-            return
-        config = dict(project.config or {})
-        registered = list(config.get("temp_ai_image_keys") or [])
-        keep = set(keep_keys or [])
-        to_delete = [k for k in registered if k not in keep]
-        if is_s3_storage_enabled() and to_delete:
-            await delete_s3_objects(to_delete)
-        remaining = [k for k in registered if k in keep] if keep_keys is not None else []
-        if keep_keys is None:
-            remaining = []
-        config["temp_ai_image_keys"] = remaining
-        project.config = config
-        await session.commit()
-        if to_delete:
-            logger.info(
-                "Temp AI images purgées pour projet %s : %d clé(s)",
-                project_id,
-                len(to_delete),
-            )
-
-
 async def get_presigned_url(storage_key: str, ttl_seconds: int | None = None) -> str:
     cfg = get_storage_settings()
     ttl = ttl_seconds or cfg.presign_ttl_seconds
@@ -227,17 +138,6 @@ async def get_presigned_url(storage_key: str, ttl_seconds: int | None = None) ->
         )
 
     return await asyncio.get_event_loop().run_in_executor(None, _presign)
-
-
-async def download_storage_key(storage_key: str, dest: Path) -> Path:
-    dest.parent.mkdir(parents=True, exist_ok=True)
-
-    def _download() -> None:
-        client, cfg = _make_s3_client()
-        client.download_file(cfg.bucket, storage_key, str(dest))
-
-    await asyncio.get_event_loop().run_in_executor(None, _download)
-    return dest
 
 
 async def ensure_capacity(required_bytes: int) -> None:

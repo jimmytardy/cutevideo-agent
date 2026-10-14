@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import uuid
-from pathlib import Path
 
 import aiohttp
 
@@ -122,7 +121,7 @@ async def generate_flux_image(
         )
         return ImageGenerationResult(
             local_path=dest,
-            attribution=FLUX_ATTRIBUTIONS.get(plan_id, f"Image générée par IA (Flux via fal.ai)"),
+            attribution=FLUX_ATTRIBUTIONS.get(plan_id, "Image générée par IA (Flux via fal.ai)"),
             license=license_label,
             title=request.prompt[:120],
             provider_plan=plan_id,
@@ -209,7 +208,7 @@ async def generate_flux2_image(
         )
         return ImageGenerationResult(
             local_path=dest,
-            attribution=FLUX_ATTRIBUTIONS.get(plan_id, f"Image générée par IA (Flux via fal.ai)"),
+            attribution=FLUX_ATTRIBUTIONS.get(plan_id, "Image générée par IA (Flux via fal.ai)"),
             license=license_label,
             title=request.prompt[:120],
             provider_plan=plan_id,

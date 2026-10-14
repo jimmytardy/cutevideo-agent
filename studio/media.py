@@ -25,6 +25,7 @@ import aiohttp
 from agent.core.concurrency import bounded_gather
 from agent.skills.media.rights_check import filter_publishable
 from agent.skills.video.ffmpeg_runtime import filter_thread_args, run_ffmpeg, thread_args
+from studio.assets import max_ai_images
 from studio.textfx import FONT_FILE
 
 logger = logging.getLogger(__name__)
@@ -42,11 +43,6 @@ SHEET_COLS = 4
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".tif", ".tiff", ".bmp"}
 
 
-def max_ai_images() -> int:
-    try:
-        return max(0, int(os.getenv("STUDIO_MAX_AI_IMAGES", "4")))
-    except ValueError:
-        return 4
 
 
 # ── registres JSON du run dir ─────────────────────────────────────────────

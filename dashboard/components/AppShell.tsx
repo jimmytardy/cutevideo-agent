@@ -24,7 +24,6 @@ import VideoLibraryIcon from '@mui/icons-material/VideoLibrary'
 import TvIcon from '@mui/icons-material/Tv'
 import SmartToyIcon from '@mui/icons-material/SmartToy'
 import BarChartIcon from '@mui/icons-material/BarChart'
-import SearchIcon from '@mui/icons-material/Search'
 import SettingsIcon from '@mui/icons-material/Settings'
 import ScheduleIcon from '@mui/icons-material/Schedule'
 import AddCircleIcon from '@mui/icons-material/AddCircle'
@@ -88,7 +87,6 @@ const NAV_SECTIONS: NavSection[] = [
     label: 'Administration',
     adminOnly: true,
     items: [
-      { label: 'Marchés analysés', href: '/markets', icon: <SearchIcon fontSize="small" />, adminOnly: true },
       { label: 'Scheduler', href: '/scheduler', icon: <ScheduleIcon fontSize="small" />, adminOnly: true },
       { label: 'Configuration', href: '/config', icon: <SettingsIcon fontSize="small" />, adminOnly: true },
     ],

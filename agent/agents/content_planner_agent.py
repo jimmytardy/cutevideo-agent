@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date
 from typing import Any
 
 from sqlalchemy import select
@@ -14,8 +14,7 @@ from agent.core.config import load_agent_config
 from agent.core.content_plan_models import DailyContentPlan, ThemeAnalysis, VideoTopicPlan
 from agent.core.database import AsyncSessionFactory, Channel, Project
 from agent.core.editorial_formats import format_bank_summary, get_format_by_id
-from agent.core.learning_context import load_channel_context
-from agent.core.llm_config import compact_learning_context, is_planner_llm_day
+from agent.core.llm_config import is_planner_llm_day
 from agent.skills.content_planning.format_rotation import apply_format_rotation_to_plan
 from agent.skills.content_planning.heuristic_planner import build_heuristic_plan, find_similar_in_history
 from agent.scheduler.content_planning import (
@@ -62,9 +61,6 @@ Sujets intemporels de secours pour ce thème : {evergreen_topics_json}
 
 ## Formats éditoriaux autorisés (choisir editorial_format_id dans cette liste)
 {format_bank_summary}
-
-## Contexte performance (analytics + commentaires)
-{learning_context}
 
 ## Consignes de réflexion (intègre dans theme_analysis et selection_rationale)
 1. Extraire sous-thèmes, formats narratifs pertinents, figures/objets centraux, critères de "bon sujet" pour CE thème.
@@ -292,7 +288,6 @@ class ContentPlannerAgent(BaseAgent):
         long_count, short_count = production_quotas(cfg)
         identity = build_editorial_identity(channel)
         history = await load_topic_history(channel.id)
-        learning = await load_channel_context(channel.id)
 
         prompt = PLANNER_PROMPT.format(
             production_date=production_date.isoformat(),
@@ -315,15 +310,9 @@ class ContentPlannerAgent(BaseAgent):
             history_json=json.dumps(history, ensure_ascii=False, indent=2),
             format_bank_summary=format_bank_summary(cfg.editorial_formats),
             format_rotation_k=cfg.format_rotation.window_k,
-            learning_context="(voir bloc contexte chaîne ci-dessus)",
         )
 
-        raw = await self._call_claude_for_channel(
-            channel.id,
-            prompt,
-            system=PLANNER_SYSTEM,
-            extra_cacheable=compact_learning_context(learning),
-        )
+        raw = await self._call_llm_for_channel(channel.id, prompt, system=PLANNER_SYSTEM)
         data = self._parse_json(raw)
         plan = self._build_plan(
             channel,

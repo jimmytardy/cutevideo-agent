@@ -1,14 +1,11 @@
 from __future__ import annotations
 
-import contextvars
-from dataclasses import dataclass, field
+import logging
+from dataclasses import dataclass
 
 from agent.core.config import load_agent_config
 
-_run_usage_accumulator: contextvars.ContextVar["_RunUsageAccumulator | None"] = contextvars.ContextVar(
-    "run_usage_accumulator",
-    default=None,
-)
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -19,46 +16,15 @@ class LlmUsageRecord:
     cost_usd: float
 
 
-@dataclass
-class _RunUsageAccumulator:
-    records: list[LlmUsageRecord] = field(default_factory=list)
-
-    @property
-    def total_input_tokens(self) -> int:
-        return sum(r.input_tokens for r in self.records)
-
-    @property
-    def total_output_tokens(self) -> int:
-        return sum(r.output_tokens for r in self.records)
-
-    @property
-    def total_cost_usd(self) -> float:
-        return round(sum(r.cost_usd for r in self.records), 6)
-
-    @property
-    def primary_model(self) -> str | None:
-        if not self.records:
-            return None
-        by_cost = max(self.records, key=lambda r: r.cost_usd)
-        return by_cost.model
-
-
-def start_run_usage_tracking() -> None:
-    _run_usage_accumulator.set(_RunUsageAccumulator())
-
-
-def clear_run_usage_tracking() -> None:
-    _run_usage_accumulator.set(None)
-
-
-def get_run_usage_accumulator() -> _RunUsageAccumulator | None:
-    return _run_usage_accumulator.get()
-
-
 def record_llm_usage(record: LlmUsageRecord) -> None:
-    acc = _run_usage_accumulator.get()
-    if acc is not None:
-        acc.records.append(record)
+    """Trace la consommation d'un appel LLM (planner / distribution)."""
+    logger.info(
+        "LLM %s : %d in / %d out tokens ≈ %.4f $",
+        record.model,
+        record.input_tokens,
+        record.output_tokens,
+        record.cost_usd,
+    )
 
 
 def load_pricing() -> dict[str, dict[str, float]]:
@@ -67,8 +33,6 @@ def load_pricing() -> dict[str, dict[str, float]]:
         return {}
     out: dict[str, dict[str, float]] = {}
     for model, rates in cfg.items():
-        if model == "gemini-video-per-minute-usd":
-            continue
         if not isinstance(rates, dict):
             continue
         out[str(model)] = {
@@ -76,13 +40,6 @@ def load_pricing() -> dict[str, dict[str, float]]:
             "output_per_mtok_usd": float(rates.get("output_per_mtok_usd", 0.0)),
         }
     return out
-
-
-def gemini_video_per_minute_usd() -> float:
-    cfg = load_agent_config().get("pricing", {})
-    if isinstance(cfg, dict):
-        return float(cfg.get("gemini-video-per-minute-usd", 0.05))
-    return 0.05
 
 
 def estimate_llm_cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
@@ -100,12 +57,6 @@ def estimate_llm_cost_usd(model: str, input_tokens: int, output_tokens: int) -> 
         + (output_tokens / 1_000_000) * rates["output_per_mtok_usd"]
     )
     return round(cost, 6)
-
-
-def estimate_gemini_video_cost_usd(duration_s: float, model: str = "gemini-2.5-pro") -> float:
-    _ = model
-    minutes = max(duration_s, 0.0) / 60.0
-    return round(minutes * gemini_video_per_minute_usd(), 6)
 
 
 def usage_from_anthropic(response: object, model: str) -> LlmUsageRecord:

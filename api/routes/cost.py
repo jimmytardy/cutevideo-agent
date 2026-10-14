@@ -2,17 +2,17 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.core.channel_config import AiFallbackConfig, resolve_channel_config
+from agent.core.channel_config import resolve_channel_config
 from agent.core.cost_estimator import (
     ChannelCostEstimate,
     ai_fallback_from_preview,
     estimate_channel_cost_weekly,
 )
-from agent.core.database import Channel, User, get_db
+from agent.core.database import User, get_db
 from agent.core.subscription import resolve_user_limits
 from api.authorization import get_user_channel
 from api.deps import get_current_user

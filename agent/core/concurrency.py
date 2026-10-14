@@ -26,21 +26,6 @@ def fanout_concurrency() -> int:
         return 3
 
 
-def beat_fanout_concurrency() -> int:
-    """Nb max de visual_beats traités en parallèle dans un segment (media_agent).
-
-    Les étapes stock / scoring Gemini sont surtout I/O — on peut dépasser le
-    fan-out segments. Réglable via MEDIA_BEAT_FANOUT_CONCURRENCY.
-    """
-    raw = os.getenv("MEDIA_BEAT_FANOUT_CONCURRENCY")
-    if raw:
-        try:
-            return max(1, int(raw))
-        except ValueError:
-            pass
-    return max(fanout_concurrency() * 2, 6)
-
-
 async def bounded_gather(
     *awaitables: Awaitable[_T],
     limit: int | None = None,

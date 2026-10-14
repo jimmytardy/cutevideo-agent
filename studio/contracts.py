@@ -35,9 +35,14 @@ class Brief(BaseModel):
     max_iterations: int = Field(default=3, ge=1, le=6)
     min_score: int = Field(default=75, ge=0, le=100)
     editorial_tone: str = ""
+    # Brief créatif de la chaîne (réglages → Général) : ton, style narratif, interdits éditoriaux.
+    creative_brief: str = ""
     content_plan: dict | None = None
     # Animations autorisées : off | templates (modèles intégrés) | scripts (scripts jetables + modèles).
     animations: Literal["off", "templates", "scripts"] = "scripts"
+    # Images IA autorisées pour ce Short (0 = désactivées par la chaîne ou l'abonnement ;
+    # None = plafond plateforme STUDIO_MAX_AI_IMAGES).
+    max_ai_images: int | None = Field(default=None, ge=0)
 
 
 class ScenarioBeat(BaseModel):
@@ -68,12 +73,6 @@ class Scenario(BaseModel):
     @property
     def narration(self) -> str:
         return " ".join(b.text.strip() for b in self.beats if b.text.strip())
-
-
-class Word(BaseModel):
-    word: str
-    start: float
-    end: float
 
 
 class TimelineClip(BaseModel):
