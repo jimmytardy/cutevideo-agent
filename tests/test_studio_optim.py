@@ -134,3 +134,13 @@ def test_french_typography_and_keywords_with_punctuation() -> None:
     first = [line for line in ass.splitlines() if line.startswith("Dialogue:")][0]
     assert "Lune\\h?" in first
     assert subtitles._ass_color("#4ADE80") in first  # mot-clé reconnu malgré la ponctuation
+
+
+def test_pauses_are_measured_acoustically() -> None:
+    times = np.arange(0, 3, 0.02)
+    db = np.full(len(times), -15.0)
+    db[(times >= 1.0) & (times < 1.3)] = -60.0  # vrai silence de 0,3 s dans un écart Whisper de 0,9 s
+    speech = {"pauses": [{"at": 0.9, "s": 0.9, "after": "x"}], "longest_pause_s": 0.9}
+    analyze._refine_pauses(speech, {"db": db, "times": times}, -15.0)
+    assert speech["longest_pause_s"] == pytest.approx(0.3, abs=0.03)
+    assert speech["pauses"][0]["whisper_s"] == 0.9

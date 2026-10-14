@@ -254,6 +254,23 @@ def _audio_metrics(wav: Path, words: list[dict[str, Any]], duration: float) -> t
     return metrics, series
 
 
+def _refine_pauses(speech: dict[str, Any], series: dict[str, Any], speech_db: float | None) -> None:
+    """Durée acoustique réelle de chaque pause : Whisper coupe les fins de mots tôt et gonfle les écarts.
+
+    Une trame compte comme silence si elle est 20 dB sous le niveau médian de la parole (la musique de fond
+    reste donc « silence de voix »)."""
+    if not speech.get("pauses") or speech_db is None:
+        return
+    db, times = series["db"], series["times"]
+    frame = float(times[1] - times[0]) if len(times) > 1 else 0.02
+    for p in speech["pauses"]:
+        m = (times >= p["at"]) & (times <= p["at"] + p["s"])
+        p["whisper_s"] = p["s"]
+        p["s"] = round(float(np.sum(db[m] < speech_db - 20)) * frame, 2)
+    speech["pauses"] = [p for p in speech["pauses"] if p["s"] >= 0.3]
+    speech["longest_pause_s"] = max((p["s"] for p in speech["pauses"]), default=0.0)
+
+
 def _plot_audio(series: dict[str, Any], words: list[dict[str, Any]], cuts: list[float], out: Path) -> None:
     """Spectrogramme + courbe de hauteur + niveau, une bande par tranche de 20 s."""
     import librosa
@@ -491,6 +508,7 @@ async def analyze_video(
         result["speech"] = _speech_metrics(words, duration)
         audio_metrics, series = await asyncio.to_thread(_audio_metrics, wav, words, duration)
         result["audio"] = audio_metrics
+        _refine_pauses(result["speech"], series, audio_metrics.get("speech_rms_db"))
         audio_png = out_dir / "audio.png"
         await asyncio.to_thread(_plot_audio, series, words, cuts, audio_png)
         (out_dir / "words.json").write_text(json.dumps(words, ensure_ascii=False, indent=1), encoding="utf-8")
