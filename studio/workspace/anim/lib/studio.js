@@ -160,7 +160,7 @@
 
     // ── mécanique commune ──
     _add(node, o, update) {
-      const item = Object.assign({at: 0, dur: 0.45, enter: "pop", exit: "fade", exitDur: 0.3, x: 540, y: 960, scale: 1, rotate: 0, opacity: 1}, o, {node, update});
+      const item = Object.assign({at: 0, dur: 0.35, enter: "pop", exit: "fade", exitDur: 0.3, x: 540, y: 960, scale: 1, rotate: 0, opacity: 1}, o, {node, update});
       (o.layer === "overlay" ? this.overlay : this.world).appendChild(node);
       this.items.push(item);
       return item;
@@ -172,7 +172,7 @@
       if (t < it.at) { it.node.setAttribute("opacity", 0); return -1; }
       const e = E.out(k), b = E.back(k);
       switch (it.enter) {
-        case "pop": sc *= 0.2 + 0.8 * b; op *= clamp(k * 3); break;
+        case "pop": sc *= 0.55 + 0.45 * b; op *= clamp(k * 4); break;
         case "grow": sc *= E.out(k); break;
         case "fade": op *= e; break;
         case "up": dy = (1 - e) * 120; op *= e; break;
