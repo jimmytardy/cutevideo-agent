@@ -36,6 +36,7 @@ async def fake_delete(key: str) -> None:
 async def main() -> dict:
     from sqlalchemy import func, select
 
+    from agent.core.api_keys import encrypt_api_key
     from agent.core.claude_studio import OUTPUT_ROOT
     from agent.core.database import (
         AgentRun,
@@ -46,6 +47,7 @@ async def main() -> dict:
         Scenario,
         SubscriptionPlan,
         User,
+        UserApiKey,
         Video,
     )
     from agent.core.final_preview import resolve_preview_video
@@ -61,6 +63,8 @@ async def main() -> dict:
         user = User(google_sub=f"test-{uuid.uuid4()}", email=f"{uuid.uuid4()}@test.local", subscription_id=plan.id)
         session.add(user)
         await session.flush()
+        # Clé Anthropic factice : le runner exige celle du propriétaire (le faux CLI l'ignore).
+        session.add(UserApiKey(user_id=user.id, provider="anthropic", encrypted_key=encrypt_api_key("sk-ant-api-test")))
         channel = Channel(
             user_id=user.id, slug=f"test-{uuid.uuid4().hex[:8]}", name="Test", theme_category="animaux",
             composio_user_id="test", niche_prompt="vulgarisation animale",

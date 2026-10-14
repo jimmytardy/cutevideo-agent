@@ -252,11 +252,14 @@ async def _publish_instagram(
     caption: str,
     tags: list[str],
 ) -> Publication | None:
-    from agent.skills.publisher.credentials import instagram_publishing_allowed
+    from agent.skills.publisher.credentials import instagram_credentials
     from agent.skills.publisher.instagram import upload_reel
 
-    if not channel.instagram_page_id or not await instagram_publishing_allowed(channel):
-        raise RuntimeError("instagram_not_available : publication Instagram réservée aux chaînes admin")
+    creds = await instagram_credentials(channel)
+    if creds is None:
+        raise RuntimeError(
+            "instagram_not_available : ajoutez le token Instagram et la page dans Compte → Clés API"
+        )
     video_url = await get_public_video_url_async(video)
     local_path = await resolve_local_path_for_upload(video)
     media_id = await upload_reel(
@@ -264,7 +267,8 @@ async def _publish_instagram(
         caption=caption,
         hashtags=tags,
         video_url=video_url,
-        page_id=channel.instagram_page_id,
+        page_id=creds.page_id,
+        access_token=creds.access_token,
     )
     if not media_id:
         await _mark_failed(publication.id, "instagram_upload_no_media_id")

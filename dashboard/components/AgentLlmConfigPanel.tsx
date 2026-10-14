@@ -48,7 +48,6 @@ interface AgentLlmRowProps {
   linkedToLabel?: string
   hasGeminiKey: boolean
   hasAnthropicKey: boolean
-  hasClaudeCli: boolean
   onToggleDetails: () => void
   onProviderChange: (provider: LlmProvider) => void
   onTierChange: (tier: LlmTier) => void
@@ -64,7 +63,6 @@ function AgentLlmRow({
   linkedToLabel,
   hasGeminiKey,
   hasAnthropicKey,
-  hasClaudeCli,
   onToggleDetails,
   onProviderChange,
   onTierChange,
@@ -74,7 +72,7 @@ function AgentLlmRow({
   const sourceAgent = resolvePreferenceAgent(agentName)
   const providers = allowedProvidersFor(sourceAgent)
   const models = modelOptionsForAgent(sourceAgent, pref.provider, pref.tier)
-  const controlsDisabled = readOnly || (!hasGeminiKey && !hasClaudeCli)
+  const controlsDisabled = readOnly || (!hasGeminiKey && !hasAnthropicKey)
   const geminiOnly = providers.length === 1 && providers[0] === 'gemini'
 
   return (
@@ -143,15 +141,12 @@ function AgentLlmRow({
             onChange={(e) => onProviderChange(e.target.value as LlmProvider)}
             disabled={controlsDisabled}
           >
-            <MenuItem value="gemini">Gemini</MenuItem>
+            <MenuItem value="gemini" disabled={!hasGeminiKey}>
+              Gemini
+            </MenuItem>
             {!geminiOnly && (
               <MenuItem value="anthropic" disabled={!hasAnthropicKey || readOnly}>
                 Anthropic
-              </MenuItem>
-            )}
-            {!geminiOnly && (
-              <MenuItem value="claude_cli" disabled={!hasClaudeCli || readOnly}>
-                Claude CLI (abonnement)
               </MenuItem>
             )}
           </TextField>
@@ -171,8 +166,6 @@ function AgentLlmRow({
                 Payant
               </MenuItem>
             </TextField>
-          ) : pref.provider === 'claude_cli' ? (
-            <Chip label="Abonnement" size="small" variant="outlined" />
           ) : (
             <Chip label="Payant" size="small" variant="outlined" />
           )}
@@ -255,7 +248,7 @@ export default function AgentLlmConfigPanel() {
 
   const persistPreferences = useCallback(
     async (nextPreferences: Record<string, AgentLlmPreference>) => {
-      if (!data?.has_gemini_key && !data?.has_claude_cli) return
+      if (!data?.has_gemini_key && !data?.has_anthropic_key) return
 
       const requestId = ++saveRequestId.current
       setSaving(true)
@@ -280,7 +273,7 @@ export default function AgentLlmConfigPanel() {
         }
       }
     },
-    [data?.has_gemini_key, data?.has_claude_cli, mutate],
+    [data?.has_gemini_key, data?.has_anthropic_key, mutate],
   )
 
   const applyAgentChange = useCallback(
@@ -324,15 +317,13 @@ export default function AgentLlmConfigPanel() {
     <Box>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
         Choisissez quel fournisseur et quel modèle pilote chaque agent. Chaque modification est
-        enregistrée automatiquement. Sans clé personnelle, Gemini gratuit de la plateforme est
-        utilisé par défaut.
+        enregistrée automatiquement. Les agents utilisent uniquement vos propres clés API.
       </Typography>
 
-      {!data.has_gemini_key && (
+      {!data.has_gemini_key && !data.has_anthropic_key && (
         <Alert severity="warning" sx={{ mb: 2 }}>
-          Pour personnaliser les modèles, enregistrez d&apos;abord une clé Gemini dans{' '}
-          <Link href="/account/api-keys">Clés API</Link>
-          {data.has_claude_cli ? ', ou choisissez « Claude CLI (abonnement) ».' : '.'}
+          Les agents ne peuvent pas fonctionner sans clé : enregistrez une clé Gemini ou Anthropic dans{' '}
+          <Link href="/account/api-keys">Clés API</Link>.
         </Alert>
       )}
 
@@ -392,7 +383,6 @@ export default function AgentLlmConfigPanel() {
                         linkedToLabel={linked ? getAgentLabel(sourceAgent) : undefined}
                         hasGeminiKey={data.has_gemini_key}
                         hasAnthropicKey={data.has_anthropic_key}
-                        hasClaudeCli={Boolean(data.has_claude_cli)}
                         onToggleDetails={() => toggleAgentDetails(agentName)}
                         onProviderChange={(provider) => handleProviderChange(sourceAgent, provider)}
                         onTierChange={(tier) => handleTierChange(sourceAgent, tier)}

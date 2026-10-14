@@ -16,12 +16,16 @@ import shutil
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from collections.abc import Awaitable, Callable
 
 from agent.core.env import env_float, env_int, env_optional_float
 from studio.assets import max_ai_images
 from studio.contracts import Brief
+from studio.user_keys import INHERITED_SECRET_VARS, studio_env
+
+if TYPE_CHECKING:
+    from agent.core.api_keys import UserKeys
 
 logger = logging.getLogger(__name__)
 
@@ -98,8 +102,19 @@ def _read_brief(run_dir: Path) -> Brief | None:
         return None
 
 
-def build_env(run_dir: Path) -> dict[str, str]:
-    env = dict(os.environ)
+def build_env(
+    run_dir: Path, keys: UserKeys | None = None, *, config_dir: Path | None = None
+) -> dict[str, str]:
+    """Environnement du CLI : aucune clé héritée, seulement celles de l'utilisateur (`keys`).
+
+    `config_dir` isole l'état du CLI (`CLAUDE_CONFIG_DIR`) par utilisateur.
+    """
+    env = {name: value for name, value in os.environ.items() if name not in INHERITED_SECRET_VARS}
+    if keys is not None:
+        env.update(studio_env(keys))
+    if config_dir is not None:
+        config_dir.mkdir(parents=True, exist_ok=True)
+        env["CLAUDE_CONFIG_DIR"] = str(config_dir)
     python_bin = str(Path(sys.executable).parent)
     env["PATH"] = f"{python_bin}{os.pathsep}{env.get('PATH', '')}"
     env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(REPO_ROOT), env.get("PYTHONPATH")]))
@@ -115,10 +130,6 @@ def build_env(run_dir: Path) -> dict[str, str]:
     # Rendus et transcriptions dépassent les 2 min par défaut du Bash de Claude Code.
     env.setdefault("BASH_DEFAULT_TIMEOUT_MS", "1200000")
     env.setdefault("BASH_MAX_TIMEOUT_MS", "1800000")
-    # Par défaut on facture l'abonnement Claude (login CLI ou CLAUDE_CODE_OAUTH_TOKEN) :
-    # une ANTHROPIC_API_KEY héritée prendrait sinon le dessus (facturation API).
-    if os.getenv("CLAUDE_STUDIO_AUTH", "subscription") != "api_key":
-        env.pop("ANTHROPIC_API_KEY", None)
     return env
 
 
@@ -216,8 +227,10 @@ async def run_claude(
     cfg: LaunchConfig | None = None,
     on_event: EventHandler | None = None,
     prompt: str = "/make-video",
+    keys: UserKeys | None = None,
+    config_dir: Path | None = None,
 ) -> dict[str, Any]:
-    """Exécute la session et renvoie l'événement `result` final de Claude Code."""
+    """Exécute la session avec les clés `keys` et renvoie l'événement `result` final de Claude Code."""
     from agent.core.subprocess_registry import register, terminate_proc, unregister
 
     cfg = cfg or LaunchConfig()
@@ -231,7 +244,7 @@ async def run_claude(
         proc = await asyncio.create_subprocess_exec(
             *build_command(cfg, prompt),
             cwd=str(run_dir),
-            env=build_env(run_dir),
+            env=build_env(run_dir, keys, config_dir=config_dir),
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=stderr_fh,

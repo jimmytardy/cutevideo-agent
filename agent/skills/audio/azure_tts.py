@@ -22,7 +22,7 @@ async def synthesize_ssml(
 
     from agent.core.config import settings
 
-    speech_key = (subscription_key or settings.azure_speech_key or "").strip()
+    speech_key = (subscription_key or "").strip()
     speech_region = (region or settings.azure_speech_region).strip()
     if not speech_key:
         raise RuntimeError("Clé Azure Speech non configurée")

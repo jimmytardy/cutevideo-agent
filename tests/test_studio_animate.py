@@ -42,7 +42,7 @@ for i in range(n):
 ESCAPE_SCRIPT = """import os, socket
 from PIL import Image
 out = os.environ["OUT_DIR"]
-report = {"env_key": "ANTHROPIC_API_KEY" in os.environ, "repo_env": os.path.exists(%r), "network": False}
+report = {"env_key": any(k in os.environ for k in ("ANTHROPIC_API_KEY", "STUDIO_GEMINI_API_KEY", "STUDIO_FAL_KEY")), "repo_env": os.path.exists(%r), "network": False}
 try:
     socket.create_connection(("1.1.1.1", 80), timeout=3); report["network"] = True
 except OSError:
@@ -184,6 +184,8 @@ def test_bwrap_sandbox_blocks_secrets_repo_and_network(tmp_path: Path, monkeypat
     (anim / "escape.py").write_text(ESCAPE_SCRIPT, encoding="utf-8")
     monkeypatch.setenv("STUDIO_SANDBOX", "bwrap")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-secret")
+    monkeypatch.setenv("STUDIO_GEMINI_API_KEY", "g-test-secret")
+    monkeypatch.setenv("STUDIO_FAL_KEY", "fal-test-secret")
     asyncio.run(run_sandboxed("python", anim / "escape.py", anim, tmp_path / "out", width=64, height=64, fps=2,
                               duration=0.5))
     report = json.loads((tmp_path / "out" / "frames" / "report.json").read_text())

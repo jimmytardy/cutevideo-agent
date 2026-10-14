@@ -15,25 +15,15 @@ from agent.core.config import settings
 from agent.core.database import AsyncSessionFactory, UserApiKey
 
 Provider = Literal[
-    "anthropic", "gemini", "fal", "gcp", "azure_speech", "postforme", "zernio"
+    "anthropic", "gemini", "fal", "gcp", "azure_speech", "postforme", "zernio", "youtube", "instagram"
 ]
-KeySource = Literal["user", "platform", "none"]
+KeySource = Literal["user", "none"]
 KeyTier = Literal["free", "paid"]
 
+# Aucune clé de plateforme : chaque appel payant ou chaque publication utilise les
+# identifiants du propriétaire (Compte → Clés API), sans repli sur le .env.
 ALLOWED_PROVIDERS: frozenset[str] = frozenset(
-    {"anthropic", "gemini", "fal", "gcp", "azure_speech", "postforme", "zernio"}
-)
-
-FREE_GEMINI_PURPOSES: frozenset[str] = frozenset(
-    {
-        "media_relevance_scoring",
-        "video_analysis_critic",
-        "diagram_layout",
-        "llm_agent",
-        "gemini_research",
-        "gemini_tts",
-        "search_anchor_translation",
-    }
+    {"anthropic", "gemini", "fal", "gcp", "azure_speech", "postforme", "zernio", "youtube", "instagram"}
 )
 
 
@@ -56,7 +46,6 @@ class GcpCredentials:
     project_id: str
     location: str
     credentials_json: str | None = None
-    adc_path: str | None = None
 
 
 def _configured_fernet(raw: str) -> Fernet:
@@ -115,28 +104,6 @@ async def get_user_api_key_row(
     return result.scalar_one_or_none()
 
 
-def _platform_key(provider: str) -> tuple[str | None, dict | None]:
-    if provider == "anthropic":
-        return (settings.anthropic_api_key or None, None)
-    if provider == "gemini":
-        return (settings.google_gemini_api_key or None, None)
-    if provider == "fal":
-        return (settings.fal_key or None, None)
-    if provider == "azure_speech":
-        meta = {"region": settings.azure_speech_region}
-        return (settings.azure_speech_key or None, meta)
-    if provider == "gcp":
-        if not settings.gcp_project_id:
-            return (None, None)
-        meta = {
-            "project_id": settings.gcp_project_id,
-            "location": settings.gcp_location,
-            "credentials_path": settings.google_application_credentials,
-        }
-        return ("gcp-adc", meta)
-    return (None, None)
-
-
 async def resolve_api_key(
     session: AsyncSession,
     user_id: uuid.UUID | None,
@@ -145,7 +112,10 @@ async def resolve_api_key(
     purpose: str,
     tier: KeyTier = "free",
 ) -> ApiKeyContext:
-    """Résout une clé API : BYOK user > plateforme (si autorisé) > none."""
+    """Clé de l'utilisateur pour ce fournisseur, sinon `source="none"` (jamais de clé plateforme).
+
+    `purpose` sert au suivi des appels ; il ne change pas la résolution.
+    """
     if provider not in ALLOWED_PROVIDERS:
         raise ValueError(f"Provider inconnu : {provider}")
 
@@ -160,34 +130,7 @@ async def resolve_api_key(
                 tier=tier,
                 metadata=row.metadata_,
             )
-
-    platform_key, platform_meta = _platform_key(provider)
-    allow_platform = False
-    if provider == "gemini":
-        allow_platform = purpose in FREE_GEMINI_PURPOSES or tier == "free"
-    elif provider == "azure_speech" and purpose == "tts_azure":
-        allow_platform = bool(platform_key)
-    elif provider in ("fal", "gcp") and tier == "paid":
-        allow_platform = bool(platform_key)
-
-    if allow_platform and platform_key:
-        return ApiKeyContext(
-            user_id=user_id,
-            provider=provider,
-            key=platform_key,
-            source="platform",
-            tier="free" if provider == "gemini" and tier == "free" else tier,
-            metadata=platform_meta,
-        )
-
-    return ApiKeyContext(
-        user_id=user_id,
-        provider=provider,
-        key=None,
-        source="none",
-        tier=tier,
-        metadata=None,
-    )
+    return ApiKeyContext(user_id=user_id, provider=provider, key=None, source="none", tier=tier)
 
 
 async def fetch_api_key(
@@ -223,14 +166,33 @@ def parse_gcp_credentials(ctx: ApiKeyContext) -> GcpCredentials | None:
             location=location,
             credentials_json=ctx.key,
         )
-
-    if ctx.source == "platform" and ctx.metadata:
-        project_id = str(ctx.metadata.get("project_id") or "").strip()
-        if not project_id:
-            return None
-        return GcpCredentials(
-            project_id=project_id,
-            location=str(ctx.metadata.get("location") or settings.gcp_location),
-            adc_path=str(ctx.metadata.get("credentials_path") or "") or None,
-        )
     return None
+
+
+@dataclass(frozen=True)
+class UserKeys:
+    """Clés payantes d'un utilisateur, résolues en une fois pour un run Claude Studio."""
+
+    anthropic: str | None = None
+    gemini: str | None = None
+    fal: str | None = None
+    azure_speech: str | None = None
+    azure_speech_region: str | None = None
+    gcp_credentials_json: str | None = None
+
+
+async def resolve_user_keys(user_id: uuid.UUID) -> UserKeys:
+    async with AsyncSessionFactory() as session:
+        ctx = {
+            provider: await resolve_api_key(session, user_id, provider, purpose="studio")
+            for provider in ("anthropic", "gemini", "fal", "azure_speech", "gcp")
+        }
+    azure_meta = ctx["azure_speech"].metadata or {}
+    return UserKeys(
+        anthropic=ctx["anthropic"].key,
+        gemini=ctx["gemini"].key,
+        fal=ctx["fal"].key,
+        azure_speech=ctx["azure_speech"].key,
+        azure_speech_region=str(azure_meta.get("region") or "").strip() or None,
+        gcp_credentials_json=ctx["gcp"].key,
+    )

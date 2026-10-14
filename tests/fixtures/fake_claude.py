@@ -79,8 +79,10 @@ def check_invocation(argv: list[str]) -> None:
         fail("STUDIO_ANIMATIONS doit refléter brief.animations (posé par le launcher)")
     if not (RUN_DIR / "anim" / "lib" / "gsap.min.js").is_file():
         fail("libs d'animation absentes du run dir (anim/lib)")
-    if os.environ.get("ANTHROPIC_API_KEY") and os.environ.get("CLAUDE_STUDIO_AUTH") != "api_key":
-        fail("ANTHROPIC_API_KEY ne doit pas être transmise en mode abonnement")
+    leaked = [name for name in ("CLAUDE_CODE_OAUTH_TOKEN", "GOOGLE_GEMINI_API_KEY", "FAL_KEY", "AZURE_SPEECH_KEY")
+              if os.environ.get(name)]
+    if leaked:
+        fail(f"clés de plateforme transmises au CLI (seules celles de l'utilisateur doivent l'être) : {leaked}")
 
 
 def tool(parent: str, *args: str) -> dict:

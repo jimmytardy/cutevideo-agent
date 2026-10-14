@@ -2,7 +2,7 @@
 
     CUTEVIDEO_LIVE_TESTS=1 pytest tests/test_studio_live.py -s
 
-Utilise le vrai `claude` (abonnement ou CLAUDE_STUDIO_AUTH=api_key), les vraies
+Utilise le vrai `claude` (votre propre connexion `claude`, aucune clé payante transmise), les vraies
 banques d'images et la vraie synthèse vocale. Vérifie les invariants d'une
 vidéo publiable, pas son contenu créatif.
 """

@@ -9,7 +9,6 @@ from typing import Any, Literal
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.core.api_keys import GcpCredentials, parse_gcp_credentials, resolve_api_key
-from agent.core.claude_cli_llm import call_claude_cli, claude_cli_available
 from agent.core.database import User
 from agent.core.llm_config import resolve_max_tokens, resolve_model
 from agent.core.llm_retry import retry_transient_async
@@ -46,7 +45,7 @@ CONTINUATION_PROMPT = (
     "de préambule : ta sortie sera concaténée telle quelle à la précédente."
 )
 
-LlmProvider = Literal["gemini", "anthropic", "claude_cli"]
+LlmProvider = Literal["gemini", "anthropic"]
 LlmTier = Literal["free", "paid"]
 
 FREE_GEMINI_MODEL = "gemini-2.5-flash-lite"
@@ -99,9 +98,12 @@ def parse_agent_preferences(raw: dict | None) -> dict[str, AgentLlmPreference]:
         if not isinstance(cfg, dict):
             continue
         provider = cfg.get("provider", "gemini")
-        if provider not in ("gemini", "anthropic", "claude_cli"):
-            provider = "gemini"
         tier = cfg.get("tier", "free")
+        if provider == "claude_cli":
+            # Ancien choix « Claude CLI (abonnement) » : remplacé par la clé API Anthropic de l'utilisateur.
+            provider, tier = "anthropic", "paid"
+        if provider not in ("gemini", "anthropic"):
+            provider = "gemini"
         if tier not in ("free", "paid"):
             tier = "free"
         model = str(cfg.get("model", FREE_GEMINI_MODEL))
@@ -165,18 +167,6 @@ def _resolve_gemini_model(
     return normalized.model
 
 
-def _claude_cli_config(agent_name: str, model: str | None) -> LlmCallConfig:
-    from agent.core.agent_llm_constraints import CLAUDE_CLI_MODELS
-
-    return LlmCallConfig(
-        provider="claude_cli",
-        model=model if model in CLAUDE_CLI_MODELS else CLAUDE_CLI_MODELS[0],
-        api_key="",
-        tier="free",
-        source="claude_cli",
-    )
-
-
 async def _try_user_anthropic(
     session: AsyncSession, user_id: uuid.UUID, requested_model: str, config_default: str
 ) -> LlmCallConfig | None:
@@ -211,9 +201,9 @@ async def _default_llm(
     *,
     model_override: str | None,
 ) -> LlmCallConfig:
-    """Gemini via Vertex AI (compte de service GCP) si configuré, sinon clé Gemini Developer
-    (user ou plateforme), sinon CLI Claude. Vertex est préféré car il évite la restriction
-    des clés AQ. de l'API Gemini Developer."""
+    """Gemini via Vertex AI (compte de service GCP de l'utilisateur) si configuré, sinon sa clé
+    Gemini Developer, sinon sa clé Anthropic. Vertex est préféré car il évite la restriction
+    des clés AQ. de l'API Gemini Developer. Aucune clé plateforme."""
     model = _resolve_gemini_model(config_agent, pref=pref, model_override=model_override, tier="free")
     gcp = await _resolve_gcp_for_vertex(session, user_id)
     if gcp is not None:
@@ -223,12 +213,12 @@ async def _default_llm(
     ctx = await resolve_api_key(session, user_id, "gemini", purpose="llm_agent", tier="free")
     if ctx.key:
         return LlmCallConfig(provider="gemini", model=model, api_key=ctx.key, tier="free", source=ctx.source)
-    if claude_cli_available():
-        return _claude_cli_config(config_agent, None)
+    if user_id is not None:
+        resolved = await _try_user_anthropic(session, user_id, resolve_model(config_agent), resolve_model(config_agent))
+        if resolved:
+            return resolved
     raise RuntimeError(
-        "Aucune clé Gemini disponible. Configurez Vertex AI (GCP_PROJECT_ID + "
-        "GOOGLE_APPLICATION_CREDENTIALS), GOOGLE_GEMINI_API_KEY côté plateforme, "
-        "ou ajoutez votre clé Gemini dans les paramètres compte."
+        "Aucune clé LLM : ajoutez une clé Gemini, Google Cloud ou Anthropic dans Compte → Clés API."
     )
 
 
@@ -242,15 +232,12 @@ async def resolve_llm_call(
 ) -> LlmCallConfig:
     """Résout provider/modèle/clé pour un appel LLM agent.
 
-    Ordre : préférence CLI Claude → clé Anthropic de l'utilisateur (si modèle Claude
-    demandé) → clé Gemini de l'utilisateur (si préférence) → défaut plateforme.
+    Ordre : clé Anthropic de l'utilisateur (si modèle Claude demandé) → sa clé Gemini
+    (si préférence) → `_default_llm` (Vertex, Gemini puis Anthropic de l'utilisateur).
     """
     user_id = user.id if user else None
     config_agent = preference_agent_name(agent_name)
     pref = parse_agent_preferences(user.agent_llm_preferences if user else None).get(config_agent)
-
-    if pref is not None and pref.provider == "claude_cli":
-        return _claude_cli_config(config_agent, pref.model)
 
     if user_id is not None:
         config_default = resolve_model(config_agent)
@@ -283,15 +270,6 @@ async def call_llm(
 ) -> str:
     cfg = await resolve_llm_call(session, user, agent_name, model_override=model_override)
     resolved_max = resolve_max_tokens(agent_name, max_tokens)
-
-    if cfg.provider == "claude_cli":
-        return await call_claude_cli(
-            model=cfg.model,
-            prompt=prompt,
-            system=system,
-            cacheable_context=cacheable_context,
-            agent_name=agent_name,
-        )
 
     if cfg.provider == "anthropic":
         import anthropic
@@ -434,21 +412,15 @@ def _gemini_truncated(response: Any) -> bool:
     return getattr(reason, "name", str(reason)) == "MAX_TOKENS"
 
 
-def _build_vertex_credentials(gcp: GcpCredentials) -> Any | None:
-    """Credentials google-auth pour Vertex AI à partir d'un compte de service GCP."""
+def _build_vertex_credentials(gcp: GcpCredentials) -> Any:
+    """Credentials google-auth pour Vertex AI à partir du compte de service GCP de l'utilisateur."""
     from google.oauth2 import service_account
 
-    scopes = ["https://www.googleapis.com/auth/cloud-platform"]
-    if gcp.credentials_json:
-        return service_account.Credentials.from_service_account_info(
-            json.loads(gcp.credentials_json), scopes=scopes
-        )
-    if gcp.adc_path:
-        return service_account.Credentials.from_service_account_file(
-            gcp.adc_path, scopes=scopes
-        )
-    # Ni JSON ni fichier explicite : laisse genai utiliser l'ADC de l'environnement.
-    return None
+    if not gcp.credentials_json:
+        raise RuntimeError("compte de service GCP absent : ajoutez-le dans Compte → Clés API")
+    return service_account.Credentials.from_service_account_info(
+        json.loads(gcp.credentials_json), scopes=["https://www.googleapis.com/auth/cloud-platform"]
+    )
 
 
 async def _call_gemini_text(

@@ -70,16 +70,27 @@ def test_build_command_keeps_prompt_before_variadic_flags() -> None:
     assert after_disallowed[2].startswith("--")
 
 
-def test_build_env_prefers_subscription(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
-    monkeypatch.delenv("CLAUDE_STUDIO_AUTH", raising=False)
+def test_build_env_strips_inherited_secrets_and_injects_user_keys(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from agent.core.api_keys import UserKeys
+    from studio.user_keys import INHERITED_SECRET_VARS
+
+    for name in INHERITED_SECRET_VARS:
+        monkeypatch.setenv(name, "platform-secret")
     env = build_env(tmp_path)
-    assert "ANTHROPIC_API_KEY" not in env
+    assert not set(INHERITED_SECRET_VARS) & set(env)
     assert env["STUDIO_RUN_DIR"] == str(tmp_path)
     assert str(REPO_ROOT) in env["PYTHONPATH"]
 
-    monkeypatch.setenv("CLAUDE_STUDIO_AUTH", "api_key")
-    assert build_env(tmp_path)["ANTHROPIC_API_KEY"] == "sk-test"
+    keys = UserKeys(anthropic="sk-ant-api-user", gemini="g-user", azure_speech="az", azure_speech_region="westeurope")
+    env = build_env(tmp_path, keys, config_dir=tmp_path / "cfg")
+    assert env["ANTHROPIC_API_KEY"] == "sk-ant-api-user"
+    assert env["STUDIO_GEMINI_API_KEY"] == "g-user"
+    assert env["STUDIO_AZURE_SPEECH_KEY"] == "az"
+    assert env["STUDIO_AZURE_SPEECH_REGION"] == "westeurope"
+    assert "STUDIO_FAL_KEY" not in env and "CLAUDE_CODE_OAUTH_TOKEN" not in env
+    assert env["CLAUDE_CONFIG_DIR"] == str(tmp_path / "cfg") and (tmp_path / "cfg").is_dir()
 
 
 @pytest.mark.parametrize(("brief_cap", "platform_cap", "expected"), [(0, "4", "0"), (2, "4", "2"), (10, "4", "4")])

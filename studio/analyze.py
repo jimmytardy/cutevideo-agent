@@ -2,8 +2,8 @@
 
 Deux voies, dans cet ordre :
 
-1. **Gemini** (offre gratuite, `GOOGLE_GEMINI_API_KEY`) : la vidéo complète, son compris, est envoyée au modèle
-   qui renvoie un avis JSON structuré selon la grille virale (`GRID`).
+1. **Gemini** (clé Gemini de l'utilisateur, `STUDIO_GEMINI_API_KEY` posée par le launcher) : la vidéo
+   complète, son compris, est envoyée au modèle qui renvoie un avis JSON structuré selon la grille virale (`GRID`).
 2. **Claude** (repli automatique, et toujours calculé) : ce que Claude peut percevoir lui-même avec Read —
    planches de frames denses (hook, chronologie, avant/après chaque coupe), transcription Whisper avec débit et
    pauses, mesures audio (loudness, rapport voix/fond, silences, hauteur et variation de la voix) et un
@@ -373,11 +373,11 @@ def _gemini_prompt(context: str) -> str:
 
 
 async def _gemini_review(video: Path, context: str) -> dict[str, Any]:
-    from agent.core.config import settings
+    from studio.user_keys import GEMINI_API_KEY, user_key
 
-    key = settings.google_gemini_api_key or os.getenv("GEMINI_API_KEY")
+    key = user_key(GEMINI_API_KEY)
     if not key:
-        raise RuntimeError("GOOGLE_GEMINI_API_KEY absente")
+        raise RuntimeError("aucune clé Gemini dans le compte (Compte → Clés API)")
     if video.stat().st_size > GEMINI_MAX_BYTES:
         raise RuntimeError("vidéo trop lourde pour un envoi en ligne")
     from google import genai

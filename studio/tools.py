@@ -102,6 +102,7 @@ async def _synthesize(
 ) -> tuple[float, str]:
     """Synthétise chaque ligne (emphase propre) puis les recolle ; renvoie (durée, moteur effectif)."""
     from agent.skills.audio.tts import generate_tts
+    from studio.user_keys import AZURE_SPEECH_KEY, AZURE_SPEECH_REGION, GEMINI_API_KEY, user_key
     from studio.voicefx import combine_offset, concat_wavs
 
     if not segments:
@@ -119,6 +120,10 @@ async def _synthesize(
                 tts_rate=combine_offset(args.rate, opts.get("rate")),
                 tts_pitch=combine_offset(args.pitch, opts.get("pitch")),
                 mood=args.mood or "",
+                # Clés du propriétaire de la chaîne (sans clé : moteur indisponible → edge-tts).
+                gemini_api_key=user_key(GEMINI_API_KEY),
+                azure_speech_key=user_key(AZURE_SPEECH_KEY),
+                azure_speech_region=user_key(AZURE_SPEECH_REGION),
             )
             parts.append(part)
         return (duration if len(parts) == 1 else concat_wavs(parts, out)), used

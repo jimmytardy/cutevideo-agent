@@ -15,26 +15,6 @@ logger = logging.getLogger(__name__)
 
 GeminiTtsApplyTo = Literal["off", "shorts", "long", "both"]
 
-_NOT_PASSED = object()
-
-
-def _resolved_gemini_key(gemini_api_key: str | None | object) -> str:
-    if gemini_api_key is _NOT_PASSED:
-        return (settings.google_gemini_api_key or "").strip()
-    return (gemini_api_key or "").strip() if gemini_api_key is not None else ""
-
-
-def _resolved_azure_key(azure_speech_key: str | None | object) -> str:
-    if azure_speech_key is _NOT_PASSED:
-        return (settings.azure_speech_key or "").strip()
-    return (azure_speech_key or "").strip() if azure_speech_key is not None else ""
-
-
-def _resolved_azure_region(azure_speech_region: str | None | object) -> str:
-    if azure_speech_region is _NOT_PASSED:
-        return settings.azure_speech_region
-    return (azure_speech_region or settings.azure_speech_region).strip()
-
 
 async def normalize_wav(
     src: Path, dst: Path, *, mastering: dict[str, Any] | None = None
@@ -65,16 +45,15 @@ async def normalize_wav(
 def resolve_engine(
     requested: str | None,
     *,
-    gemini_api_key: str | None | object = _NOT_PASSED,
-    azure_speech_key: str | None | object = _NOT_PASSED,
+    gemini_api_key: str | None = None,
+    azure_speech_key: str | None = None,
 ) -> str:
+    """Moteur effectif : les clés sont celles de l'utilisateur (None = moteur indisponible)."""
     engine = requested or settings.tts_engine or "azure"
-    azure_key = _resolved_azure_key(azure_speech_key)
-    gemini_key = _resolved_gemini_key(gemini_api_key)
-    if engine == "azure" and not azure_key:
+    if engine == "azure" and not (azure_speech_key or "").strip():
         logger.warning("Azure Speech non configuré — fallback edge-tts")
         return "edge-tts"
-    if engine == "gemini" and not gemini_key:
+    if engine == "gemini" and not (gemini_api_key or "").strip():
         logger.warning("Gemini TTS demandé mais clé Gemini absente — fallback azure/edge-tts")
         return resolve_engine(
             "azure",
@@ -100,9 +79,9 @@ async def generate_tts(
     *,
     gemini_model: str = DEFAULT_GEMINI_TTS_MODEL,
     gemini_language_code: str = DEFAULT_GEMINI_LANGUAGE,
-    gemini_api_key: str | None | object = _NOT_PASSED,
-    azure_speech_key: str | None | object = _NOT_PASSED,
-    azure_speech_region: str | None | object = _NOT_PASSED,
+    gemini_api_key: str | None = None,
+    azure_speech_key: str | None = None,
+    azure_speech_region: str | None = None,
     mastering: dict[str, Any] | None = None,
 ) -> tuple[float, str]:
     """Génère un fichier audio WAV depuis un texte. Retourne (durée_s, moteur_effectif)."""
@@ -111,9 +90,9 @@ async def generate_tts(
         gemini_api_key=gemini_api_key,
         azure_speech_key=azure_speech_key,
     )
-    effective_gemini = _resolved_gemini_key(gemini_api_key)
-    effective_azure = _resolved_azure_key(azure_speech_key)
-    effective_region = _resolved_azure_region(azure_speech_region)
+    effective_gemini = (gemini_api_key or "").strip()
+    effective_azure = (azure_speech_key or "").strip()
+    effective_region = (azure_speech_region or settings.azure_speech_region).strip()
 
     if resolved == "gemini":
         from agent.skills.audio.gemini_tts import synthesize_gemini_tts

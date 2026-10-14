@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import aiohttp
 
-from agent.core.config import load_agent_config, settings
+from agent.core.config import load_agent_config
 from agent.skills.media_sources.ai.base import ImageGenerationRequest, ImageGenerationResult
 from agent.skills.media_sources.ai.prompt_builder import build_documentary_prompt
 
@@ -63,37 +63,7 @@ async def _get_gcp_access_token(
             logger.warning("Auth GCP Imagen 3 (compte user) échouée : %s", e)
             return None, None, None
 
-    if gcp_credentials and gcp_credentials.adc_path:
-        try:
-            credentials, _ = google.auth.default(
-                scopes=["https://www.googleapis.com/auth/cloud-platform"]
-            )
-            credentials.refresh(google.auth.transport.requests.Request())
-            return (
-                str(credentials.token),
-                gcp_credentials.project_id,
-                gcp_credentials.location,
-            )
-        except (OSError, ValueError) as e:
-            logger.warning("Auth GCP Imagen 3 (ADC plateforme) échouée : %s", e)
-            return None, None, None
-
-    if not settings.gcp_project_id:
-        return None, None, None
-
-    try:
-        credentials, _ = google.auth.default(
-            scopes=["https://www.googleapis.com/auth/cloud-platform"]
-        )
-        credentials.refresh(google.auth.transport.requests.Request())
-        return (
-            str(credentials.token),
-            settings.gcp_project_id,
-            settings.gcp_location,
-        )
-    except (OSError, ValueError) as e:
-        logger.warning("Auth GCP Imagen 3 échouée : %s", e)
-        return None, None, None
+    return None, None, None
 
 
 class Imagen3Provider:
@@ -102,11 +72,8 @@ class Imagen3Provider:
 
     async def generate(self, request: ImageGenerationRequest) -> ImageGenerationResult | None:
         gcp = request.gcp_credentials
-        if request.user_resolved_keys and gcp is None:
-            logger.warning("Credentials GCP user absents — provider Imagen 3 ignoré")
-            return None
-        if not request.user_resolved_keys and not settings.gcp_project_id:
-            logger.warning("GCP_PROJECT_ID absent — provider Imagen 3 ignoré")
+        if gcp is None:
+            logger.warning("Credentials GCP de l'utilisateur absents — provider Imagen 3 ignoré")
             return None
 
         model = _model_for_plan(self.plan_id)

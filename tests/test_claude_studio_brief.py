@@ -41,3 +41,25 @@ def test_build_brief_clamps_duration_and_iterations() -> None:
     brief = build_brief(_ctx(target_duration_seconds=1800, max_critic_iterations=20))
     assert brief.target_duration_s == 180
     assert brief.max_iterations == 6
+
+
+def test_runner_refuses_to_start_without_owner_anthropic_key(tmp_path, monkeypatch) -> None:
+    """Sans clé Anthropic du propriétaire : erreur claire, et la création précédente n'est pas effacée."""
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    import pytest
+
+    from agent.core import api_keys, claude_studio
+    from studio.launcher import ClaudeRunError
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-api-platform")
+    monkeypatch.setattr(api_keys, "resolve_user_keys", AsyncMock(return_value=api_keys.UserKeys()))
+    runner = claude_studio.ClaudeStudioRunner(_ctx())
+    runner.run_dir = tmp_path / "run"
+    runner.run_dir.mkdir()
+    (runner.run_dir / "result.json").write_text("{}", encoding="utf-8")
+
+    with pytest.raises(ClaudeRunError, match="Compte → Clés API"):
+        asyncio.run(runner.run())
+    assert (runner.run_dir / "result.json").exists()

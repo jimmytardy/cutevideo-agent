@@ -3,13 +3,15 @@
 Chaque provider est vérifié par un appel léger qui **ne génère rien** (pas
 d'image, pas de vidéo, pas de tokens facturés quand c'est possible) :
 
-- anthropic    : GET /v1/models
+- anthropic    : GET /v1/models (clé API seulement : un token d'abonnement `sk-ant-oat…` est refusé)
 - gemini       : GET /v1/models (API Gemini Developer ; rejette donc les tokens AQ.)
 - fal          : POST sans payload valide -> 422 si la clé est bonne, 401 sinon
 - gcp          : chargement du compte de service + obtention d'un token OAuth
 - azure_speech : POST issueToken (token éphémère, aucune synthèse)
 - postforme    : GET /v1/social-accounts?limit=1 (lecture seule)
 - zernio       : GET /v1/accounts (lecture seule)
+- youtube      : échange du refresh token contre un access token (application OAuth de la plateforme)
+- instagram    : GET /me sur la Graph API (lecture seule) ; `page_id` requis
 
 Principe : on ne bloque l'enregistrement **que** sur une erreur d'authentification
 claire (clé invalide / refusée). Les erreurs ambiguës (réseau, 5xx, dépendance
@@ -53,6 +55,8 @@ async def validate_api_key(
             key, "https://api.postforme.dev/v1/social-accounts?limit=1", "Post for Me"
         ),
         "zernio": lambda: _validate_bearer_get(key, "https://zernio.com/api/v1/accounts", "Zernio"),
+        "youtube": lambda: _validate_youtube(key),
+        "instagram": lambda: _validate_instagram(key, metadata or {}),
     }
     validator = validators.get(provider)
     if validator is None:
@@ -71,6 +75,11 @@ async def validate_api_key(
 
 
 async def _validate_anthropic(key: str) -> None:
+    if key.startswith("sk-ant-oat"):
+        # Anthropic interdit aux applications de stocker les identifiants d'abonnement Claude.ai.
+        raise ApiKeyValidationError(
+            "Ceci est un token d'abonnement Claude : collez une clé API (sk-ant-api…) de la console Anthropic."
+        )
     import anthropic
 
     client = anthropic.AsyncAnthropic(api_key=key)
@@ -170,3 +179,27 @@ async def _validate_bearer_get(key: str, url: str, label: str) -> None:
         resp = await client.get(url, headers={"Authorization": f"Bearer {key}"})
     if resp.status_code in (401, 403):
         raise ApiKeyValidationError(f"Clé {label} invalide ou non autorisée.")
+
+
+async def _validate_youtube(refresh_token: str) -> None:
+    if not settings.youtube_client_id or not settings.youtube_client_secret:
+        return  # application OAuth non configurée : test impossible, on n'empêche pas l'enregistrement
+    data = {
+        "client_id": settings.youtube_client_id,
+        "client_secret": settings.youtube_client_secret,
+        "refresh_token": refresh_token,
+        "grant_type": "refresh_token",
+    }
+    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        resp = await client.post("https://oauth2.googleapis.com/token", data=data)
+    if resp.status_code in (400, 401):
+        raise ApiKeyValidationError("Refresh token Google invalide ou révoqué.")
+
+
+async def _validate_instagram(token: str, metadata: dict) -> None:
+    if not str(metadata.get("page_id") or "").strip():
+        raise ApiKeyValidationError("ID du compte Instagram requis (champ « page_id »).")
+    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        resp = await client.get("https://graph.facebook.com/v19.0/me", params={"access_token": token})
+    if resp.status_code in (400, 401, 403):
+        raise ApiKeyValidationError("Token Instagram invalide ou expiré.")

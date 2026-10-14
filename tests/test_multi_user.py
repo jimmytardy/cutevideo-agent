@@ -245,22 +245,18 @@ async def test_resolve_gemini_user_key_over_platform() -> None:
 
 
 @pytest.mark.asyncio
-async def test_resolve_gemini_platform_free() -> None:
+@pytest.mark.parametrize("provider", ["gemini", "anthropic", "fal", "azure_speech", "gcp", "youtube", "instagram"])
+async def test_resolve_without_user_key_never_uses_platform(provider: str, monkeypatch: pytest.MonkeyPatch) -> None:
     from unittest.mock import AsyncMock, MagicMock
 
+    for name in ("GOOGLE_GEMINI_API_KEY", "ANTHROPIC_API_KEY", "FAL_KEY", "AZURE_SPEECH_KEY", "GCP_PROJECT_ID",
+                 "YOUTUBE_REFRESH_TOKEN", "INSTAGRAM_ACCESS_TOKEN"):
+        monkeypatch.setenv(name, "platform-secret")
     session = AsyncMock()
     session.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
 
-    ctx = await resolve_api_key(
-        session,
-        uuid.uuid4(),
-        "gemini",
-        purpose="media_relevance_scoring",
-        tier="free",
-    )
-    # Sans clé user : plateforme ou none selon .env
-    assert ctx.provider == "gemini"
-    assert ctx.source in ("platform", "none")
+    ctx = await resolve_api_key(session, uuid.uuid4(), provider, purpose="llm_agent", tier="paid")
+    assert (ctx.source, ctx.key) == ("none", None)
 
 
 def test_api_key_encryption_uses_single_configured_key(monkeypatch: pytest.MonkeyPatch) -> None:

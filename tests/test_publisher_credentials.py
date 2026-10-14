@@ -1,4 +1,4 @@
-"""Identifiants de publication : le token global n'est prêté qu'aux chaînes admin."""
+"""Identifiants de publication : uniquement ceux du propriétaire de la chaîne, sans repli global."""
 
 from __future__ import annotations
 
@@ -8,29 +8,50 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from agent.core.api_keys import ApiKeyContext
 from agent.skills.publisher import credentials, executor
 
 
-def _channel(token: str | None = None) -> SimpleNamespace:
-    return SimpleNamespace(user_id=uuid.uuid4(), youtube_refresh_token=token, instagram_page_id="123")
+def _channel(token: str | None = None, page: str | None = "123") -> SimpleNamespace:
+    return SimpleNamespace(user_id=uuid.uuid4(), youtube_refresh_token=token, instagram_page_id=page)
+
+
+def _key(provider: str, key: str | None, metadata: dict | None = None) -> AsyncMock:
+    return AsyncMock(return_value=ApiKeyContext(
+        user_id=None, provider=provider, key=key, source="user" if key else "none", tier="free", metadata=metadata,
+    ))
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("own_token", "is_admin", "expected"),
-    [("own", False, "own"), (None, False, None), (None, True, "global")],
+    ("own_token", "owner_token", "expected"),
+    [("own", "owner", "own"), (None, "owner", "owner"), (None, None, None)],
 )
-async def test_youtube_token_global_only_for_admin(monkeypatch, own_token, is_admin, expected) -> None:
-    monkeypatch.setattr(credentials.settings, "youtube_refresh_token", "global")
-    with patch.object(credentials, "channel_owner_is_admin", AsyncMock(return_value=is_admin)):
-        assert await credentials.youtube_refresh_token(_channel(own_token)) == expected
+async def test_youtube_token_from_channel_then_owner(own_token, owner_token, expected, monkeypatch) -> None:
+    monkeypatch.setenv("YOUTUBE_REFRESH_TOKEN", "global-must-not-be-used")
+    channel = _channel(own_token)
+    fetch = _key("youtube", owner_token)
+    with patch.object(credentials, "fetch_api_key", fetch):
+        assert await credentials.youtube_refresh_token(channel) == expected
+    if own_token is None:
+        assert fetch.await_args.args[:2] == (channel.user_id, "youtube")
 
 
 @pytest.mark.asyncio
-async def test_instagram_refused_for_non_admin(monkeypatch) -> None:
-    monkeypatch.setattr(credentials.settings, "instagram_access_token", "global")
-    with patch.object(credentials, "channel_owner_is_admin", AsyncMock(return_value=False)):
-        assert await credentials.instagram_publishing_allowed(_channel()) is False
+@pytest.mark.parametrize(
+    ("token", "channel_page", "default_page", "expected"),
+    [
+        ("tok", "123", "999", ("tok", "123")),
+        ("tok", None, "999", ("tok", "999")),
+        ("tok", None, None, None),
+        (None, "123", "999", None),
+    ],
+)
+async def test_instagram_uses_owner_token(token, channel_page, default_page, expected) -> None:
+    meta = {"page_id": default_page} if default_page else None
+    with patch.object(credentials, "fetch_api_key", _key("instagram", token, meta)):
+        creds = await credentials.instagram_credentials(_channel(page=channel_page))
+    assert (None if creds is None else (creds.access_token, creds.page_id)) == expected
 
 
 @pytest.mark.asyncio

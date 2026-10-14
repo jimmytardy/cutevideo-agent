@@ -1,38 +1,45 @@
 """Identifiants de publication d'une chaîne.
 
-`YOUTUBE_REFRESH_TOKEN` et `INSTAGRAM_ACCESS_TOKEN` (.env) donnent accès aux comptes
-de l'exploitant : ils ne servent de repli qu'aux chaînes d'un administrateur. Une
-chaîne d'un autre utilisateur publie uniquement avec son propre OAuth, sinon elle
-pourrait uploader sur les comptes de l'exploitant.
+Tout vient du propriétaire de la chaîne, sans repli global ni admin :
+- YouTube : le token OAuth de la chaîne, sinon le refresh token du compte Google que le
+  propriétaire a enregistré (Compte → Clés API, fournisseur `youtube`) ;
+- Instagram : l'access token du propriétaire (fournisseur `instagram`), publié sur la page
+  de la chaîne, sinon sur la page par défaut enregistrée avec le token (`metadata.page_id`).
 """
 
 from __future__ import annotations
 
+import uuid
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from sqlalchemy import select
-
-from agent.core.config import settings
-from agent.core.database import AsyncSessionFactory, User
+from agent.core.api_keys import fetch_api_key
 
 if TYPE_CHECKING:
     from agent.core.database import Channel
 
 
-async def channel_owner_is_admin(channel: Channel) -> bool:
-    async with AsyncSessionFactory() as session:
-        return bool(await session.scalar(select(User.is_admin).where(User.id == channel.user_id)))
+@dataclass(frozen=True)
+class InstagramCredentials:
+    access_token: str
+    page_id: str
+
+
+async def user_youtube_refresh_token(user_id: uuid.UUID) -> str | None:
+    """Refresh token du compte Google enregistré par l'utilisateur."""
+    return (await fetch_api_key(user_id, "youtube", purpose="youtube_publish")).key
 
 
 async def youtube_refresh_token(channel: Channel) -> str | None:
-    """Token OAuth de la chaîne, ou le token global si la chaîne appartient à un admin."""
+    """Token OAuth de la chaîne, sinon celui du compte Google de son propriétaire."""
     if channel.youtube_refresh_token:
         return channel.youtube_refresh_token
-    if settings.youtube_refresh_token and await channel_owner_is_admin(channel):
-        return settings.youtube_refresh_token
-    return None
+    return await user_youtube_refresh_token(channel.user_id)
 
 
-async def instagram_publishing_allowed(channel: Channel) -> bool:
-    """Instagram n'a qu'un token global (pas d'OAuth par chaîne) : réservé aux chaînes admin."""
-    return bool(settings.instagram_access_token) and await channel_owner_is_admin(channel)
+async def instagram_credentials(channel: Channel) -> InstagramCredentials | None:
+    ctx = await fetch_api_key(channel.user_id, "instagram", purpose="instagram_publish")
+    if not ctx.key:
+        return None
+    page_id = channel.instagram_page_id or str((ctx.metadata or {}).get("page_id") or "").strip()
+    return InstagramCredentials(access_token=ctx.key, page_id=page_id) if page_id else None

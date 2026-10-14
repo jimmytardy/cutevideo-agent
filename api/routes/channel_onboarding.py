@@ -18,7 +18,7 @@ from agent.core.config import settings
 from agent.core.database import Channel, User, get_db
 from agent.core.subscription import QuotaExceededError, check_can_create_channel
 from agent.skills.publisher import youtube_branding
-from agent.skills.publisher.credentials import youtube_refresh_token
+from agent.skills.publisher.credentials import user_youtube_refresh_token, youtube_refresh_token
 from api.authorization import get_user_channel
 from api.deps import get_current_user
 from api.models import (
@@ -186,8 +186,8 @@ async def list_youtube_channels(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[YouTubeChannelItem]:
-    # Le token global (.env) ne liste que les chaînes de l'exploitant : admin uniquement.
-    refresh_token = settings.youtube_refresh_token if current_user.is_admin else None
+    # Sans chaîne : le compte Google enregistré par l'utilisateur (Compte → Clés API).
+    refresh_token = await user_youtube_refresh_token(current_user.id)
     if channel_id:
         ch = await get_user_channel(db, channel_id, current_user)
         refresh_token = await youtube_refresh_token(ch)

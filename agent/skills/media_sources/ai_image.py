@@ -51,7 +51,6 @@ async def generate_image(
         use_prompt_as_is=use_prompt_as_is,
         fal_api_key=fal_api_key,
         gcp_credentials=gcp_credentials,
-        user_resolved_keys=True,
         seed=seed,
     )
 

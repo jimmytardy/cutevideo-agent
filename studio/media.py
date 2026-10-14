@@ -27,6 +27,7 @@ from agent.skills.media.rights_check import filter_publishable
 from agent.skills.video.ffmpeg_runtime import filter_thread_args, measure_loudness, run_ffmpeg, thread_args
 from studio.assets import FONT_FILE, IMAGE_EXTENSIONS, SHEET_COLS, TILE_H, TILE_W, max_ai_images
 from studio.contracts import read_json, write_json
+from studio.user_keys import FAL_KEY, user_key
 
 logger = logging.getLogger(__name__)
 
@@ -201,7 +202,6 @@ async def download_candidate(run_dir: Path, cid: str, name: str) -> dict[str, An
 
 async def generate_ai_image(run_dir: Path, prompt: str, name: str, aspect: str = "9:16") -> dict[str, Any]:
     from agent.core.channel_config import AiFallbackConfig
-    from agent.core.config import settings
     from agent.skills.media_sources.ai_image import generate_image
 
     credits = read_json(_credits_path(run_dir), {})
@@ -219,8 +219,8 @@ async def generate_ai_image(run_dir: Path, prompt: str, name: str, aspect: str =
         plan_override="flux_2_dev",
         use_prompt_as_is=True,
         visual_type="custom",
-        # generate_image ne lit pas la clé globale (user_resolved_keys) : on la passe explicitement.
-        fal_api_key=settings.fal_key or None,
+        # Clé fal du propriétaire de la chaîne, posée par le launcher.
+        fal_api_key=user_key(FAL_KEY),
     )
     if not result or not result.get("local_generated"):
         raise RuntimeError(

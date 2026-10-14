@@ -163,8 +163,15 @@ class ClaudeStudioRunner:
         self.output_dir = OUTPUT_ROOT / str(ctx.project_id)
 
     async def run(self) -> Video:
+        from agent.core.api_keys import resolve_user_keys
         from agent.core.pipeline_reset import clear_creation_artifacts
 
+        # Clés du propriétaire de la chaîne, vérifiées avant d'effacer la création précédente.
+        keys = await resolve_user_keys(self.ctx.channel.user_id)
+        if not keys.anthropic:
+            raise ClaudeRunError(
+                "Aucune clé API Anthropic : ajoutez-la dans Compte → Clés API pour créer des vidéos"
+            )
         brief = build_brief(self.ctx)
         # Relance complète : on repart d'un état propre (DB et run dir).
         async with AsyncSessionFactory() as session:
@@ -178,7 +185,12 @@ class ClaudeStudioRunner:
 
         recorder = _ProgressRecorder(self.ctx.project_id)
         try:
-            session_result = await run_claude(self.run_dir, on_event=recorder)
+            session_result = await run_claude(
+                self.run_dir,
+                on_event=recorder,
+                keys=keys,
+                config_dir=default_runs_dir() / ".claude-config" / str(self.ctx.channel.user_id),
+            )
         except BaseException as exc:
             await recorder.close_dangling("stopped" if not isinstance(exc, Exception) else "failed", str(exc)[:500])
             raise

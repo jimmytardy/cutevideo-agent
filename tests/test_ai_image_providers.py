@@ -19,15 +19,12 @@ async def test_flux_pro_success(tmp_path: Path) -> None:
         output_dir=tmp_path,
         theme_category="animaux",
         editorial_tone="humoristique",
+        fal_api_key="test-fal-key",
     )
     fake_image = b"fake-jpeg"
     flux_response = {"images": [{"url": "https://fal.ai/fake.jpg"}]}
 
-    with (
-        patch("agent.skills.media_sources.ai.flux_common.settings") as mock_settings,
-        patch("aiohttp.ClientSession") as mock_session_cls,
-    ):
-        mock_settings.fal_key = "test-fal-key"
+    with patch("aiohttp.ClientSession") as mock_session_cls:
         mock_session = AsyncMock()
         mock_session_cls.return_value.__aenter__.return_value = mock_session
 
@@ -58,15 +55,12 @@ async def test_flux_2_dev_success(tmp_path: Path) -> None:
         output_dir=tmp_path,
         theme_category="nature",
         editorial_tone="calme",
+        fal_api_key="test-fal-key",
     )
     fake_image = b"fake-jpeg"
     flux_response = {"images": [{"url": "https://fal.ai/fake2.jpg"}]}
 
-    with (
-        patch("agent.skills.media_sources.ai.flux_common.settings") as mock_settings,
-        patch("aiohttp.ClientSession") as mock_session_cls,
-    ):
-        mock_settings.fal_key = "test-fal-key"
+    with patch("aiohttp.ClientSession") as mock_session_cls:
         mock_session = AsyncMock()
         mock_session_cls.return_value.__aenter__.return_value = mock_session
 

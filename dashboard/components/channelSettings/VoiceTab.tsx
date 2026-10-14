@@ -23,8 +23,8 @@ export default function VoiceTab({ form, update }: Props) {
     <>
       <Typography variant="h6" sx={{ mb: 1 }}>Voix &amp; synthèse (TTS)</Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Moteur et voix de la narration des Shorts. Gemini nécessite une clé GOOGLE_GEMINI_API_KEY ;
-        Azure nécessite AZURE_SPEECH_KEY. Edge TTS est gratuit (voix Azure HD remplacées par une voix edge).
+        Moteur et voix de la narration des Shorts. Gemini nécessite votre clé Gemini (Compte → Clés API) ;
+        Azure nécessite votre clé Azure Speech. Edge TTS est gratuit (voix Azure HD remplacées par une voix edge).
       </Typography>
 
       <Box sx={{ display: 'flex', gap: 2, mb: 3 }}>

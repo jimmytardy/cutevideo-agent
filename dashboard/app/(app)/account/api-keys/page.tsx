@@ -32,6 +32,7 @@ type ApiKeyStatus = {
   provider: string
   configured: boolean
   key_hint?: string | null
+  metadata?: Record<string, unknown> | null
 }
 
 function KeyConfiguredIcon({ configured }: { configured: boolean }) {
@@ -46,9 +47,19 @@ export default function ApiKeysPage() {
   const { data: keys, mutate } = useSWR<ApiKeyStatus[]>(`${API_BASE}/me/api-keys`, fetcher)
   const [provider, setProvider] = useState<ApiKeyProviderId>('gemini')
   const [apiKey, setApiKey] = useState('')
+  const [metadata, setMetadata] = useState<Record<string, string>>({})
   const [message, setMessage] = useState<string | null>(null)
 
   const selectedProvider = getApiKeyProvider(provider)
+  const metadataFields = selectedProvider?.metadataFields ?? []
+  const missingRequired = metadataFields.some((f) => f.required && !metadata[f.key]?.trim())
+
+  const selectProvider = (id: ApiKeyProviderId) => {
+    setProvider(id)
+    // Champs complémentaires préremplis avec ceux déjà enregistrés (région, page…).
+    const stored = (Array.isArray(keys) ? keys : []).find((k) => k.provider === id)?.metadata ?? {}
+    setMetadata(Object.fromEntries(Object.entries(stored).map(([k, v]) => [k, String(v ?? '')])))
+  }
   const configuredByProvider = new Map(
     (Array.isArray(keys) ? keys : []).map((k) => [k.provider, k.configured]),
   )
@@ -58,7 +69,12 @@ export default function ApiKeysPage() {
   const saveKey = async () => {
     setMessage(null)
     try {
-      await saveApiKey(provider, apiKey)
+      const filled = Object.fromEntries(
+        metadataFields
+          .map((f) => [f.key, metadata[f.key]?.trim() ?? ''] as const)
+          .filter(([, v]) => v),
+      )
+      await saveApiKey(provider, apiKey, metadataFields.length ? filled : undefined)
     } catch (e) {
       setMessage(e instanceof Error ? e.message : 'Erreur')
       return
@@ -72,7 +88,7 @@ export default function ApiKeysPage() {
     <PageContainer maxWidth="md">
       <PageHeader
         title="Clés API personnelles"
-        description="Les clés payantes sont optionnelles. Sans clé Anthropic, les agents utilisent Gemini gratuit."
+        description="Vos vidéos, agents et publications utilisent uniquement ces clés : aucune clé de la plateforme n’est partagée. La clé Anthropic est requise pour créer des vidéos."
       />
       {message && <Alert severity="info" sx={{ mb: 2 }}>{message}</Alert>}
 
@@ -125,7 +141,7 @@ export default function ApiKeysPage() {
             select
             label="Service"
             value={provider}
-            onChange={(e) => setProvider(e.target.value as ApiKeyProviderId)}
+            onChange={(e) => selectProvider(e.target.value as ApiKeyProviderId)}
             sx={{ minWidth: 280 }}
             SelectProps={{
               renderValue: (value) => {
@@ -158,7 +174,23 @@ export default function ApiKeysPage() {
             minRows={provider === 'gcp' ? 3 : undefined}
             sx={{ flex: 1, minWidth: 240 }}
           />
-          <Button variant="contained" onClick={saveKey} disabled={!apiKey.trim()} sx={{ alignSelf: 'flex-start' }}>
+          {metadataFields.map((field) => (
+            <TextField
+              key={field.key}
+              label={field.label}
+              placeholder={field.placeholder}
+              required={field.required}
+              value={metadata[field.key] ?? ''}
+              onChange={(e) => setMetadata((prev) => ({ ...prev, [field.key]: e.target.value }))}
+              sx={{ minWidth: 200 }}
+            />
+          ))}
+          <Button
+            variant="contained"
+            onClick={saveKey}
+            disabled={!apiKey.trim() || missingRequired}
+            sx={{ alignSelf: 'flex-start' }}
+          >
             Enregistrer
           </Button>
         </Box>

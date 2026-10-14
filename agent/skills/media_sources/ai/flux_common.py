@@ -5,7 +5,7 @@ import uuid
 
 import aiohttp
 
-from agent.core.config import load_agent_config, settings
+from agent.core.config import load_agent_config
 from agent.skills.media_sources.ai.base import ImageGenerationRequest, ImageGenerationResult
 from agent.skills.media_sources.ai.flux_negative_prompt import flux_negative_prompt_for_visual_type
 from agent.skills.media_sources.ai.prompt_builder import build_documentary_prompt
@@ -32,9 +32,8 @@ def _flux_model_for_plan(plan_id: str) -> str | None:
 
 
 def _fal_key_for(request: ImageGenerationRequest) -> str | None:
-    if request.user_resolved_keys:
-        return request.fal_api_key
-    return settings.fal_key or None
+    """Clé fal de l'utilisateur (aucune clé plateforme)."""
+    return request.fal_api_key
 
 
 def _apply_flux_negative_prompt(payload: dict, request: ImageGenerationRequest) -> None:

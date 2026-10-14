@@ -41,7 +41,7 @@ python -m studio.run "Pourquoi les flamants roses sont roses" --duration 45
 python -m studio.run "…" --interactive   # ouvre Claude Code dans le dossier du run
 ```
 
-Auth du CLI : abonnement Claude (login `claude` ou `CLAUDE_CODE_OAUTH_TOKEN` via `claude setup-token`) ; `CLAUDE_STUDIO_AUTH=api_key` pour facturer `ANTHROPIC_API_KEY`.
+Clés : chaque utilisateur saisit les siennes dans **Compte → Clés API** (Anthropic obligatoire pour créer des vidéos, plus Gemini, fal, Azure, Google Cloud, YouTube, Instagram). Aucune clé payante dans `.env` : une vidéo, un agent ou une publication n'utilise que les clés du propriétaire de la chaîne. En local, `python -m studio.run "…" --user <email>` prend les clés de ce compte ; sans `--user`, le CLI utilise votre connexion `claude` et aucun moteur payant.
 
 **Distribution** (scheduler toutes les 15 min, si `publishing.auto_publish`) :
 

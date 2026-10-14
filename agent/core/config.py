@@ -34,8 +34,8 @@ class StorageSettings:
 
 
 class Settings(BaseSettings):
-    # IA — plateforme (fallback gratuit Gemini ; Anthropic optionnel)
-    anthropic_api_key: str = ""
+    # Les clés payantes (Anthropic, Gemini, fal, Azure, GCP) et les comptes de publication
+    # (YouTube, Instagram) sont par utilisateur : table user_api_keys (agent/core/api_keys.py).
 
     # Base de données
     database_url: str = "postgresql+asyncpg://cutevideo:cutevideo@localhost:5432/cutevideo"
@@ -52,16 +52,9 @@ class Settings(BaseSettings):
     # Plateformes de publication
     youtube_client_id: str = ""
     youtube_client_secret: str = ""
-    youtube_refresh_token: str = ""
-    instagram_access_token: str = ""
-    instagram_page_id: str = ""
 
     composio_api_key: str = ""
     composio_tiktok_auth_config_id: str = ""
-    google_gemini_api_key: str = ""
-    fal_key: str = ""
-    google_application_credentials: str = ""
-    gcp_project_id: str = ""
     gcp_location: str = "europe-west1"
     api_base_url: str = "http://localhost:8000"
     youtube_oauth_redirect_uri: str = "http://localhost:8000/api/v1/channels/youtube/oauth/callback"
@@ -92,7 +85,6 @@ class Settings(BaseSettings):
     totp_login_email: str = ""
 
     # TTS
-    azure_speech_key: str = ""
     azure_speech_region: str = "westeurope"
     tts_engine: str = "azure"
 
@@ -103,11 +95,6 @@ class Settings(BaseSettings):
     pipeline_queue_blocked_backoff_seconds: int = 30
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
-
-    @field_validator("google_gemini_api_key")
-    @classmethod
-    def strip_gemini_api_key(cls, v: str) -> str:
-        return v.strip()
 
     @field_validator("database_url")
     @classmethod

@@ -6,6 +6,16 @@ export type ApiKeyProviderId =
   | 'azure_speech'
   | 'postforme'
   | 'zernio'
+  | 'youtube'
+  | 'instagram'
+
+/** Champ complémentaire enregistré avec la clé (`metadata` de `PUT /me/api-keys/{provider}`). */
+export type ApiKeyMetadataField = {
+  key: string
+  label: string
+  placeholder?: string
+  required?: boolean
+}
 
 export type ApiKeyProviderInfo = {
   id: ApiKeyProviderId
@@ -16,6 +26,7 @@ export type ApiKeyProviderInfo = {
   steps: string[]
   docUrl: string
   docLabel: string
+  metadataFields?: ApiKeyMetadataField[]
 }
 
 export const API_KEY_PROVIDERS: ApiKeyProviderInfo[] = [
@@ -37,13 +48,14 @@ export const API_KEY_PROVIDERS: ApiKeyProviderInfo[] = [
   {
     id: 'anthropic',
     label: 'Anthropic Claude',
-    shortDescription: 'Modèles Claude pour les agents de rédaction et de critique (option premium).',
-    keyFieldLabel: 'Clé API Anthropic',
+    shortDescription:
+      'Requise pour créer des vidéos (Claude Studio) ; sert aussi aux agents. Facturée sur votre compte Anthropic.',
+    keyFieldLabel: 'Clé API Anthropic (sk-ant-api…)',
     tutorialTitle: 'Obtenir une clé Anthropic',
     steps: [
       'Créez un compte sur la console Anthropic (facturation requise pour l’usage API).',
       'Allez dans Settings → API keys.',
-      'Cliquez sur « Create Key », donnez-lui un nom, puis copiez la clé (sk-ant-…).',
+      'Cliquez sur « Create Key », donnez-lui un nom, puis copiez la clé (sk-ant-api…). Un token d’abonnement (sk-ant-oat…) n’est pas accepté.',
       'Collez-la ci-dessus — elle ne sera plus visible en entier après enregistrement.',
     ],
     docUrl: 'https://console.anthropic.com/settings/keys',
@@ -78,6 +90,7 @@ export const API_KEY_PROVIDERS: ApiKeyProviderInfo[] = [
     ],
     docUrl: 'https://cloud.google.com/vertex-ai/docs/generative-ai/image/overview',
     docLabel: 'Documentation Imagen 3 (Vertex AI)',
+    metadataFields: [{ key: 'location', label: 'Région Vertex AI', placeholder: 'europe-west1' }],
   },
   {
     id: 'azure_speech',
@@ -89,10 +102,11 @@ export const API_KEY_PROVIDERS: ApiKeyProviderInfo[] = [
       'Dans le portail Azure, créez une ressource « Speech » (Speech Services).',
       'Une fois déployée, ouvrez la ressource → « Keys and Endpoint ».',
       'Copiez « Key 1 » (ou Key 2) — c’est la clé à coller ici.',
-      'Notez aussi la région (ex. westeurope) : elle peut être demandée dans la configuration de la chaîne.',
+      'Indiquez aussi la région de la ressource (ex. westeurope).',
     ],
     docUrl: 'https://portal.azure.com/#create/Microsoft.CognitiveServicesSpeechServices',
     docLabel: 'Portail Azure — créer une ressource Speech',
+    metadataFields: [{ key: 'region', label: 'Région Azure', placeholder: 'westeurope' }],
   },
   {
     id: 'postforme',
@@ -123,6 +137,36 @@ export const API_KEY_PROVIDERS: ApiKeyProviderInfo[] = [
     ],
     docUrl: 'https://zernio.com/dashboard',
     docLabel: 'Zernio — tableau de bord',
+  },
+  {
+    id: 'youtube',
+    label: 'YouTube (compte Google)',
+    shortDescription:
+      'Compte Google utilisé pour lister vos chaînes YouTube et publier sur celles qui n’ont pas leur propre connexion OAuth.',
+    keyFieldLabel: 'Refresh token OAuth Google',
+    tutorialTitle: 'Connecter un compte Google',
+    steps: [
+      'Le plus simple : connectez chaque chaîne via « Connecter YouTube » dans ses paramètres (OAuth), sans rien saisir ici.',
+      'Sinon, générez un refresh token OAuth avec le scope YouTube (youtube.upload) pour l’application de la plateforme.',
+      'Collez le refresh token ci-dessus : il sert aux chaînes sans connexion propre.',
+    ],
+    docUrl: 'https://developers.google.com/youtube/v3/guides/auth/server-side-web-apps',
+    docLabel: 'YouTube Data API — OAuth',
+  },
+  {
+    id: 'instagram',
+    label: 'Instagram (Graph API)',
+    shortDescription: 'Publication des Reels sur votre compte Instagram professionnel.',
+    keyFieldLabel: 'Access token Instagram (longue durée)',
+    tutorialTitle: 'Obtenir un token Instagram',
+    steps: [
+      'Reliez votre compte Instagram professionnel à une page Facebook.',
+      'Dans Meta for Developers, générez un access token longue durée avec instagram_content_publish.',
+      'Collez le token ci-dessus et indiquez l’ID du compte Instagram (page) sur lequel publier.',
+    ],
+    docUrl: 'https://developers.facebook.com/docs/instagram-platform/content-publishing',
+    docLabel: 'Meta — publication de contenu Instagram',
+    metadataFields: [{ key: 'page_id', label: 'ID du compte Instagram', placeholder: '17841…', required: true }],
   },
 ]
 

@@ -620,11 +620,15 @@ export interface StudioInfo {
 
 // ── Compte ───────────────────────────────────────────────────────────────
 
-export async function saveApiKey(provider: string, apiKey: string): Promise<void> {
+export async function saveApiKey(
+  provider: string,
+  apiKey: string,
+  metadata?: Record<string, string>,
+): Promise<void> {
   await apiJson(`${API_BASE}/me/api-keys/${encodeURIComponent(provider)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ api_key: apiKey }),
+    body: JSON.stringify({ api_key: apiKey, metadata: metadata ?? null }),
   })
 }
 
