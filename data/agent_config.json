@@ -33,7 +33,7 @@
     }
   },
   "whisper": {
-    "model": "large-v3",
+    "model": "small",
     "language": "fr"
   },
   "media_sources": {

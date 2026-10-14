@@ -287,6 +287,15 @@ else
 fi
 
 echo ""
+
+# ── 10. Nettoyage des anciennes images ───────
+# Après un pull, l'ancienne version de l'image reste sur le disque sans tag
+# (~6 Go par version pour cutevideo). On supprime ces images orphelines.
+echo -e "${BOLD}Nettoyage des anciennes images...${RESET}"
+RECLAIMED=$(docker image prune -f 2>/dev/null | grep -i 'reclaimed' || true)
+echo -e "${GREEN}  ✓ ${RECLAIMED:-rien à nettoyer}${RESET}"
+
+echo ""
 echo -e "${GREEN}${BOLD}✓ Déployé avec succès !${RESET}"
 echo ""
 echo -e "  Image    : ${CYAN}${IMAGE}${RESET}"
