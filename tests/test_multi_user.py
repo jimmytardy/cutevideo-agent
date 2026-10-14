@@ -263,14 +263,12 @@ async def test_resolve_gemini_platform_free() -> None:
     assert ctx.source in ("platform", "none")
 
 
-def test_api_key_encryption_hex_key_reads_legacy_ciphertexts(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Une clé hex (openssl rand -hex 32) est acceptée et les clés chiffrées avant restent lisibles."""
+def test_api_key_encryption_uses_single_configured_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Une clé hex (openssl rand -hex 32) est acceptée ; sans clé, aucun chiffrement de repli."""
     from agent.core import api_keys
 
-    monkeypatch.setattr(api_keys.settings, "api_keys_encryption_key", "")
-    legacy = encrypt_api_key("sk-legacy")
-    monkeypatch.setattr(api_keys.settings, "api_keys_encryption_key", "ab" * 32)
-    assert decrypt_api_key(legacy) == "sk-legacy"
     fresh = encrypt_api_key("sk-new")
-    assert decrypt_api_key(fresh) == "sk-new"
     assert api_keys._configured_fernet("ab" * 32).decrypt(fresh.encode()) == b"sk-new"
+    monkeypatch.setattr(api_keys.settings, "api_keys_encryption_key", "")
+    with pytest.raises(RuntimeError):
+        encrypt_api_key("sk-new")
