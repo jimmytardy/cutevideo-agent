@@ -79,7 +79,7 @@ async def call_claude_cli(
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(full_prompt.encode("utf-8")), timeout=timeout_s
             )
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             await terminate_proc(proc)
             raise ClaudeCliError(f"{agent_name}: claude -p a dépassé {timeout_s:.0f} s") from exc
         finally:

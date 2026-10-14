@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 
 from agent.core.final_preview import build_duration_warnings, is_short_preview_video_type
 from agent.core.database import Video
@@ -16,7 +16,7 @@ def _short_video(duration_s: float, video_type: str = "short_tiktok") -> Video:
         video_type=video_type,
         duration_s=duration_s,
         status="approved",
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 

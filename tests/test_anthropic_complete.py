@@ -27,7 +27,7 @@ class _FakeStream:
     def __init__(self, response: SimpleNamespace) -> None:
         self._response = response
 
-    async def __aenter__(self) -> "_FakeStream":
+    async def __aenter__(self) -> _FakeStream:
         return self
 
     async def __aexit__(self, *exc: Any) -> None:

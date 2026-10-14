@@ -44,7 +44,7 @@ async def terminate_proc(proc: Process, *, grace_s: float = 2.0) -> None:
     send(signal.SIGTERM)
     try:
         await asyncio.wait_for(proc.wait(), timeout=grace_s)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         send(signal.SIGKILL)
         await proc.wait()
     if leader:

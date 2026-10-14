@@ -1,0 +1,19 @@
+# Lint Python : `uvx ruff check .` (corrections sûres : `uvx ruff check . --fix`).
+target-version = "py311"
+line-length = 120
+extend-exclude = ["studio/workspace", "graphify-out", "dashboard", "tmp", "output"]
+
+[lint]
+# F : erreurs (imports/variables inutilisés, noms indéfinis) · E9 : syntaxe
+# B : bugs probables · UP : syntaxe Python 3.11
+select = ["F", "E9", "B", "UP"]
+ignore = [
+    "B008",   # Depends(...) en valeur par défaut : idiome FastAPI
+    "B905",   # zip(strict=...) : longueurs garanties par les contrats
+    "UP042",  # (str, Enum) → StrEnum changerait str() des valeurs persistées
+]
+
+[lint.per-file-ignores]
+"alembic/versions/*" = ["UP"]
+# Script de bac à sable généré avec %r (repr du chemin) : lisible tel quel.
+"tests/test_studio_animate.py" = ["UP031"]

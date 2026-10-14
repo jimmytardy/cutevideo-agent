@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 
 from agent.core.database import Channel, CriticReport, Project, Publication, Scenario, User, Video, get_db
 from agent.core.subscription import QuotaExceededError, check_can_create_project
@@ -263,7 +263,7 @@ async def publish_project(
         channel_id=project.channel_id,
         platform=body.platform,
         status="scheduled",
-        scheduled_at=datetime.now(timezone.utc),
+        scheduled_at=datetime.now(UTC),
     )
     db.add(pub)
     await db.commit()

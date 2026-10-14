@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 
 from sqlalchemy import select
@@ -305,7 +305,7 @@ async def _mark_published(
             raise ValueError(f"Publication {publication_id} introuvable")
         pub.platform_video_id = platform_video_id
         pub.platform_url = platform_url
-        pub.published_at = datetime.now(timezone.utc)
+        pub.published_at = datetime.now(UTC)
         pub.status = "published"
         await session.commit()
         await session.refresh(pub)

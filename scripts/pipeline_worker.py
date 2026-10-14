@@ -58,7 +58,7 @@ async def _renew_lease_loop(
         try:
             await asyncio.wait_for(stop.wait(), timeout=renew_interval)
             return
-        except asyncio.TimeoutError:
+        except TimeoutError:
             if not await renew_lease(project_id, worker_id):
                 logger.warning(
                     "[%s] Renouvellement lease perdu pour le projet %s",
@@ -83,7 +83,7 @@ async def _cancel_watcher(
         try:
             await asyncio.wait_for(stop.wait(), timeout=poll_interval_s)
             return
-        except asyncio.TimeoutError:
+        except TimeoutError:
             continue
 
 
@@ -145,7 +145,7 @@ async def _periodic_reconcile_loop(worker_id: str) -> None:
         try:
             await asyncio.wait_for(shutdown.wait(), timeout=cfg.reconcile_interval_seconds)
             return
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass
         try:
             count = await reconcile_orphan_running_projects(worker_id=worker_id)
@@ -174,7 +174,7 @@ async def _sleep_or_shutdown(seconds: float) -> bool:
     try:
         await asyncio.wait_for(shutdown.wait(), timeout=seconds)
         return True
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return False
 
 

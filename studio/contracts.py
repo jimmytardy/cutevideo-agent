@@ -87,7 +87,7 @@ class TimelineClip(BaseModel):
     sfx: Sfx = ""
 
     @model_validator(mode="after")
-    def _ordered(self) -> "TimelineClip":
+    def _ordered(self) -> TimelineClip:
         if self.end <= self.start:
             raise ValueError(f"clip {self.media}: end ({self.end}) <= start ({self.start})")
         return self
@@ -110,7 +110,7 @@ class Timeline(BaseModel):
     clips: list[TimelineClip] = Field(min_length=1)
 
     @model_validator(mode="after")
-    def _contiguous(self) -> "Timeline":
+    def _contiguous(self) -> Timeline:
         clips = self.clips
         if abs(clips[0].start) > 0.05:
             raise ValueError(f"le premier clip doit commencer à 0 (start={clips[0].start})")
@@ -147,7 +147,7 @@ class Critique(BaseModel):
     analysis: dict | None = None
 
     @model_validator(mode="after")
-    def _changes_when_iterating(self) -> "Critique":
+    def _changes_when_iterating(self) -> Critique:
         if self.decision == "iterate" and not self.changes:
             raise ValueError("decision=iterate exige au moins un élément dans changes")
         return self

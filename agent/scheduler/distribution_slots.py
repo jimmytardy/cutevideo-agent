@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, UTC
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -43,7 +43,7 @@ def paris_day_bounds(day: date) -> tuple[datetime, datetime]:
 
 
 def to_utc(dt: datetime) -> datetime:
-    return dt.astimezone(timezone.utc)
+    return dt.astimezone(UTC)
 
 
 def is_short_video_type(video_type: str | None) -> bool:
@@ -54,7 +54,7 @@ def is_short_video_type(video_type: str | None) -> bool:
 def slot_datetime_utc(day: date, hour: int, tz_name: str = "Europe/Paris") -> datetime:
     tz = ZoneInfo(tz_name)
     local = datetime.combine(day, time(hour, 0), tzinfo=tz)
-    return local.astimezone(timezone.utc)
+    return local.astimezone(UTC)
 
 
 def generate_candidate_slots(
@@ -73,7 +73,7 @@ def generate_candidate_slots(
 
     tz = ZoneInfo(tz_name)
     now_local = datetime.now(tz)
-    after = after_utc or datetime.now(timezone.utc)
+    after = after_utc or datetime.now(UTC)
     candidates: list[datetime] = []
 
     if only_day is not None:

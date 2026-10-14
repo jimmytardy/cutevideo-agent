@@ -396,7 +396,7 @@ async def _anthropic_complete(
             ],
         }
         response = await retry_transient_async(
-            lambda: _anthropic_create(client, cont_kwargs), label=f"{agent_name}/anthropic"
+            lambda kw=cont_kwargs: _anthropic_create(client, kw), label=f"{agent_name}/anthropic"
         )
         usage_records.append(usage_from_anthropic(response, model))
         text += _anthropic_text(response)
@@ -520,7 +520,7 @@ async def _call_gemini_text(
             ),
         ]
         response = await retry_transient_async(
-            lambda: client.aio.models.generate_content(
+            lambda contents=contents: client.aio.models.generate_content(
                 model=model, contents=contents, config=config
             ),
             label=f"{agent_name}/gemini",

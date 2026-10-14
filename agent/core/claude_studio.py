@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import shutil
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -59,7 +59,7 @@ OUTPUT_ROOT = Path("./output/studio")
 _MAX_LOGGED_CHARS = 4000
 
 
-def build_brief(ctx: "PipelineContext") -> Brief:
+def build_brief(ctx: PipelineContext) -> Brief:
     cfg = ctx.channel_config
     plan = ctx.content_plan or {}
     return Brief(
@@ -112,7 +112,7 @@ class _ProgressRecorder:
                     "description": data.get("description", ""),
                     "prompt": str(data.get("prompt", ""))[:_MAX_LOGGED_CHARS],
                 },
-                started_at=datetime.now(timezone.utc),
+                started_at=datetime.now(UTC),
                 llm_model="claude-code",
             )
             session.add(run)
@@ -134,7 +134,7 @@ class _ProgressRecorder:
                     status=status,
                     output_json={"summary": output},
                     error=output if data["is_error"] else None,
-                    ended_at=datetime.now(timezone.utc),
+                    ended_at=datetime.now(UTC),
                 )
             )
             await session.commit()
@@ -149,14 +149,14 @@ class _ProgressRecorder:
             await session.execute(
                 update(AgentRun)
                 .where(AgentRun.id.in_(list(self.runs.values())))
-                .values(status=status, error=reason, ended_at=datetime.now(timezone.utc))
+                .values(status=status, error=reason, ended_at=datetime.now(UTC))
             )
             await session.commit()
         self.runs.clear()
 
 
 class ClaudeStudioRunner:
-    def __init__(self, ctx: "PipelineContext") -> None:
+    def __init__(self, ctx: PipelineContext) -> None:
         self.ctx = ctx
         self.run_dir = default_runs_dir() / str(ctx.project_id)
         self.output_dir = OUTPUT_ROOT / str(ctx.project_id)

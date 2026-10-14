@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 
 import httpx
 from urllib.parse import urlencode, urlparse, urlunparse
@@ -173,7 +173,7 @@ async def google_callback(
             display_name=profile.get("name"),
             avatar_url=profile.get("picture"),
             subscription_id=plan.id,
-            subscription_started_at=datetime.now(timezone.utc),
+            subscription_started_at=datetime.now(UTC),
         )
         db.add(user)
     else:
@@ -285,7 +285,7 @@ async def totp_login(
             google_sub=f"totp:{email.lower()}",
             email=email,
             subscription_id=plan.id,
-            subscription_started_at=datetime.now(timezone.utc),
+            subscription_started_at=datetime.now(UTC),
         )
         db.add(user)
         await db.commit()

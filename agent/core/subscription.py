@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
@@ -211,7 +211,7 @@ async def count_user_channels(session: AsyncSession, user_id: uuid.UUID) -> int:
 
 
 async def count_user_projects_this_month(session: AsyncSession, user_id: uuid.UUID) -> int:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     result = await session.execute(
         select(func.count())

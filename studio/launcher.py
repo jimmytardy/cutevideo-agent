@@ -16,7 +16,8 @@ import shutil
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import Any
+from collections.abc import Awaitable, Callable
 
 from agent.core.env import env_float, env_int, env_optional_float
 from studio.assets import max_ai_images
@@ -257,7 +258,7 @@ async def run_claude(
                 await proc.wait()
 
             await asyncio.wait_for(_pump(), timeout=cfg.timeout_s)
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             await terminate_proc(proc)
             raise ClaudeRunError(f"session Claude interrompue après {cfg.timeout_s:.0f}s") from exc
         except BaseException:

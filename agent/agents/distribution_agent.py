@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, UTC
 from typing import Any
 
 from sqlalchemy import func, or_, select
@@ -163,7 +163,7 @@ class DistributionAgent(BaseAgent):
             platform,
             platform_slots,
             cfg.timezone,
-            after_utc=datetime.now(timezone.utc),
+            after_utc=datetime.now(UTC),
             only_day=target_publish_day,
         )
         candidates = filter_occupied_slots(candidates, occupied)
@@ -251,7 +251,7 @@ class DistributionAgent(BaseAgent):
             return 0
 
     async def _execute_due(self) -> dict[str, int]:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         published = 0
         failed = 0
 
@@ -351,7 +351,7 @@ class DistributionAgent(BaseAgent):
                 dt = sched or pub_at
                 if dt:
                     if dt.tzinfo is None:
-                        dt = dt.replace(tzinfo=timezone.utc)
+                        dt = dt.replace(tzinfo=UTC)
                     occupied.add(dt)
             return occupied
 

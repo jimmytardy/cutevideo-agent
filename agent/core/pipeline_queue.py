@@ -4,7 +4,7 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from typing import Any
 
 from sqlalchemy import select
@@ -144,7 +144,7 @@ async def enqueue_pipeline_task(
     await queue.clear_pipeline_cancel(project_key)
 
     priority = await _resolve_queue_priority(resolved_user_id)
-    queued_at = datetime.now(timezone.utc)
+    queued_at = datetime.now(UTC)
     enqueued_at_ms = int(queued_at.timestamp() * 1000)
     score = compute_queue_score(priority, enqueued_at_ms)
 

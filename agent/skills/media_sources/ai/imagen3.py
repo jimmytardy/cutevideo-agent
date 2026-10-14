@@ -34,7 +34,7 @@ def _model_for_plan(plan_id: str) -> str | None:
 
 
 async def _get_gcp_access_token(
-    gcp_credentials: "GcpCredentials | None" = None,
+    gcp_credentials: GcpCredentials | None = None,
 ) -> tuple[str | None, str | None, str | None]:
     """Retourne (token, project_id, location)."""
     try:

@@ -138,7 +138,7 @@ async def _request(
     """Appel JSON avec nouvelles tentatives sur 429 / 5xx / erreur réseau."""
     hdrs = {"Authorization": f"Bearer {key}", **(headers or {})}
     last_error = ""
-    for attempt, delay in enumerate((0.0, *RETRY_DELAYS_S)):
+    for delay in (0.0, *RETRY_DELAYS_S):
         if delay:
             await asyncio.sleep(delay)
         try:
@@ -155,7 +155,7 @@ async def _request(
         if resp.status_code >= 400:
             raise RuntimeError(f"{label} {method} {path} → HTTP {resp.status_code} : {resp.text[:500]}")
         return resp.json() if resp.content else {}
-    raise RuntimeError(f"{label} {method} {path} indisponible après {attempt + 1} essais : {last_error}")
+    raise RuntimeError(f"{label} {method} {path} indisponible après {len(RETRY_DELAYS_S) + 1} essais : {last_error}")
 
 
 # ── Composio (comportement historique) ──────────────────────────────────────

@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import shutil
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 from pathlib import Path
 
 from sqlalchemy import select
@@ -26,7 +26,7 @@ async def purge_video_files(videos: list[Video]) -> PurgeReport:
     from agent.core.storage import delete_s3_object
 
     report = PurgeReport()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     for video in videos:
         try:
@@ -73,7 +73,7 @@ async def purge_oldest_until_free(target_free_bytes: int) -> int:
 async def purge_old_media_files(retention_days: int | None = None) -> PurgeReport:
     cfg = get_storage_settings()
     days = retention_days if retention_days is not None else cfg.retention_days
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    cutoff = datetime.now(UTC) - timedelta(days=days)
 
     async with AsyncSessionFactory() as session:
         result = await session.execute(
@@ -109,7 +109,7 @@ async def _purge_old_project_dirs(cutoff: datetime) -> PurgeReport:
     for project in projects:
         created = project.created_at
         if created.tzinfo is None:
-            created = created.replace(tzinfo=timezone.utc)
+            created = created.replace(tzinfo=UTC)
         if created > cutoff:
             continue
 

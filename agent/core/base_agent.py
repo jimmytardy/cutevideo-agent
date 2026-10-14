@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import uuid
 from abc import ABC, abstractmethod
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from typing import Generic, TypeVar
 
 from sqlalchemy import select
@@ -35,7 +35,7 @@ async def stop_running_agent_runs(
         if not runs:
             return 0
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         for run in runs:
             run.status = "stopped"
             run.error = reason

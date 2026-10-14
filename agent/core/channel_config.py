@@ -279,7 +279,7 @@ def _tags_from_channel(channel: Channel) -> list[str]:
 def resolve_channel_config(
     channel: Channel,
     *,
-    subscription_limits: "SubscriptionLimits | None" = None,
+    subscription_limits: SubscriptionLimits | None = None,
 ) -> ChannelRuntimeConfig:
     """Fusionne agent_config.json global et channel.config (surcharges)."""
     from agent.core.subscription import apply_subscription_caps

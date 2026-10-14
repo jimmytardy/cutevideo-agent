@@ -22,6 +22,7 @@ async def test_stop_running_agent_runs_marks_all_in_flight() -> None:
     mock_session = AsyncMock()
     mock_session.execute = AsyncMock(return_value=mock_result)
     mock_session.commit = AsyncMock()
+    mock_session.add = MagicMock()
 
     mock_factory = MagicMock()
     mock_factory.__aenter__ = AsyncMock(return_value=mock_session)
@@ -47,6 +48,7 @@ async def test_stop_running_agent_runs_noop_when_none_running() -> None:
     mock_session = AsyncMock()
     mock_session.execute = AsyncMock(return_value=mock_result)
     mock_session.commit = AsyncMock()
+    mock_session.add = MagicMock()
 
     mock_factory = MagicMock()
     mock_factory.__aenter__ = AsyncMock(return_value=mock_session)

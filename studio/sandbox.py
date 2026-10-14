@@ -183,7 +183,7 @@ async def _run_process(cmd: list[str], timeout_s: float) -> tuple[int, str]:
     )
     try:
         out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)
-    except asyncio.TimeoutError as exc:
+    except TimeoutError as exc:
         proc.kill()
         await proc.wait()
         raise SandboxError(f"délai dépassé ({timeout_s:.0f} s)") from exc

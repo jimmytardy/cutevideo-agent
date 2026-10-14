@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import secrets
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 from typing import Any
 
 from jose import JWTError, jwt
@@ -15,7 +15,7 @@ TOKEN_TYPE_OAUTH_STATE = "oauth_state"
 
 
 def create_access_token(user_id: uuid.UUID, *, expires_minutes: int | None = None) -> str:
-    expire = datetime.now(timezone.utc) + timedelta(
+    expire = datetime.now(UTC) + timedelta(
         minutes=expires_minutes or settings.jwt_expire_minutes
     )
     payload = {
@@ -47,7 +47,7 @@ def create_oauth_state(
     extra: dict[str, Any] | None = None,
     expires_minutes: int = 15,
 ) -> str:
-    expire = datetime.now(timezone.utc) + timedelta(minutes=expires_minutes)
+    expire = datetime.now(UTC) + timedelta(minutes=expires_minutes)
     payload: dict[str, Any] = {
         "type": TOKEN_TYPE_OAUTH_STATE,
         "purpose": purpose,
