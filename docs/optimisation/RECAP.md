@@ -1,158 +1,156 @@
-# Recap — session autonome d'optimisation (2026-10-13 → 2026-10-14)
+# Recap — session autonome d'optimisation (2026-10-13 20:05 → 2026-10-14)
 
-> Tenu à jour par la session au fil des jalons. Brief : `docs/optimisation/BRIEF.md`.
+> Brief : `docs/optimisation/BRIEF.md` · Références : `docs/optimisation/REFERENCES.md`.
 > Reprendre : `tmux attach -t cutevideo-optim` (si encore ouverte) ou `cd /home/ubuntu/cutevideo && claude --resume`.
 
-## État
-En cours (20:40). Jalon 1 fait : outil `analyze`, analyse des 5 références (`REFERENCES.md`), voix/mixage/
-sous-titres refaits, charte d'animation + 5 modèles, prompts recalibrés. Génération 1 (Lune, 40 s) en cours.
+## État final
+- **6 vraies générations sur 6** (budget épuisé), une à la fois, aucune tuée par le chien de garde (aucun
+  arrêt dans `~/.cache/cutevideo/optim/watchdog.log`). 5 approuvées (85-87/100), 1 à 84 (plafond d'itérations).
+- La chaîne produit désormais des Shorts **full animation** dans l'esprit des références virales (hook-paradoxe,
+  « Sauf que… », relances, question au spectateur, fin qui reboucle), avec une finition supérieure (kit vectoriel,
+  sous-titres mot à mot, mixage -14 LUFS, bruitages) et une critique qui **mesure** au lieu d'estimer (`analyze`).
+- `pytest` vert : 230 passés, 9 ignorés (tests DB/live sans infra jetable), suite complète relancée à la fin.
+- Tout est commité et poussé sur `main` (34 commits, liste plus bas).
+
+**Meilleures vidéos** (à regarder en premier) :
+1. `~/.cache/cutevideo/optim/runs/g6_papier/renders/v2.mp4` — « Pourquoi on ne peut pas plier une feuille plus de 7 fois », **87/100**
+2. `~/.cache/cutevideo/optim/runs/g1_lune/renders/v2.mp4` — « La Lune s'éloigne à la vitesse de vos ongles », 86/100
+3. `~/.cache/cutevideo/optim/runs/g3_1582/renders/v2.mp4` — « Les 10 jours qui n'ont jamais existé », 86/100
+4. `~/.cache/cutevideo/optim/runs/g2_anniv/renders/v2.mp4` — « Un match de foot sur deux… », 85/100
+
+Miniatures : `thumbnails/v1_9x16.png` et `v1_16x9.png` dans chaque run dir ; métadonnées dans `scenario.json → publish`.
 
 ## Générations
-| # | Sujet | Version | Score | Analyse | Durée | Rendu | Mémoire min | Chemin |
+| # | Sujet | Versions | Score critique | Analyse | Durée | Temps total (rendu) | Mémoire dispo min* | Chemin |
 |---|---|---|---|---|---|---|---|---|
-| baseline | Pourquoi la Lune s'éloigne de la Terre | v1 → v2 | 79 → 85 (approuvée, ancienne grille) | critique Claude (frames) | 30,9 s | ~6 min | 1,13 Go | `~/.cache/cutevideo/optim/baseline_lune/renders/v2.mp4` |
-| g5 | Le paradoxe des anniversaires (2e passage, correctifs 1-21) | v1 → v2 | 80 → 84 (plafond de 2 itérations, v2 retenue) | `analyze` claude | ~42 s | 49 min au total | 2,5 Go dispo | `~/.cache/cutevideo/optim/runs/g5_anniv/renders/v2.mp4` |
-| g4 | Pourquoi la Lune s'éloigne de la Terre (2e passage, correctifs 1-16) | v1 → v2 | 80 → **85** (approuvée) | `analyze` claude | 42,1 s | 41 min au total | 2,8 Go dispo | `~/.cache/cutevideo/optim/runs/g4_lune/renders/v2.mp4` |
-| g3 | Les 10 jours qui n'ont jamais existé (1582, histoire + chiffre) | v1 → v2 | 81 → **86** (approuvée) | `analyze` claude | 43,5 s | 43 min au total | 2,7 Go dispo | `~/.cache/cutevideo/optim/runs/g3_1582/renders/v2.mp4` |
-| g2 | Le paradoxe des anniversaires (concept abstrait) | v1 → v2 | 77 → **85** (approuvée) | `analyze` claude | 41,8 s | 57 min au total | 2,8 Go dispo | `~/.cache/cutevideo/optim/runs/g2_anniv/renders/v2.mp4` |
-| g1 | Pourquoi la Lune s'éloigne de la Terre (nouvelle chaîne) | v1 → v2 | 81 → **86** (approuvée, grille virale) | `analyze` claude | 42,5 s | 42 min au total (rendu 2 min) | 1,9 Go dispo | `~/.cache/cutevideo/optim/runs/g1_lune/renders/v2.mp4` |
+| baseline | Pourquoi la Lune s'éloigne de la Terre (ancienne chaîne) | v1 → v2 | 79 → 85 (ancienne grille) | critique Claude (frames) | 30,9 s | ~6 min de rendu | 1,13 Go | `~/.cache/cutevideo/optim/baseline_lune/renders/v2.mp4` |
+| g1 | Lune (nouvelle chaîne) | v1 → v2 | 81 → **86** ✅ | `analyze` claude | 42,5 s | 42 min (rendu 2 min) | 1,9 Go | `~/.cache/cutevideo/optim/runs/g1_lune/renders/v2.mp4` |
+| g2 | Paradoxe des anniversaires (concept abstrait) | v1 → v2 | 77 → **85** ✅ | `analyze` claude | 41,8 s | 57 min | 2,3 Go | `~/.cache/cutevideo/optim/runs/g2_anniv/renders/v2.mp4` |
+| g3 | 1582, les 10 jours disparus (histoire + chiffre) | v1 → v2 | 81 → **86** ✅ | `analyze` claude | 43,5 s | 42 min | 2,3 Go | `~/.cache/cutevideo/optim/runs/g3_1582/renders/v2.mp4` |
+| g4 | Lune (2e passage, correctifs 1-16) | v1 → v2 | 80 → **85** ✅ | `analyze` claude | 42,1 s | 41 min | 2,7 Go | `~/.cache/cutevideo/optim/runs/g4_lune/renders/v2.mp4` |
+| g5 | Anniversaires (2e passage, correctifs 1-21) | v1 → v2 | 80 → 84 (plafond) | `analyze` claude | 41,1 s | 49 min | 2,3 Go | `~/.cache/cutevideo/optim/runs/g5_anniv/renders/v2.mp4` |
+| g6 | Feuille pliée 42 fois (concept, nouveau sujet) | v1 → v2 | **83** → **87** ✅ | `analyze` claude | 42,4 s | 51 min | 1,8 Go | `~/.cache/cutevideo/optim/runs/g6_papier/renders/v2.mp4` |
 
-Mesures `analyze` de la baseline v2 : 2,38 mots/s, 13 silences de 0,4-0,9 s (un après chaque phrase), musique
-quasi inaudible (fond -49 dBFS, voix/fond +33 dB), -16,2 LUFS, plan le plus long 9 s, sous-titres sous la ligne
-d'interface TikTok, karaoké qui colore toute la ligne d'emblée.
+\* relevés toutes les 5 min par le chien de garde ; Gemini indisponible → source d'analyse toujours `claude`.
+Lancement : `STUDIO_SANDBOX=bwrap .venv/bin/python -m studio.run "<sujet>" --duration 40 --max-iterations 2 --min-score 85`.
 
-Mesures `analyze` (mêmes outils pour tous) :
+**Scores du 1er jet** : 81, 77, 81, 80, 80, **83**. Ils progressent peu car la critique, elle aussi outillée
+pendant la nuit, devient plus exigeante (elle relève ce qu'elle ne voyait pas : débordements transitoires,
+synchro au mot, intonation). **Les scores sont relatifs** ; les mesures ci-dessous, identiques pour toutes les
+vidéos, sont la comparaison fiable.
 
-| mesure | baseline v2 | g1 v2 | réf. Pise (1,4 M vues) |
-|---|---|---|---|
-| mots/s | 2,38 | 2,97 | 3,44 |
-| pause max | 0,98 s | 0,60 s | 0,86 s |
-| silences francs | 12 | 0 | 0 |
-| loudness | -16,2 LUFS | -15,1 (→ -14,4 avec le recalage ajouté ensuite) | -13,1 |
-| voix / fond | +33 dB (musique inaudible) | +17,7 dB | +14,4 dB |
-| alertes `analyze` | 13 | 2 | 1 |
+### Mesures homogènes (`analyze` final, ré-exécuté sur toutes les versions retenues)
+| mesure | baseline | g1 | g2 | g3 | g4 | g5 | g6 | réf. Pise (1,4 M vues) |
+|---|---|---|---|---|---|---|---|---|
+| coupes / 10 s | 2,92 | 2,59 | 2,63 | 2,30 | 3,09 | 3,16 | **3,30** | 1,89 (+ apparitions continues) |
+| plan le plus long | 9,0 s | 5,2 | 4,4 | 5,3 | 4,2 | 4,0 | 4,1 | 26,2 |
+| 1re coupe | 1,4 s | 3,3 | 4,1 | 4,1 | 3,4 | **1,4** | **2,0** | 2,4 |
+| débit (mots/s) | 2,38 | 2,97 | 2,96 | 2,89 | 3,04 | 2,69 | 2,82 | 3,44 |
+| pause max (acoustique) | 0,94 s | 0,42 | 0,32 | 0,40 | 0,44 | 0,34 | 0,40 | 0,42 |
+| silences francs | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| loudness | -16,2 LUFS | -15,1 | -14,5 | -14,5 | -14,4 | -14,5 | -14,4 | -13,1 |
+| voix / fond | **+33 dB** (musique inaudible) | +17,7 | +17,0 | +16,8 | +17,9 | +16,5 | +18,9 | +14,4 |
+| alertes `analyze` | 13 | 2 | 1 | 2 | 1 | 0 | 0 | 1 |
 
-g1 en clair : 11 plans 100 % animés avec le kit (thème space, accent cyan), mot-clé en haut de chaque plan,
-hook « La Lune s'éloigne de nous à la vitesse où poussent vos ongles ! », « Aucun rapport ? Sauf que… »,
-« Mais attendez… », « À votre avis, qui ? — Nous ! », fin « Alors la prochaine fois que vous vous coupez les
-ongles, dites-vous que… » qui reboucle sur la 1re image. Critique v1 (81) très précise grâce aux planches :
-voile gris des flashs, scènes trop petites, étiquette sur les sous-titres, prosodie « Au… temps » ; v2 corrige.
-Défauts restants : éléments encore petits sur certains plans, étiquettes secondaires < 48 px.
-
-g2 en clair : « Un match de foot sur deux cache deux personnes nées le même jour ! », 22 joueurs + l'arbitre,
-« vous contre 22 » puis 253 duos, question, 50,7 %, Mondial 2014 (16 équipes sur 32), 99,9 % à 70, fin en boucle
-« la prochaine fois que vous regardez un match, dites-vous que… ». v1 pénalisée par des défauts d'outillage
-(contenu sous les sous-titres dans 8 plans, icône calendrier marquée « July », musique de 40 s à intro muette) →
-corrigés dans l'outillage pendant l'itération 2 (voir changements 12-14). Mesures v1 → v2 : 2,92 → 2,96 mots/s,
--14,4 / -14,5 LUFS (recalage efficace), voix/fond 13,6 → 17,0 dB.
-
-g3 en clair : thème « paper » + accent rouge, hook « Cette femme est morte le 4 octobre… et enterrée le
-lendemain, le 15 ! » (Thérèse d'Avila, exact), Jules César et ses 11 minutes, « Mais attendez… », Grégoire XIII
-« À votre avis… comment ? » (emphase vocale utilisée), carte (France décembre 1582, Angleterre 1752), fin en
-boucle sur le calendrier. v1 : icônes trop petites et grands vides (encore) → ajout d'une alerte chiffrée
-« scène vide » / « icône petite » dans le kit (changement 16).
-
-g4 en clair : nouvel angle (fin des éclipses totales, journées de 22 h il y a 400 Ma), 14 plans (3,1 coupes/10 s
-contre 0,9-1,6 en g1), objets nettement plus grands, -14,4 LUFS. Le 1er jet ne progresse pas en score (80 contre
-81 pour g1) : la critique relève des défauts plus fins (zoom caméra qui sort le contenu, étiquette « up » qui
-traverse les sous-titres, boucle visuelle moins exacte). **Les scores de la critique sont relatifs** (même modèle,
-exigence qui suit la qualité) : les mesures `analyze` et la lecture des planches sont plus fiables pour comparer.
-Le journal de g4 montre aussi que le monteur **recevait les `zone_warnings` mais en corrigeait peu**, et que les
-titres du kit débordaient à x 1020 par construction (ajustés à 960 px centrés) → correctifs 18-20.
-
-g5 : 1er jet 80 (contre 77 pour g2 sur le même sujet ; plus aucun défaut d'outillage relevé : ni sous-titres
-sur le contenu, ni musique, ni icône). Les reproches portent sur la synchro fine (jauge 50,7 % en retard) et la
-voix. Deux erreurs de mesure découvertes grâce à g5 : (a) la critique annonçait des silences de 0,8-1,4 s alors
-que la voix n'en a aucun > 0,5 s — les pauses venaient des écarts Whisper → pauses désormais acoustiques ;
-(b) l'emphase de ligne **remplaçait** le débit global (+30 % → -6 %) au lieu de s'y ajouter → corrigé (relative).
+Ce que montrent les planches (lecture directe) : baseline = photos de banque sombres et vides, sous-titres sous
+l'interface TikTok, karaoké qui colorait toute la ligne ; g1-g6 = 11-14 plans animés par vidéo avec une charte
+par vidéo (space / night / paper), mot-clé titre à chaque plan, un élément nouveau toutes les ~2 s, sous-titres
+mot à mot au-dessus de l'interface, fin qui reboucle sur la 1re image. Les objets ont grossi de g1 à g6 (alertes
+« scène vide »). Faits vérifiés par la critique à chaque fois (Thérèse d'Avila, Mondial 2014, 2^42 × 0,1 mm…).
 
 ## Changements (quoi, pourquoi, effet mesuré)
-1. **`python -m studio.tools analyze`** (`studio/analyze.py`) — Gemini d'abord, repli Claude automatique :
-   planches hook (0-3 s tous les 0,25 s), chronologie, avant/après chaque coupe détectée (repères des zones
-   TikTok), transcription Whisper (débit, pauses), loudness, rapport voix/fond, hauteur et variation de la voix
-   (librosa pyin), spectrogramme annoté (`audio.png`), alertes chiffrées. ~1 min 20 et 1,2 Go pour 31 s.
-   Intégré à la critique (`critique_N.json` : `analysis` + `scores` par critère).
-2. **Références** → `docs/optimisation/REFERENCES.md` : hook = chute paradoxale, objection « Sauf que… »,
-   relances « Mais attendez », question au spectateur, fin en boucle « Alors la prochaine fois que… dites-vous
-   que… », full animation avec un élément toutes les ~2 s, mot-clé titre par plan, jauge d'enjeu, tableaux
-   d'unités. Mesures : 3,0-3,6 mots/s, voix/fond +14-16 dB, -13 LUFS.
-3. **Voix** : edge-tts ignorait `--rate` (corrigé, + `--pitch`) ; voix par défaut edge → **Rémy Multilingual**
-   (mesures sur un même texte : pauses 0,3-0,5 s contre 0,9 s pour Denise, variation 5,3 demi-tons contre 5,2,
-   durée -18 %) ; silences > 0,4 s raccourcis automatiquement (`studio/voicefx.py`, `tts --max-pause`).
-4. **Mixage** (`studio/audiomix.py`) : musique calée en loudness 17 dB sous la voix (au lieu d'un volume brut),
-   ducking doux, fondus, **bruitages synthétisés localement** (whoosh, pop, click, ding, riser, impact — aucun
-   problème de droits) via `clip.sfx`, normalisation finale -14 LUFS / limiteur.
-5. **Sous-titres** (`studio/subtitles.py`) : un événement par mot → seul le mot prononcé est surligné (+12 %),
-   mots-clés (`timeline.subtitle_keywords`) et nombres en vert, Poppins ExtraBold, centrés à y = 1290
-   (au-dessus de la légende TikTok), fondu d'apparition.
-6. **Charte d'animation** `studio/workspace/anim/lib/studio.js` : scène SVG déterministe (thèmes night, space,
-   paper, blueprint, lab), titres-mots-clés, ~200 icônes Noto Emoji (Apache 2.0), étiquettes, compteurs,
-   flèches tracées, trajets, barres, colonnes, tableaux d'unités, jauge, carte du monde Natural Earth
-   (d3 + topojson), caméra, secousse, flash, polices Poppins (OFL). ~10 images/s de rendu dans bwrap.
-7. **Modèles** : `compare`, `steps`, `map`, `before_after`, `paradox` (en plus de title, counter, bars, list).
-8. **Prompts** : scénariste (angle, structure virale, fin en boucle, 2,9 mots/s, mot-clé par beat, thème),
-   voix (`--rate +6%`, ponctuation expressive), monteur (full animation par défaut, un événement toutes les
-   ~2 s, sfx, mots-clés), critique (grille virale 100 pts sur `analyze`), miniaturiste (fond tiré d'animation).
-9. **`ai-image`** : la clé FAL du `.env` n'était jamais transmise (`generate_image` force `user_resolved_keys`) —
-   corrigé ; la clé elle-même est refusée (401). Message d'erreur qui oriente vers le kit d'animation.
+**Analyse et critique**
+1. **`python -m studio.tools analyze`** (`studio/analyze.py`) : Gemini d'abord, repli Claude automatique —
+   planches hook (0-3 s / 0,25 s), chronologie, avant/après chaque coupe (repères des zones TikTok), débit,
+   pauses **acoustiques** (Whisper gonflait les écarts : 1,36 s annoncé pour 0,32 s réel), loudness, rapport
+   voix/fond, intonation (pyin), spectrogramme annoté, alertes chiffrées ; coupes exactes avec `--timeline`.
+   ~1 min 20 et 1,2 Go pour 30-40 s. Intégré à `critique_N.json` (`analysis`, `scores` par critère).
+2. **Grille de critique virale** (hook 20, rétention 15, valeur 15, visuels 20, voix/son 15, sous-titres 5,
+   chute/partage 10), lecture obligatoire des planches et du spectrogramme, pauses acoustiques seulement.
+3. **Références** → `REFERENCES.md` : leviers de viralité → règles (hook = chute paradoxale, objection « Sauf
+   que… », relances, question, fin en boucle « Alors la prochaine fois que… dites-vous que… », full animation,
+   mot-clé par plan, jauge d'enjeu, tableaux d'unités) intégrées aux prompts.
 
-10. Après g1 : flash du kit teinté (mode screen, 0,35) au lieu d'un voile blanc ; `analyze --timeline` (coupes
-    exactes, la détection à l'image ratait les coupes entre animations au même fond) ; règles « image 1 pleine à
-    t = 0 » et « remplir l'écran » ; recalage loudness après limiteur (-15,1 → -14,4 LUFS) ; icônes passées à 356
-    avec `INDEX.txt` (le monteur perdait du temps en Glob) et erreur explicite sur icône inconnue ; miniatures et
-    textes incrustés en Poppins ; `thumbnail` borne `@t` à la durée de la vidéo (erreur obscure avant).
-11. Modèles title / counter / bars / list refaits sur le kit (même charte que les scripts).
+**Scénario & rétention** — 4. Prompt scénariste : angle le plus surprenant, structure ci-dessus, 1 mot-clé par
+beat, `visual_mode` / `theme` / `accent`, titres orientés recherche, débit cible 3,1 mots/s (mesuré 3,1-3,6 sur les
+références). Effet : tous les scénarios g1-g6 suivent la structure, avec des hooks concrets et vrais.
 
-12. **Emphase vocale par ligne** : `narration.txt` accepte `[rate=-4% pitch=+12Hz] Nous !` (synthèse par ligne
-    puis recollage) — edge-tts n'accepte pas de SSML ; la critique trouvait les révélations « plates ».
-13. **Garde-fous de zone** : le kit renvoie `zone_warnings` (élément sous y 1205, au-delà de x 995…) à la fin de
-    chaque `animate` ; planches d'animation avec la bande des sous-titres en rouge. Cause n° 1 du 77 de g2 v1.
-14. **Musique** : silences de début/fin retirés avant mixage (intro muette pendant le hook), piste Freesound
-    choisie plus longue que la voix + 6 s (fin de vidéo sans musique). Icône calendrier (texte « JUL ») retirée.
-15. Sous-titres : ponctuation isolée rattachée au mot (« : » seul à l'écran) ; kit : mot-clé affiché dès la coupe
-    (débuts de plan presque vides relevés par la critique dans g1 et g2).
+**Visuels** — 5. **Kit `studio/workspace/anim/lib/studio.js`** (scène SVG déterministe, 5 thèmes, titres,
+355 icônes Noto Emoji Apache 2.0 avec `icons/INDEX.txt`, étiquettes, compteurs, flèches, trajets, barres,
+colonnes, unités, jauge, carte du monde Natural Earth, caméra, secousse, flash teinté, Poppins OFL).
+6. **9 modèles** sur le kit : title, counter, bars, list (refaits), compare, steps, map, before_after, paradox.
+7. **Garde-fous automatiques** (`zone_warnings` renvoyés par `animate`, contrôle toutes les 0,5 s) : contenu
+   sous les sous-titres ou dans la colonne d'icônes TikTok, scène vide (< 28 % de la zone utile), icône < 170 px,
+   texte recouvert ; planches d'animation avec la bande des sous-titres en rouge ; titres limités à 820 px (ils
+   débordaient à x 1020). Effet : plus aucun « contenu sous les sous-titres » dans les critiques de g5-g6.
+8. Règles monteur : image pleine dès la coupe, hook en 2 plans (1re coupe 3,4-4,1 s → 1,4-2,0 s en g5-g6),
+   continuité entre plans, outil **`cues`** (instants des mots relatifs au plan) pour caler les révélations.
 
-16. **Alerte « scène vide »** : à la fin de chaque animation, le kit mesure la part de la zone utile couverte
-    par les éléments (< 28 % → alerte) et signale les icônes isolées < 170 px. C'était le défaut n° 1 des
-    critiques v1 de g1, g2 et g3 malgré la règle écrite « remplir l'écran ».
-17. Voix : nombres en chiffres dans `subtitles.txt` (« 23 », « 50,7 % ») — l'alignement Whisper le gère.
+**Voix & son** — 9. edge-tts : `--rate`/`--pitch` enfin transmis, voix **Rémy Multilingual** (pauses
+naturelles 0,3-0,5 s contre 0,9 s pour Denise), silences > 0,4 s raccourcis (`studio/voicefx.py`), emphase par
+ligne `[rate=-4% pitch=+12Hz]` relative au réglage global, nombres en chiffres dans les sous-titres.
+10. **Mixage** `studio/audiomix.py` : musique calée en loudness ~17 dB sous la voix (+33 dB → +17 dB : la
+musique s'entend enfin), ducking doux, silences de la piste retirés, piste plus longue que la voix, **bruitages
+synthétisés localement** (whoosh, pop, click, ding, riser, impact ; `clip.sfx`), -14 LUFS avec recalage après
+limiteur (-15,1 → -14,4).
 
-18. Kit : titres, textes et compteurs ajustés à 820 px de large (débordaient jusqu'à x 1020) ; alerte « droite »
-    dès x 970 (règle x ≤ 960) ; faux positif « icône 0 px » retiré ; alerte texte recouvert par une icône.
-19. Contrôle des zones **échantillonné toutes les 0,5 s** pendant le rendu (et plus seulement à la dernière
-    image) : les zooms caméra et entrées « up » sortaient le contenu en cours de route.
-20. Monteur : chaque `zone_warnings` se corrige avant le plan suivant ; hook en 2 plans (1re coupe vers
-    1,5-2,2 s, contre 3,4-4,1 s mesurés sur g1-g4 et 2,4 s dans les références).
-21. Sous-titres : espace élargie entre mots (`\h`, les mots se collaient) et espace insécable avant ? ! : ;.
+**Sous-titres** — 11. `studio/subtitles.py` : seul le mot prononcé est surligné, mots-clés et nombres en
+couleur, Poppins, centrés à y = 1290 (hors interface), espaces élargies, ponctuation rattachée, espace
+insécable avant ? ! : ;.
 
-22. `analyze` : pauses mesurées à l'énergie (trames 20 dB sous la parole) dans chaque écart Whisper — exemple
-    g5 v1 : 1,36 s annoncé, 0,32 s réel. Critique : interdiction de déduire un silence de `words.json`.
-23. Emphase vocale relative au réglage global (`[rate=-4%]` = 4 points plus lent que le reste).
+**Robustesse** — 12. `ai-image` : la clé FAL n'était jamais transmise (corrigé ; la clé est en 401) et l'erreur
+oriente vers le kit. 13. `thumbnail` : `@t` borné à la durée (erreur obscure avant) ; miniatures en Poppins.
 
 ## Choix rejetés
-- Capture d'écran CDP (`Page.captureScreenshot optimizeForSpeed`) pour accélérer le rendu des animations :
-  0,143 s/image contre 0,172 (-17 %), gain trop faible pour toucher au moteur de rendu du bac à sable.
-- **Pollinations.ai** comme repli IA gratuit : filigrane imposé, 576×1024, rendu médiocre.
-- Moteurs TTS locaux (Piper, Kokoro, XTTS) : français moins naturel que les voix Multilingual d'edge (Piper,
-  Kokoro) ou trop lourds pour 2 cœurs / 7,5 Go partagés (XTTS, F5).
+- **Pollinations.ai** (IA gratuite) : filigrane imposé, 576×1024, rendu médiocre.
+- **TTS locaux** (Piper, Kokoro, XTTS, F5) : moins naturels en français que Rémy Multilingual, ou trop lourds pour
+  2 cœurs / 7,5 Go partagés.
+- **Capture CDP** pour accélérer le rendu des animations : -17 % seulement (0,143 s/image contre 0,172).
+- **Supprimer les sous-titres** comme les références : gardés (accessibilité, visionnage sans son), mais placés
+  et stylés pour ne rien masquer.
 
 ## Obstacles & contournements
-- **Gemini** : `GOOGLE_GEMINI_API_KEY` (format `AQ.…`) refusée partout — API AI Studio, Vertex express mode, SDK
-  `google-genai` (401 `ACCESS_TOKEN_TYPE_UNSUPPORTED` / « API key not valid ») → `analyze` bascule sur la voie
-  Claude (matériaux perceptibles par Read), qui sert aussi à noter les références.
-- **FAL** (images IA) : 401 « invalid key credentials » → full animation par défaut, images de banques.
-- **Azure Speech** : 401 → edge-tts Rémy Multilingual.
-- **Noto Emoji** : arborescence GitHub déplacée (`svg/` → `2D/svg/`), trouvée via l'API GitHub.
+- **Gemini** : clé `AQ.…` refusée partout (AI Studio, Vertex express, SDK `google-genai` ; 401) → voie Claude
+  de `analyze`, utilisée aussi pour noter les références.
+- **FAL** (images IA) : 401 → full animation par défaut + banques d'images.
+- **Azure Speech** : 401 → edge-tts Rémy Multilingual (+ emphase par ligne pour compenser l'absence de SSML).
+- **Noto Emoji** : arborescence GitHub déplacée (`2D/svg/`), retrouvée via l'API GitHub.
+- **Mesures trompeuses** découvertes en route et corrigées : coupes invisibles entre animations au même fond
+  (→ `--timeline`), pauses Whisper gonflées (→ acoustiques), alertes de zone seulement sur la dernière image
+  (→ échantillonnage), emphase qui écrasait le débit global (→ relative).
+- Le monteur lance parfois 3 rendus d'animation en parallèle : `wait_for_memory` du bac à sable a suffi
+  (minimum observé 1,8 Go dispo pendant une génération).
 
 ## Actions nécessaires de l'utilisateur
-- Clés **Azure Speech**, **Gemini** (une vraie clé AI Studio `AIza…`) et **FAL** à refaire (toutes en 401).
-- Docker : `CLAUDE_CODE_OAUTH_TOKEN` absent de `.env` (Claude non connecté dans les conteneurs).
-- Ancien conteneur `cutevideo-worker` (image ghcr de 3 mois) toujours actif sur la même file Redis.
-- Disque : 4 Go libres seulement sur `/`.
+- Refaire les clés **Gemini** (vraie clé AI Studio `AIza…` : `analyze` enverra alors la vidéo à Gemini
+  automatiquement), **Azure Speech** (voix DragonHD, meilleure qu'edge) et **FAL** — toutes en 401.
+- **Écouter** les vidéos retenues : je n'entends pas ; voix, bruitages synthétiques et musique ont été jugés
+  sur mesures et spectrogrammes uniquement.
+- Musiques Freesound : attribution requise (déjà dans `media/credits.json` → description).
+- Docker : `CLAUDE_CODE_OAUTH_TOKEN` absent de `.env` ; ancien conteneur `cutevideo-worker` toujours actif.
+- Disque : ~3,7 Go libres sur `/` (run dirs ≈ 70-110 Mo chacun dans `~/.cache/cutevideo/optim/runs/`).
 
-## Prochaines étapes
-(à compléter)
+## Prochaines étapes (priorisées)
+1. **Voix** : c'est le critère le plus faible (12-13/15) — objections et relances encore « plates ». Tester
+   Azure DragonHD dès que la clé est refaite ; sinon mesurer l'effet de la règle « une phrase par ligne » et de
+   l'emphase sur une génération.
+2. **Valider les derniers correctifs** (cues, débit 3,1, pop lisible, continuité, emphase relative) par 1-2
+   générations : ils n'ont pas encore tourné en vrai.
+3. **Calibrer la critique** : lui donner les mesures des références comme repères (`REFERENCES.md`) pour que
+   le score ne dérive pas avec son exigence ; envisager `--max-iterations 3` (g5 s'est arrêtée à 84).
+4. **Durée** : les références font ~2 min ; tester un format 60-90 s avec deux relances.
+5. **Objet-héros persistant** entre plans (même position/échelle) et jauge d'enjeu systématique quand le récit a
+   une tension.
+6. Performances : 41-57 min par vidéo, dont ~15-20 min de montage (≈ 12 animations à ~30 s de rendu) ; le
+   temps est surtout celui de Claude, pas du CPU.
 
-## Commits
-- `8374c41` Charte d'animation studio.js : icônes, polices, carte du monde et 5 nouveaux modèles
-- `a446424` Analyse multimodale, voix, mixage et sous-titres viraux, prompts recalibrés sur les références
+## Commits (sur `main`, poussés)
+`8374c41` kit + 5 modèles · `a446424` analyze, voix, mixage, sous-titres, prompts · `8074872` ai-image ·
+`6cb7098` modèles refaits sur le kit · `de423fb` 356 icônes + index · `4ac7005` coupes timeline, flash, règles
+hook · `48e2ca2` recalage -14 LUFS · `ac7227f` miniatures Poppins · `6cf6c6e` recap g1 · `6e460ef` emphase par
+ligne · `af23af0` garde-fous de zone, musique · `c84aa51` ponctuation, mot-clé dès la coupe · `2559b59` recap g2 ·
+`472b5f8` nombres en chiffres · `99baa16` alertes scène vide · `b6a2612` recap g3 · `490910e` chevauchements,
+hook en 2 plans · `e34c77d` espaces des sous-titres · `cc61a14` zone droite 960 · `4d26476` titres 820 px ·
+`135d697` contrôle échantillonné, typographie · `2ad9516` enter none · `f28061e` recap g4 · `c0e0834` pauses
+acoustiques · `5abe631` emphase relative · `692d950` recap g5 · `91ecf04` outil cues · `fe99df1` intonation,
+continuité · `0e3ff1a` pop lisible · `8342f97` CLAUDE.md · `ca1f819` débit 3,1 mots/s · + ce recap final.
