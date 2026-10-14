@@ -31,6 +31,8 @@ jamais après.
   `at: 0, enter: "none"`), puis ça bouge avant 0,5 s (zoom caméra, secousse, apparition) ; c'est elle qui arrête
   le scroll et sert d'aperçu dans le fil. Le hook se découpe en **2 plans** (coupe vers 1,5-2,2 s, sur un début
   de mot) : la 2e image révèle l'autre moitié du paradoxe ;
+- **continuité** : un plan qui prolonge le précédent (même objet qui grandit, même jauge, même carte) démarre
+  sur l'état final du précédent (mêmes positions, mêmes valeurs) au lieu de repartir de zéro ;
 - dernier plan : rappelle visuellement le premier (même objet-héros, même cadrage) pour la boucle.
 **`mixed` / `footage`** : pour les beats marqués « PHOTO : » / « VIDÉO : », `search-media` (anglais, concret ;
 `--type video` pour l'action) → `preview` → **Read** → `download --name <NN>_<mot>`. Pertinence au mot près,
