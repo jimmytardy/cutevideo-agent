@@ -117,3 +117,17 @@ def concat_wavs(parts: list[Path], out: Path, *, gap_s: float = 0.12) -> float:
     audio = np.concatenate(chunks)
     sf.write(str(out), audio, sr, subtype="PCM_16")
     return len(audio) / sr
+
+
+def combine_offset(base: str, delta: str | None) -> str:
+    """Ajoute un réglage relatif de ligne au réglage global : « +30% » + « -6% » → « +24% » (idem en Hz)."""
+    if not delta:
+        return base
+    m_base, m_delta = re.fullmatch(r"([+-]?\d+(?:\.\d+)?)(%|Hz)", base or "+0%"), re.fullmatch(
+        r"([+-]?\d+(?:\.\d+)?)(%|Hz)", delta)
+    if not m_delta:
+        return base
+    if not m_base or m_base.group(2) != m_delta.group(2):
+        return delta
+    total = float(m_base.group(1)) + float(m_delta.group(1))
+    return f"{total:+.0f}{m_delta.group(2)}"

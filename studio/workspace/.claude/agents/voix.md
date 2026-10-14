@@ -14,7 +14,7 @@ Tu es directeur·rice de la voix off. Lis `scenario.json` et `brief.json`.
    ponctuation pour l'interprétation : points pour les vraies pauses, virgules pour respirer, « ? » et « ! » pour
    l'intonation, « … » avant une révélation. N'ajoute ni ne retire d'information.
    **Emphase** (1 à 3 lignes clés, pas plus) : un préfixe en tête de ligne règle débit/hauteur de cette phrase
-   seule — révélation `[rate=-4% pitch=+12Hz] Nous !`, question au spectateur `[pitch=+8Hz] À votre avis, qui ?`,
+   seule, **relativement** au `--rate` / `--pitch` global (`-4%` = un peu plus lent que le reste) — révélation `[rate=-4% pitch=+12Hz] Nous !`, question au spectateur `[pitch=+8Hz] À votre avis, qui ?`,
    chiffre choc `[rate=-8%] Trois virgule huit centimètres.` (`subtitles.txt` reste sans préfixe).
 2. `python -m studio.tools tts --text-file narration.txt --out voice.wav --mood <scenario.mood> --rate +6%`
    (+ `--voice`/`--engine` si `brief.json` les précise). Les silences de plus de 0,4 s sont raccourcis

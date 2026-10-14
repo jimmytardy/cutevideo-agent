@@ -144,3 +144,10 @@ def test_pauses_are_measured_acoustically() -> None:
     analyze._refine_pauses(speech, {"db": db, "times": times}, -15.0)
     assert speech["longest_pause_s"] == pytest.approx(0.3, abs=0.03)
     assert speech["pauses"][0]["whisper_s"] == 0.9
+
+
+def test_line_emphasis_is_relative_to_global_settings() -> None:
+    assert voicefx.combine_offset("+30%", "-6%") == "+24%"
+    assert voicefx.combine_offset("+0Hz", "+12Hz") == "+12Hz"
+    assert voicefx.combine_offset("+6%", None) == "+6%"
+    assert voicefx.combine_offset("+6%", "bidon") == "+6%"

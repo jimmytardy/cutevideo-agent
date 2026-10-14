@@ -86,7 +86,7 @@ async def cmd_tts(args: argparse.Namespace, run_dir: Path) -> Any:
         "gemini": tts_cfg.get("gemini", {}).get("voice", "Leda"),
         "edge": tts_cfg.get("fallback_voice", "fr-FR-DeniseNeural"),
     }
-    from studio.voicefx import concat_wavs, has_emphasis, parse_emphasis
+    from studio.voicefx import combine_offset, concat_wavs, has_emphasis, parse_emphasis
 
     # Emphase par ligne (`[rate=+12% pitch=+4Hz] Nous !`) : chaque ligne est synthétisée avec ses réglages
     # puis recollée (edge-tts n'accepte pas de SSML).
@@ -104,8 +104,8 @@ async def cmd_tts(args: argparse.Namespace, run_dir: Path) -> Any:
                     voice=voice,
                     engine=engine,
                     tts_style=args.style or "narration-professional",
-                    tts_rate=opts.get("rate", args.rate),
-                    tts_pitch=opts.get("pitch", args.pitch),
+                    tts_rate=combine_offset(args.rate, opts.get("rate")),
+                    tts_pitch=combine_offset(args.pitch, opts.get("pitch")),
                     mood=args.mood or "",
                 )
                 parts.append(part)

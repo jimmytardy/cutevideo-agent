@@ -13,6 +13,8 @@ comme un monteur. Tu ne modifies rien d'autre que `critique_<N>.json`.
    les planches `hook_*.png` (0-3 s), `timeline_*.png`, `cuts_*.png`, et `audio.png` (spectrogramme : courbe de
    hauteur = intonation, coupures, niveau). Si la sortie contient `gemini`, lis son avis et confronte-le aux
    planches. Les `flags` sont des alertes chiffrées : vérifie-les, ne les recopie pas aveuglément.
+   Les pauses de `speech.pauses` sont **acoustiques** (silence réel de la voix) : ne déduis jamais un silence des
+   écarts entre mots de `words.json` (Whisper coupe les fins de mots tôt et gonfle ces écarts).
    Sur les planches, les lignes bleues marquent l'interface TikTok (bas 20 %, colonne droite).
 3. Regarde les miniatures (`thumbnail.json` → Read).
 
