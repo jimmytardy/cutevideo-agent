@@ -346,6 +346,24 @@ async def _load_payload(project_id: str) -> dict[str, Any] | None:
     return json.loads(raw)
 
 
+async def _project_status(project_id: uuid.UUID) -> str | None:
+    async with AsyncSessionFactory() as session:
+        project = await session.get(Project, project_id)
+        return project.status if project else None
+
+
+async def _clear_blocked_reason(project_id: uuid.UUID) -> None:
+    """Le projet quitte la file : efface le motif d'attente (disque…) affiché au dashboard."""
+    async with AsyncSessionFactory() as session:
+        project = await session.get(Project, project_id)
+        if project:
+            config = dict(project.config or {})
+            config.pop("queue_blocked_reason", None)
+            project.config = config
+            project.error_message = None
+            await session.commit()
+
+
 async def dequeue_next_eligible() -> DequeueResult:
     """Pop la prochaine tâche éligible (disque + slot chaîne)."""
     cfg = get_pipeline_settings()
@@ -371,9 +389,7 @@ async def dequeue_next_eligible() -> DequeueResult:
         # définitif. Ne JAMAIS ré-enfiler, sinon elle reste en tête de file (plus
         # petit score) et monopolise toutes les tentatives, bloquant les projets
         # légitimes derrière elle.
-        async with AsyncSessionFactory() as session:
-            project = await session.get(Project, project_id)
-            project_status = project.status if project else None
+        project_status = await _project_status(project_id)
         if project_status != "queued":
             await queue.client.delete(_payload_key(project_key))
             logger.warning(
@@ -399,9 +415,7 @@ async def dequeue_next_eligible() -> DequeueResult:
 
         claimed = await try_claim_project(project_id, channel_id)
         if not claimed:
-            async with AsyncSessionFactory() as session:
-                project = await session.get(Project, project_id)
-                project_status = project.status if project else None
+            project_status = await _project_status(project_id)
             if project_status != "queued":
                 await _abandon_dequeued_task(project_key, project_id, reason="status")
                 logger.info(
@@ -414,15 +428,7 @@ async def dequeue_next_eligible() -> DequeueResult:
             blocked_count += 1
             continue
 
-        async with AsyncSessionFactory() as session:
-            project = await session.get(Project, project_id)
-            if project:
-                config = dict(project.config or {})
-                config.pop("queue_blocked_reason", None)
-                project.config = config
-                project.error_message = None
-                await session.commit()
-
+        await _clear_blocked_reason(project_id)
         await queue.client.delete(_payload_key(project_key))
         logger.info("Projet %s claimé depuis la file (score=%s)", project_id, score)
         return DequeueResult(payload=payload, all_blocked=False)

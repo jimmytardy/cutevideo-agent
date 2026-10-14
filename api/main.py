@@ -26,6 +26,7 @@ from api.routes import (
     content_planning,
     distribution,
     me,
+    project_media,
     projects,
     pipeline_queue,
     scheduler,
@@ -103,6 +104,7 @@ app.include_router(billing.router)
 app.include_router(channel_onboarding.router)
 app.include_router(channels.router)
 app.include_router(projects.router)
+app.include_router(project_media.router)
 app.include_router(pipeline_queue.router)
 app.include_router(agents.router)
 app.include_router(analytics.router)

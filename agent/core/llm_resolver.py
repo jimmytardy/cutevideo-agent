@@ -177,6 +177,61 @@ def _claude_cli_config(agent_name: str, model: str | None) -> LlmCallConfig:
     )
 
 
+async def _try_user_anthropic(
+    session: AsyncSession, user_id: uuid.UUID, requested_model: str, config_default: str
+) -> LlmCallConfig | None:
+    ctx = await resolve_api_key(session, user_id, "anthropic", purpose="llm_agent", tier="paid")
+    if not ctx.key:
+        return None
+    model = requested_model if _is_anthropic_model(requested_model) else config_default
+    return LlmCallConfig(provider="anthropic", model=model, api_key=ctx.key, tier="paid", source=ctx.source)
+
+
+async def _try_user_gemini(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    config_agent: str,
+    pref: AgentLlmPreference,
+    *,
+    model_override: str | None,
+    tier: LlmTier,
+) -> LlmCallConfig | None:
+    model = _resolve_gemini_model(config_agent, pref=pref, model_override=model_override, tier=tier)
+    ctx = await resolve_api_key(session, user_id, "gemini", purpose="llm_agent", tier=tier)
+    if not ctx.key:
+        return None
+    return LlmCallConfig(provider="gemini", model=model, api_key=ctx.key, tier=tier, source=ctx.source)
+
+
+async def _default_llm(
+    session: AsyncSession,
+    user_id: uuid.UUID | None,
+    config_agent: str,
+    pref: AgentLlmPreference | None,
+    *,
+    model_override: str | None,
+) -> LlmCallConfig:
+    """Gemini via Vertex AI (compte de service GCP) si configuré, sinon clé Gemini Developer
+    (user ou plateforme), sinon CLI Claude. Vertex est préféré car il évite la restriction
+    des clés AQ. de l'API Gemini Developer."""
+    model = _resolve_gemini_model(config_agent, pref=pref, model_override=model_override, tier="free")
+    gcp = await _resolve_gcp_for_vertex(session, user_id)
+    if gcp is not None:
+        return LlmCallConfig(
+            provider="gemini", model=model, api_key="", tier="free", source="vertex", use_vertex=True, gcp=gcp,
+        )
+    ctx = await resolve_api_key(session, user_id, "gemini", purpose="llm_agent", tier="free")
+    if ctx.key:
+        return LlmCallConfig(provider="gemini", model=model, api_key=ctx.key, tier="free", source=ctx.source)
+    if claude_cli_available():
+        return _claude_cli_config(config_agent, None)
+    raise RuntimeError(
+        "Aucune clé Gemini disponible. Configurez Vertex AI (GCP_PROJECT_ID + "
+        "GOOGLE_APPLICATION_CREDENTIALS), GOOGLE_GEMINI_API_KEY côté plateforme, "
+        "ou ajoutez votre clé Gemini dans les paramètres compte."
+    )
+
+
 async def resolve_llm_call(
     session: AsyncSession,
     user: User | None,
@@ -185,95 +240,34 @@ async def resolve_llm_call(
     model_override: str | None = None,
     tier_override: LlmTier | None = None,
 ) -> LlmCallConfig:
-    """Résout provider/modèle/clé pour un appel LLM agent."""
+    """Résout provider/modèle/clé pour un appel LLM agent.
+
+    Ordre : préférence CLI Claude → clé Anthropic de l'utilisateur (si modèle Claude
+    demandé) → clé Gemini de l'utilisateur (si préférence) → défaut plateforme.
+    """
     user_id = user.id if user else None
     config_agent = preference_agent_name(agent_name)
-    prefs = parse_agent_preferences(user.agent_llm_preferences if user else None)
-    pref = prefs.get(config_agent)
+    pref = parse_agent_preferences(user.agent_llm_preferences if user else None).get(config_agent)
 
     if pref is not None and pref.provider == "claude_cli":
         return _claude_cli_config(config_agent, pref.model)
 
-    has_anthropic = user_id is not None and await _has_user_key(session, user_id, "anthropic")
-    has_gemini_user = user_id is not None and await _has_user_key(session, user_id, "gemini")
-
-    config_default = resolve_model(config_agent)
-    requested_model = model_override or (pref.model if pref else None) or config_default
-    wants_anthropic = _is_anthropic_model(requested_model) or (
-        pref is not None and pref.provider == "anthropic"
-    )
-
-    if wants_anthropic and has_anthropic:
-        ctx = await resolve_api_key(session, user_id, "anthropic", purpose="llm_agent", tier="paid")
-        if ctx.key:
-            anthropic_model = (
-                requested_model
-                if _is_anthropic_model(requested_model)
-                else config_default
+    if user_id is not None:
+        config_default = resolve_model(config_agent)
+        requested_model = model_override or (pref.model if pref else None) or config_default
+        wants_anthropic = _is_anthropic_model(requested_model) or (pref is not None and pref.provider == "anthropic")
+        if wants_anthropic and await _has_user_key(session, user_id, "anthropic"):
+            resolved = await _try_user_anthropic(session, user_id, requested_model, config_default)
+            if resolved:
+                return resolved
+        if pref and await _has_user_key(session, user_id, "gemini"):
+            resolved = await _try_user_gemini(
+                session, user_id, config_agent, pref, model_override=model_override, tier=tier_override or pref.tier
             )
-            return LlmCallConfig(
-                provider="anthropic",
-                model=anthropic_model,
-                api_key=ctx.key,
-                tier="paid",
-                source=ctx.source,
-            )
+            if resolved:
+                return resolved
 
-    if pref and has_gemini_user:
-        tier: LlmTier = tier_override or pref.tier
-        model = _resolve_gemini_model(
-            config_agent,
-            pref=pref,
-            model_override=model_override,
-            tier=tier,
-        )
-        ctx = await resolve_api_key(session, user_id, "gemini", purpose="llm_agent", tier=tier)
-        if ctx.key:
-            return LlmCallConfig(
-                provider="gemini",
-                model=model,
-                api_key=ctx.key,
-                tier=tier,
-                source=ctx.source,
-            )
-
-    # Défaut : Gemini via Vertex AI (compte de service GCP) si configuré, sinon
-    # clé Gemini Developer (user ou plateforme). Vertex est préféré car il évite
-    # la restriction des clés AQ. de l'API Gemini Developer.
-    tier = "free"
-    model = _resolve_gemini_model(
-        config_agent,
-        pref=pref,
-        model_override=model_override,
-        tier=tier,
-    )
-    gcp = await _resolve_gcp_for_vertex(session, user_id)
-    if gcp is not None:
-        return LlmCallConfig(
-            provider="gemini",
-            model=model,
-            api_key="",
-            tier="free",
-            source="vertex",
-            use_vertex=True,
-            gcp=gcp,
-        )
-    ctx = await resolve_api_key(session, user_id, "gemini", purpose="llm_agent", tier="free")
-    if not ctx.key and claude_cli_available():
-        return _claude_cli_config(config_agent, None)
-    if not ctx.key:
-        raise RuntimeError(
-            "Aucune clé Gemini disponible. Configurez Vertex AI (GCP_PROJECT_ID + "
-            "GOOGLE_APPLICATION_CREDENTIALS), GOOGLE_GEMINI_API_KEY côté plateforme, "
-            "ou ajoutez votre clé Gemini dans les paramètres compte."
-        )
-    return LlmCallConfig(
-        provider="gemini",
-        model=model,
-        api_key=ctx.key,
-        tier="free",
-        source=ctx.source,
-    )
+    return await _default_llm(session, user_id, config_agent, pref, model_override=model_override)
 
 
 async def call_llm(

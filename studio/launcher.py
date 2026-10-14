@@ -140,53 +140,49 @@ class StreamParser:
             msg = json.loads(line)
         except json.JSONDecodeError:
             return []
-        events: list[tuple[str, dict[str, Any]]] = []
         mtype = msg.get("type")
-        parent = msg.get("parent_tool_use_id")
+        parent = msg.get("parent_tool_use_id") or ""
         message = msg.get("message")
         content = message.get("content") if isinstance(message, dict) else None
-        if mtype == "assistant" and isinstance(content, list):
-            for block in content:
-                if not isinstance(block, dict) or block.get("type") != "tool_use":
-                    continue
-                name = block.get("name", "")
-                tool_input = block.get("input") or {}
-                if name in SUBAGENT_TOOLS:
-                    role = str(tool_input.get("subagent_type") or "general")
-                    self.agents[block["id"]] = role
-                    events.append(("agent_start", {
-                        "id": block["id"],
-                        "role": role,
-                        "description": tool_input.get("description", ""),
-                        "prompt": tool_input.get("prompt", ""),
-                    }))
-                else:
-                    events.append(("tool", {
-                        "role": self.agents.get(parent or "", "producteur"),
-                        "name": name,
-                        "input": tool_input,
-                    }))
-        elif mtype == "user" and isinstance(content, list):
-            for block in content:
-                if not isinstance(block, dict) or block.get("type") != "tool_result":
-                    continue
-                tool_id = block.get("tool_use_id", "")
-                if tool_id in self.agents:
-                    events.append(("agent_end", {
-                        "id": tool_id,
-                        "role": self.agents[tool_id],
-                        "is_error": bool(block.get("is_error")),
-                        "output": _tool_result_text(block.get("content")),
-                    }))
-        elif mtype == "system" and msg.get("subtype") == "permission_denied":
-            events.append(("denied", {
-                "role": self.agents.get(parent or "", "producteur"),
-                "name": msg.get("tool_name", ""),
-            }))
-        elif mtype == "result":
+        blocks = [b for b in content if isinstance(b, dict)] if isinstance(content, list) else []
+        if mtype == "assistant":
+            return [self._on_tool_use(b, parent) for b in blocks if b.get("type") == "tool_use"]
+        if mtype == "user":
+            return [
+                self._on_agent_end(b)
+                for b in blocks
+                if b.get("type") == "tool_result" and b.get("tool_use_id", "") in self.agents
+            ]
+        if mtype == "system" and msg.get("subtype") == "permission_denied":
+            return [("denied", {"role": self.agents.get(parent, "producteur"), "name": msg.get("tool_name", "")})]
+        if mtype == "result":
             self.result = msg
-            events.append(("result", msg))
-        return events
+            return [("result", msg)]
+        return []
+
+    def _on_tool_use(self, block: dict[str, Any], parent: str) -> tuple[str, dict[str, Any]]:
+        """Lancement d'un sous-agent (rôle) ou appel d'outil attribué au rôle qui l'a fait."""
+        name = block.get("name", "")
+        tool_input = block.get("input") or {}
+        if name in SUBAGENT_TOOLS:
+            role = str(tool_input.get("subagent_type") or "general")
+            self.agents[block["id"]] = role
+            return ("agent_start", {
+                "id": block["id"],
+                "role": role,
+                "description": tool_input.get("description", ""),
+                "prompt": tool_input.get("prompt", ""),
+            })
+        return ("tool", {"role": self.agents.get(parent, "producteur"), "name": name, "input": tool_input})
+
+    def _on_agent_end(self, block: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+        tool_id = block["tool_use_id"]
+        return ("agent_end", {
+            "id": tool_id,
+            "role": self.agents[tool_id],
+            "is_error": bool(block.get("is_error")),
+            "output": _tool_result_text(block.get("content")),
+        })
 
 
 _HANDBACK_MARKER = "The report follows:"

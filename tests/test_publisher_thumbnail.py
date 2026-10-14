@@ -158,7 +158,7 @@ def test_ai_disclosure_from_used_media_credits() -> None:
 def test_thumbnail_stream_media_type() -> None:
     from pathlib import Path
 
-    from api.routes.projects import _media_type_for_path
+    from api.routes.project_media import _media_type_for_path
 
     assert _media_type_for_path(Path("t/thumb.JPG")) == "image/jpeg"
     assert _media_type_for_path(Path("t/thumb.png")) == "image/png"

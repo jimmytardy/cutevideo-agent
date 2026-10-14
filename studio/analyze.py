@@ -402,6 +402,132 @@ async def _gemini_review(video: Path, context: str) -> dict[str, Any]:
 # ── point d'entrée ────────────────────────────────────────────────────────
 
 
+async def _gemini_section(engine: str, video: Path, context: str) -> dict[str, Any]:
+    """Revue Gemini si possible ; `source` indique qui a produit le diagnostic."""
+    review, error = None, None
+    if engine in ("auto", "gemini"):
+        try:
+            review = await _gemini_review(video, context)
+        except Exception as exc:  # repli Claude
+            error = f"{type(exc).__name__}: {str(exc)[:200]}"
+            logger.warning("Analyse Gemini indisponible : %s", error)
+            if engine == "gemini":
+                raise
+    section: dict[str, Any] = {"gemini": review} if review is not None else {}
+    section["source"] = "gemini" if review is not None else "claude"
+    if error:
+        section["gemini_error"] = error
+    return section
+
+
+def _timeline_cuts(timeline_file: Path | None, duration: float) -> list[float] | None:
+    """Coupes connues par la timeline (les coupes entre animations au même fond échappent à la détection)."""
+    if not timeline_file or not timeline_file.exists():
+        return None
+    try:
+        clips = read_json(timeline_file)["clips"]
+        if abs(float(clips[-1]["end"]) - duration) <= 0.6:
+            return [round(float(c["start"]), 2) for c in clips[1:]]
+    except (KeyError, ValueError, TypeError, IndexError):
+        pass
+    return None
+
+
+def _static_spans(diffs: list[float]) -> list[dict[str, float]]:
+    """Plans « figés » : ≥ 3 s sans coupe et presque sans mouvement."""
+    spans, run_start = [], None
+    for i, d in enumerate(diffs + [99.0]):
+        if d < 0.6 and i > 0:
+            run_start = i if run_start is None else run_start
+        else:
+            if run_start is not None and (i - run_start) / ANALYSIS_FPS >= 3.0:
+                spans.append({"at": round(_frame_time(run_start), 1), "s": round((i - run_start) / ANALYSIS_FPS, 1)})
+            run_start = None
+    return spans
+
+
+def _visual_metrics(cuts: list[float], cuts_source: str, diffs: list[float], duration: float) -> dict[str, Any]:
+    bounds = [0.0, *cuts, duration]
+    shots = [round(b - a, 2) for a, b in zip(bounds, bounds[1:])]
+    longest = int(np.argmax(shots)) if shots else 0
+    return {
+        "cuts_source": cuts_source,
+        "cuts": cuts,
+        "shots": len(shots),
+        "mean_shot_s": round(float(np.mean(shots)), 2) if shots else duration,
+        "longest_shot_s": shots[longest] if shots else duration,
+        "longest_shot_at": bounds[longest],
+        "first_cut_s": cuts[0] if cuts else None,
+        "cuts_per_10s": round(10 * len(cuts) / max(duration, 0.1), 2),
+        "motion_by_s": [round(float(np.mean(diffs[i: i + ANALYSIS_FPS])), 1) for i in range(0, len(diffs), ANALYSIS_FPS)],
+        "static_spans": _static_spans(diffs),
+    }
+
+
+def _review_sheets(
+    run_dir: Path, frames: list[Path], cuts: list[float], duration: float, every_s: float, out_dir: Path
+) -> dict[str, list[str]]:
+    """Planches à lire : accroche (3 premières s), frise complète, avant/après chaque coupe."""
+    hook_tiles = [(_nearest(frames, t), f"{t:.2f}s", False) for t in np.arange(0.0, min(3.0, duration), 0.25)]
+    cut_set = set(round(c * ANALYSIS_FPS) for c in cuts)
+    timeline_tiles = [
+        (_nearest(frames, t), f"{t:.1f}s", round(t * ANALYSIS_FPS) in cut_set)
+        for t in np.arange(every_s / 2, duration, every_s)
+    ]
+    cut_tiles = []
+    for c in cuts:
+        cut_tiles.append((_nearest(frames, c - 0.25), f"{c:.1f}s avant", False))
+        cut_tiles.append((_nearest(frames, c + 0.25), f"{c:.1f}s après", True))
+    return {
+        "hook": [_rel(run_dir, p) for p in _build_sheets(hook_tiles, out_dir / "hook")],
+        "timeline": [_rel(run_dir, p) for p in _build_sheets(timeline_tiles, out_dir / "timeline")],
+        "cuts": [_rel(run_dir, p) for p in _build_sheets(cut_tiles, out_dir / "cuts")] if cut_tiles else [],
+    }
+
+
+async def _video_words(wav: Path, words_file: Path | None) -> list[dict[str, Any]]:
+    """Mots horodatés : `words.json` du run s'il existe, sinon transcription Whisper."""
+    if words_file and words_file.exists():
+        return read_json(words_file)
+    from agent.skills.audio.whisper_utils import transcribe_to_words
+
+    model = os.getenv("STUDIO_WHISPER_MODEL", "small")
+    segs = await transcribe_to_words([wav], model_name=model, language="fr")
+    return [{"word": w.word, "start": round(w.start, 3), "end": round(w.end, 3)} for w in segs]
+
+
+async def _audio_section(
+    video: Path, work: Path, out_dir: Path, words_file: Path | None, duration: float, cuts: list[float]
+) -> tuple[dict[str, Any], Path]:
+    """Transcription, débit, pauses, niveaux et spectrogramme annoté (audio.png)."""
+    wav = work / "audio.wav"
+    await _extract_wav(video, wav)
+    words = await _video_words(wav, words_file)
+    section: dict[str, Any] = {
+        "transcript": " ".join(w["word"] for w in words),
+        "speech": _speech_metrics(words, duration),
+    }
+    audio_metrics, series = await asyncio.to_thread(_audio_metrics, wav, words, duration)
+    section["audio"] = audio_metrics
+    _refine_pauses(section["speech"], series, audio_metrics.get("speech_rms_db"))
+    audio_png = out_dir / "audio.png"
+    await asyncio.to_thread(_plot_audio, series, words, cuts, audio_png)
+    write_json(out_dir / "words.json", words, indent=1)
+    return section, audio_png
+
+
+def _compact_summary(run_dir: Path, result: dict[str, Any], path: Path) -> dict[str, Any]:
+    """Sortie compacte pour Claude : les séries longues restent dans analysis.json."""
+    summary = {k: v for k, v in result.items() if k not in ("grid", "transcript")}
+    summary["visual"] = {k: v for k, v in result["visual"].items() if k != "motion_by_s"}
+    if "speech" in summary:
+        summary["speech"] = {k: v for k, v in result["speech"].items() if k != "rate_by_5s"}
+    if "audio" in summary:
+        summary["audio"] = {k: v for k, v in result["audio"].items() if k != "rms_by_2s"}
+    summary["analysis"] = _rel(run_dir, path)
+    return summary
+
+
 async def analyze_video(
     run_dir: Path,
     video: Path,
@@ -422,106 +548,27 @@ async def analyze_video(
     shutil.rmtree(work, ignore_errors=True)
 
     result: dict[str, Any] = {"video": _rel(run_dir, video), "duration_s": round(duration, 2), "grid": GRID}
-
-    gemini_error = None
-    if engine in ("auto", "gemini"):
-        try:
-            result["gemini"] = await _gemini_review(video, context)
-        except Exception as exc:  # repli Claude
-            gemini_error = f"{type(exc).__name__}: {str(exc)[:200]}"
-            logger.warning("Analyse Gemini indisponible : %s", gemini_error)
-            if engine == "gemini":
-                raise
-    result["source"] = "gemini" if "gemini" in result else "claude"
-    if gemini_error:
-        result["gemini_error"] = gemini_error
+    result.update(await _gemini_section(engine, video, context))
 
     # ── images ──
     frames = await _decode_frames(video, work / "frames")
     cuts, diffs = _detect_cuts(frames)
-    cuts_source = "image"
-    # Coupes connues par la timeline (les coupes entre animations au même fond échappent à la détection).
-    if timeline_file and timeline_file.exists():
-        try:
-            clips = read_json(timeline_file)["clips"]
-            if abs(float(clips[-1]["end"]) - duration) <= 0.6:
-                cuts = [round(float(c["start"]), 2) for c in clips[1:]]
-                cuts_source = "timeline"
-        except (KeyError, ValueError, TypeError, IndexError):
-            pass
-    bounds = [0.0, *cuts, duration]
-    shots = [round(b - a, 2) for a, b in zip(bounds, bounds[1:])]
-    longest = int(np.argmax(shots)) if shots else 0
-    # Plans « figés » : ≥ 3 s sans coupe et presque sans mouvement.
-    static_spans, run_start = [], None
-    for i, d in enumerate(diffs + [99.0]):
-        if d < 0.6 and i > 0:
-            run_start = i if run_start is None else run_start
-        else:
-            if run_start is not None and (i - run_start) / ANALYSIS_FPS >= 3.0:
-                static_spans.append({"at": round(_frame_time(run_start), 1), "s": round((i - run_start) / ANALYSIS_FPS, 1)})
-            run_start = None
-    result["visual"] = {
-        "cuts_source": cuts_source,
-        "cuts": cuts,
-        "shots": len(shots),
-        "mean_shot_s": round(float(np.mean(shots)), 2) if shots else duration,
-        "longest_shot_s": shots[longest] if shots else duration,
-        "longest_shot_at": bounds[longest],
-        "first_cut_s": cuts[0] if cuts else None,
-        "cuts_per_10s": round(10 * len(cuts) / max(duration, 0.1), 2),
-        "motion_by_s": [round(float(np.mean(diffs[i: i + ANALYSIS_FPS])), 1) for i in range(0, len(diffs), ANALYSIS_FPS)],
-        "static_spans": static_spans,
-    }
-    hook_tiles = [(_nearest(frames, t), f"{t:.2f}s", False) for t in np.arange(0.0, min(3.0, duration), 0.25)]
-    timeline_tiles = []
-    cut_set = set(round(c * ANALYSIS_FPS) for c in cuts)
-    for t in np.arange(every_s / 2, duration, every_s):
-        timeline_tiles.append((_nearest(frames, t), f"{t:.1f}s", round(t * ANALYSIS_FPS) in cut_set))
-    cut_tiles = []
-    for c in cuts:
-        cut_tiles.append((_nearest(frames, c - 0.25), f"{c:.1f}s avant", False))
-        cut_tiles.append((_nearest(frames, c + 0.25), f"{c:.1f}s après", True))
-    sheets = {
-        "hook": [_rel(run_dir, p) for p in _build_sheets(hook_tiles, out_dir / "hook")],
-        "timeline": [_rel(run_dir, p) for p in _build_sheets(timeline_tiles, out_dir / "timeline")],
-        "cuts": [_rel(run_dir, p) for p in _build_sheets(cut_tiles, out_dir / "cuts")] if cut_tiles else [],
-    }
+    timeline_cuts = _timeline_cuts(timeline_file, duration)
+    if timeline_cuts is not None:
+        cuts = timeline_cuts
+    result["visual"] = _visual_metrics(cuts, "timeline" if timeline_cuts is not None else "image", diffs, duration)
+    sheets = _review_sheets(run_dir, frames, cuts, duration, every_s, out_dir)
 
     # ── son ──
     result["loudness_lufs"] = await loudness(video) if info["has_audio"] else None
     audio_png = None
     if info["has_audio"]:
-        wav = work / "audio.wav"
-        await _extract_wav(video, wav)
-        if words_file and words_file.exists():
-            words = read_json(words_file)
-        else:
-            from agent.skills.audio.whisper_utils import transcribe_to_words
-
-            model = os.getenv("STUDIO_WHISPER_MODEL", "small")
-            segs = await transcribe_to_words([wav], model_name=model, language="fr")
-            words = [{"word": w.word, "start": round(w.start, 3), "end": round(w.end, 3)} for w in segs]
-        result["transcript"] = " ".join(w["word"] for w in words)
-        result["speech"] = _speech_metrics(words, duration)
-        audio_metrics, series = await asyncio.to_thread(_audio_metrics, wav, words, duration)
-        result["audio"] = audio_metrics
-        _refine_pauses(result["speech"], series, audio_metrics.get("speech_rms_db"))
-        audio_png = out_dir / "audio.png"
-        await asyncio.to_thread(_plot_audio, series, words, cuts, audio_png)
-        write_json(out_dir / "words.json", words, indent=1)
+        audio, audio_png = await _audio_section(video, work, out_dir, words_file, duration, cuts)
+        result.update(audio)
     result["flags"] = _flags(result)
     result["read"] = {**sheets, "audio": _rel(run_dir, audio_png) if audio_png else None}
     shutil.rmtree(work, ignore_errors=True)
 
     path = out_dir / "analysis.json"
     write_json(path, result, indent=1)
-    # Sortie compacte pour Claude : les séries longues restent dans analysis.json.
-    summary = {k: v for k, v in result.items() if k not in ("grid", "transcript")}
-    summary["visual"] = {k: v for k, v in result["visual"].items() if k != "motion_by_s"}
-    if "speech" in summary:
-        summary["speech"] = {k: v for k, v in result["speech"].items() if k != "rate_by_5s"}
-    if "audio" in summary:
-        summary["audio"] = {k: v for k, v in result["audio"].items() if k != "rms_by_2s"}
-    summary["analysis"] = _rel(run_dir, path)
-    return summary
+    return _compact_summary(run_dir, result, path)

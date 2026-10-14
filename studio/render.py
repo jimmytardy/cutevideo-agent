@@ -98,11 +98,11 @@ def _load_words(path: Path) -> list[WordSegment]:
     return [WordSegment(word=w["word"], start=float(w["start"]), end=float(w["end"])) for w in raw]
 
 
-async def render_timeline(run_dir: Path, timeline_path: Path, output_path: Path) -> dict:
-    """Rend la timeline et renvoie un résumé (durée, clips, crédits utilisés)."""
-    run_dir = run_dir.resolve()
-    timeline = load_contract(timeline_path, Timeline)
+async def _validate_inputs(run_dir: Path, timeline: Timeline) -> tuple[Path, list[Path], Path | None]:
+    """Voix, médias et musique : présents, dans le run dir, voix de la durée de la timeline.
 
+    Vérifié avant tout encodage pour échouer vite (message destiné à Claude).
+    """
     voice = resolve_in_run_dir(run_dir, timeline.voice)
     if not voice.exists():
         raise ContractError(f"voix introuvable : {timeline.voice}")
@@ -112,27 +112,25 @@ async def render_timeline(run_dir: Path, timeline_path: Path, output_path: Path)
             f"la timeline dure {timeline.duration:.2f}s mais la voix {voice_duration:.2f}s : "
             "le dernier clip doit finir à la fin de la voix"
         )
-
     sources: list[Path] = []
     for clip in timeline.clips:
         src = resolve_in_run_dir(run_dir, clip.media)
         if not src.exists():
             raise ContractError(f"média introuvable : {clip.media}")
         sources.append(src)
+    music = resolve_in_run_dir(run_dir, timeline.music) if timeline.music else None
+    if music is not None and not music.exists():
+        raise ContractError(f"musique introuvable : {timeline.music}")
+    return voice, sources, music
 
-    output_path = resolve_in_run_dir(run_dir, str(output_path))
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    work = run_dir / ".render" / output_path.stem
-    if work.exists():
-        shutil.rmtree(work)
-    work.mkdir(parents=True)
 
+async def _render_video_track(timeline: Timeline, sources: list[Path], work: Path) -> Path:
+    """Un segment encodé par clip, puis concaténation sans réencodage."""
     segment_paths: list[Path] = []
     for idx, (clip, src) in enumerate(zip(timeline.clips, sources)):
         seg = work / f"seg_{idx:02d}.mp4"
         await _render_clip(clip, src, seg, work, idx)
         segment_paths.append(seg)
-
     concat_list = work / "concat.txt"
     concat_list.write_text("".join(f"file '{p}'\n" for p in segment_paths), encoding="utf-8")
     video_only = work / "video.mp4"
@@ -141,22 +139,19 @@ async def render_timeline(run_dir: Path, timeline_path: Path, output_path: Path)
          "-c", "copy", str(video_only)],
         error_prefix="Concat clips",
     )
+    return video_only
 
-    music = resolve_in_run_dir(run_dir, timeline.music) if timeline.music else None
-    if music is not None and not music.exists():
-        raise ContractError(f"musique introuvable : {timeline.music}")
-    audio = work / "audio.m4a"
-    sfx_events = [(clip.start, clip.sfx) for clip in timeline.clips if clip.sfx]
-    mix = await mix_short_audio(
-        voice, music, audio, music_volume=timeline.music_volume, sfx_events=sfx_events, work=work
-    )
 
+def _subtitle_filter_args(run_dir: Path, timeline: Timeline, work: Path) -> list[str]:
+    """`-vf ass=…` des sous-titres mot à mot, ou rien si désactivés / sans mots."""
     words = _load_words(resolve_in_run_dir(run_dir, timeline.words)) if timeline.subtitles else []
-    vf_args: list[str] = []
-    if words:
-        style = SubtitleStyle(position=timeline.subtitle_position, keywords=timeline.subtitle_keywords)
-        vf_args = ["-vf", ass_filter(write_ass(words, style, work / "subs.ass"))]
+    if not words:
+        return []
+    style = SubtitleStyle(position=timeline.subtitle_position, keywords=timeline.subtitle_keywords)
+    return ["-vf", ass_filter(write_ass(words, style, work / "subs.ass"))]
 
+
+async def _mux(video_only: Path, audio: Path, vf_args: list[str], output_path: Path) -> None:
     # Durée explicite plutôt que `-shortest` : sa file de synchronisation garde en mémoire des
     # images brutes 1080×1920 (pic mesuré 1,76 Go contre 0,63 Go sur un Short de 31 s).
     duration = min((await probe_media(video_only))["duration_s"], (await probe_media(audio))["duration_s"])
@@ -178,20 +173,43 @@ async def render_timeline(run_dir: Path, timeline_path: Path, output_path: Path)
         ],
         error_prefix="Mux final",
     )
+
+
+async def render_timeline(run_dir: Path, timeline_path: Path, output_path: Path) -> dict:
+    """Rend la timeline et renvoie un résumé (durée, clips, crédits utilisés)."""
+    run_dir = run_dir.resolve()
+    timeline = load_contract(timeline_path, Timeline)
+    voice, sources, music = await _validate_inputs(run_dir, timeline)
+
+    output_path = resolve_in_run_dir(run_dir, str(output_path))
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    # Laissé en place si le rendu échoue (diagnostic) ; recréé au rendu suivant.
+    work = run_dir / ".render" / output_path.stem
+    if work.exists():
+        shutil.rmtree(work)
+    work.mkdir(parents=True)
+
+    video_only = await _render_video_track(timeline, sources, work)
+    audio = work / "audio.m4a"
+    sfx_events = [(clip.start, clip.sfx) for clip in timeline.clips if clip.sfx]
+    mix = await mix_short_audio(
+        voice, music, audio, music_volume=timeline.music_volume, sfx_events=sfx_events, work=work
+    )
+    vf_args = _subtitle_filter_args(run_dir, timeline, work)
+    await _mux(video_only, audio, vf_args, output_path)
     shutil.rmtree(work, ignore_errors=True)
 
     info = await probe_media(output_path)
-    credits = _used_credits(run_dir, timeline)
     summary = {
         "output": str(output_path.relative_to(run_dir)),
         "duration_s": info["duration_s"],
         "width": info.get("width"),
         "height": info.get("height"),
         "clips": len(timeline.clips),
-        "subtitles": bool(words),
+        "subtitles": bool(vf_args),
         "music": timeline.music,
         "mix": mix,
-        "credits": credits,
+        "credits": _used_credits(run_dir, timeline),
     }
     write_json(output_path.with_suffix(".render.json"), summary)
     return summary

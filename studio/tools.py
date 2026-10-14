@@ -75,22 +75,17 @@ async def cmd_music(args: argparse.Namespace, run_dir: Path) -> Any:
     return await media.fetch_music(run_dir, args.mood)
 
 
-async def cmd_tts(args: argparse.Namespace, run_dir: Path) -> Any:
-    from agent.skills.audio.tts import generate_tts
+def _tts_engine_chain(run_dir: Path, requested: str | None) -> tuple[list[str], dict[str, str]]:
+    """Moteurs à essayer dans l'ordre et voix de chacun.
 
-    text = resolve_in_run_dir(run_dir, args.text_file).read_text(encoding="utf-8").strip()
-    if not text:
-        raise ValueError(f"{args.text_file} est vide")
-    out = resolve_in_run_dir(run_dir, args.out)
-    out.parent.mkdir(parents=True, exist_ok=True)
+    Moteur/voix de la chaîne (résolus avec les plafonds d'abonnement dans `brief.json`),
+    sinon défauts globaux ; repli : moteur demandé → Gemini → edge-tts (gratuit, sans clé).
+    """
     tts_cfg = load_agent_config().get("tts", {})
     short_cfg = tts_cfg.get("short", {})
-    # Moteur/voix de la chaîne (résolus avec les plafonds d'abonnement dans `brief.json`),
-    # sinon défauts globaux.
     brief = _read_brief(run_dir)
     brief_engine = _engine_key(brief.get("tts_engine"))
-    primary = _engine_key(args.engine) or brief_engine or _engine_key(short_cfg.get("engine")) or "azure"
-    # Chaîne de repli : moteur demandé → Gemini → edge-tts (gratuit, sans clé).
+    primary = _engine_key(requested) or brief_engine or _engine_key(short_cfg.get("engine")) or "azure"
     chain = [primary] + [e for e in ("gemini", "edge") if e != primary]
     voices = {
         "azure": short_cfg.get("voice", "fr-FR-Vivienne:DragonHDLatestNeural"),
@@ -99,41 +94,59 @@ async def cmd_tts(args: argparse.Namespace, run_dir: Path) -> Any:
     }
     if brief_engine and brief.get("voice"):
         voices[brief_engine] = str(brief["voice"])
-    from studio.voicefx import combine_offset, concat_wavs, has_emphasis, parse_emphasis
+    return chain, voices
 
+
+async def _synthesize(
+    segments: list[tuple[str, dict]], out: Path, *, engine: str, voice: str, args: argparse.Namespace
+) -> tuple[float, str]:
+    """Synthétise chaque ligne (emphase propre) puis les recolle ; renvoie (durée, moteur effectif)."""
+    from agent.skills.audio.tts import generate_tts
+    from studio.voicefx import combine_offset, concat_wavs
+
+    parts: list[Path] = []
+    try:
+        for i, (seg_text, opts) in enumerate(segments):
+            part = out if len(segments) == 1 else out.with_name(f".{out.stem}_part{i:02d}.wav")
+            duration, used = await generate_tts(
+                seg_text,
+                part,
+                voice=voice,
+                engine=engine,
+                tts_style=args.style or "narration-professional",
+                tts_rate=combine_offset(args.rate, opts.get("rate")),
+                tts_pitch=combine_offset(args.pitch, opts.get("pitch")),
+                mood=args.mood or "",
+            )
+            parts.append(part)
+        return (duration if len(parts) == 1 else concat_wavs(parts, out)), used
+    finally:
+        for p in out.parent.glob(f".{out.stem}_part*.wav"):
+            p.unlink(missing_ok=True)
+
+
+async def cmd_tts(args: argparse.Namespace, run_dir: Path) -> Any:
+    from studio.voicefx import has_emphasis, parse_emphasis, tighten_pauses
+
+    text = resolve_in_run_dir(run_dir, args.text_file).read_text(encoding="utf-8").strip()
+    if not text:
+        raise ValueError(f"{args.text_file} est vide")
+    out = resolve_in_run_dir(run_dir, args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    chain, voices = _tts_engine_chain(run_dir, args.engine)
     # Emphase par ligne (`[rate=+12% pitch=+4Hz] Nous !`) : chaque ligne est synthétisée avec ses réglages
     # puis recollée (edge-tts n'accepte pas de SSML).
     segments = parse_emphasis(text) if has_emphasis(text) else [(text, {})]
     errors: dict[str, str] = {}
     for engine in chain:
-        voice = args.voice if (args.voice and engine == primary) else voices.get(engine, "")
+        voice = args.voice if (args.voice and engine == chain[0]) else voices.get(engine, "")
         try:
-            parts: list[Path] = []
-            for i, (seg_text, opts) in enumerate(segments):
-                part = out if len(segments) == 1 else out.with_name(f".{out.stem}_part{i:02d}.wav")
-                _dur, used = await generate_tts(
-                    seg_text,
-                    part,
-                    voice=voice,
-                    engine=engine,
-                    tts_style=args.style or "narration-professional",
-                    tts_rate=combine_offset(args.rate, opts.get("rate")),
-                    tts_pitch=combine_offset(args.pitch, opts.get("pitch")),
-                    mood=args.mood or "",
-                )
-                parts.append(part)
-            duration = _dur if len(parts) == 1 else concat_wavs(parts, out)
+            duration, used = await _synthesize(segments, out, engine=engine, voice=voice, args=args)
         except Exception as exc:
             errors[engine] = str(exc)[:200]
             continue
-        finally:
-            for p in out.parent.glob(f".{out.stem}_part*.wav"):
-                p.unlink(missing_ok=True)
-        tightened = None
-        if args.max_pause > 0:
-            from studio.voicefx import tighten_pauses
-
-            tightened = tighten_pauses(out, max_pause_s=args.max_pause)
+        tightened = tighten_pauses(out, max_pause_s=args.max_pause) if args.max_pause > 0 else None
+        if tightened:
             duration = tightened["after_s"]
         return {
             "path": args.out,
