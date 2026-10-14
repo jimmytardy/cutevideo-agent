@@ -11,6 +11,7 @@ sous-titres refaits, charte d'animation + 5 modèles, prompts recalibrés. Gén�
 | # | Sujet | Version | Score | Analyse | Durée | Rendu | Mémoire min | Chemin |
 |---|---|---|---|---|---|---|---|---|
 | baseline | Pourquoi la Lune s'éloigne de la Terre | v1 → v2 | 79 → 85 (approuvée, ancienne grille) | critique Claude (frames) | 30,9 s | ~6 min | 1,13 Go | `~/.cache/cutevideo/optim/baseline_lune/renders/v2.mp4` |
+| g5 | Le paradoxe des anniversaires (2e passage, correctifs 1-21) | v1 → v2 | 80 → 84 (plafond de 2 itérations, v2 retenue) | `analyze` claude | ~42 s | 49 min au total | 2,5 Go dispo | `~/.cache/cutevideo/optim/runs/g5_anniv/renders/v2.mp4` |
 | g4 | Pourquoi la Lune s'éloigne de la Terre (2e passage, correctifs 1-16) | v1 → v2 | 80 → **85** (approuvée) | `analyze` claude | 42,1 s | 41 min au total | 2,8 Go dispo | `~/.cache/cutevideo/optim/runs/g4_lune/renders/v2.mp4` |
 | g3 | Les 10 jours qui n'ont jamais existé (1582, histoire + chiffre) | v1 → v2 | 81 → **86** (approuvée) | `analyze` claude | 43,5 s | 43 min au total | 2,7 Go dispo | `~/.cache/cutevideo/optim/runs/g3_1582/renders/v2.mp4` |
 | g2 | Le paradoxe des anniversaires (concept abstrait) | v1 → v2 | 77 → **85** (approuvée) | `analyze` claude | 41,8 s | 57 min au total | 2,8 Go dispo | `~/.cache/cutevideo/optim/runs/g2_anniv/renders/v2.mp4` |
@@ -58,6 +59,12 @@ traverse les sous-titres, boucle visuelle moins exacte). **Les scores de la crit
 exigence qui suit la qualité) : les mesures `analyze` et la lecture des planches sont plus fiables pour comparer.
 Le journal de g4 montre aussi que le monteur **recevait les `zone_warnings` mais en corrigeait peu**, et que les
 titres du kit débordaient à x 1020 par construction (ajustés à 960 px centrés) → correctifs 18-20.
+
+g5 : 1er jet 80 (contre 77 pour g2 sur le même sujet ; plus aucun défaut d'outillage relevé : ni sous-titres
+sur le contenu, ni musique, ni icône). Les reproches portent sur la synchro fine (jauge 50,7 % en retard) et la
+voix. Deux erreurs de mesure découvertes grâce à g5 : (a) la critique annonçait des silences de 0,8-1,4 s alors
+que la voix n'en a aucun > 0,5 s — les pauses venaient des écarts Whisper → pauses désormais acoustiques ;
+(b) l'emphase de ligne **remplaçait** le débit global (+30 % → -6 %) au lieu de s'y ajouter → corrigé (relative).
 
 ## Changements (quoi, pourquoi, effet mesuré)
 1. **`python -m studio.tools analyze`** (`studio/analyze.py`) — Gemini d'abord, repli Claude automatique :
@@ -117,6 +124,10 @@ titres du kit débordaient à x 1020 par construction (ajustés à 960 px centr�
 20. Monteur : chaque `zone_warnings` se corrige avant le plan suivant ; hook en 2 plans (1re coupe vers
     1,5-2,2 s, contre 3,4-4,1 s mesurés sur g1-g4 et 2,4 s dans les références).
 21. Sous-titres : espace élargie entre mots (`\h`, les mots se collaient) et espace insécable avant ? ! : ;.
+
+22. `analyze` : pauses mesurées à l'énergie (trames 20 dB sous la parole) dans chaque écart Whisper — exemple
+    g5 v1 : 1,36 s annoncé, 0,32 s réel. Critique : interdiction de déduire un silence de `words.json`.
+23. Emphase vocale relative au réglage global (`[rate=-4%]` = 4 points plus lent que le reste).
 
 ## Choix rejetés
 - Capture d'écran CDP (`Page.captureScreenshot optimizeForSpeed`) pour accélérer le rendu des animations :
