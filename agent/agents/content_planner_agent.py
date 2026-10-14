@@ -353,12 +353,7 @@ class ContentPlannerAgent(BaseAgent):
 
         async with AsyncSessionFactory() as session:
             if cfg.production_mode != "shorts_only":
-                for idx, long_topic in enumerate(plan.long_videos):
-                    shorts_for_long = [
-                        s.model_dump()
-                        for s in plan.short_videos
-                        if s.parent_long_index == idx
-                    ]
+                for long_topic in plan.long_videos:
                     project = Project(
                         channel_id=channel.id,
                         theme=long_topic.subject,
@@ -371,7 +366,6 @@ class ContentPlannerAgent(BaseAgent):
                             "target_publish_date": target_publish_date.isoformat(),
                             "planned_date": plan.plan_date,
                             "content_plan": long_topic.model_dump(),
-                            "planned_shorts": shorts_for_long,
                             "format": "long",
                             **_visual_extras(long_topic),
                         },
@@ -383,14 +377,8 @@ class ContentPlannerAgent(BaseAgent):
             if cfg.production_mode == "shorts_only" and not short_topics:
                 logger.warning("Plan shorts_only sans short_videos pour %s", channel.slug)
 
-            orphan_shorts = [
-                s
-                for s in short_topics
-                if cfg.production_mode == "shorts_only"
-                or s.parent_long_index is None
-                or s.parent_long_index >= len(plan.long_videos)
-            ]
-            for short_topic in orphan_shorts:
+            # Studio ne dérive pas de shorts d'un long : chaque short (dérivé ou non) est un projet.
+            for short_topic in short_topics:
                 duration = short_topic.estimated_duration_s
                 if cfg.production_mode == "shorts_only":
                     duration = cfg.short_duration_s
@@ -406,7 +394,6 @@ class ContentPlannerAgent(BaseAgent):
                         "target_publish_date": target_publish_date.isoformat(),
                         "planned_date": plan.plan_date,
                         "content_plan": short_topic.model_dump(),
-                        "planned_shorts": [],
                         "format_hint": "short_standalone",
                         "format": "short_standalone",
                         **_visual_extras(short_topic),

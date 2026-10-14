@@ -17,7 +17,7 @@ class ChannelCreate(BaseModel):
     youtube_channel_url: str | None = None
     instagram_page_id: str | None = None
     tiktok_enabled: bool = True
-    max_concurrent_pipelines: int = 1
+    max_concurrent_pipelines: int = Field(default=1, ge=1, le=10)
 
 
 class ChannelUpdate(BaseModel):
@@ -33,7 +33,7 @@ class ChannelUpdate(BaseModel):
     youtube_refresh_token: str | None = None
     instagram_page_id: str | None = None
     tiktok_enabled: bool | None = None
-    max_concurrent_pipelines: int | None = None
+    max_concurrent_pipelines: int | None = Field(default=None, ge=1, le=10)
     is_active: bool | None = None
 
 
@@ -128,7 +128,7 @@ class ProjectCreate(BaseModel):
 
 
 class PublishRequest(BaseModel):
-    platform: str
+    platform: Literal["youtube", "tiktok", "instagram"]
 
 
 class ProjectResponse(BaseModel):

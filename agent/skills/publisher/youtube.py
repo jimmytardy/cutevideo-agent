@@ -50,10 +50,11 @@ def _upload_sync(
     from googleapiclient.discovery import build
     from googleapiclient.http import MediaFileUpload
 
-    token = refresh_token or settings.youtube_refresh_token or None
+    if not refresh_token:
+        raise RuntimeError("Token YouTube manquant — connectez la chaîne via OAuth")
     creds = Credentials(
         token=None,
-        refresh_token=token,
+        refresh_token=refresh_token,
         client_id=settings.youtube_client_id,
         client_secret=settings.youtube_client_secret,
         token_uri="https://oauth2.googleapis.com/token",
@@ -101,10 +102,11 @@ def _set_thumbnail_sync(video_id: str, thumbnail_path: Path, refresh_token: str 
     from googleapiclient.discovery import build
     from googleapiclient.http import MediaFileUpload
 
-    token = refresh_token or settings.youtube_refresh_token
+    if not refresh_token:
+        raise RuntimeError("Token YouTube manquant — connectez la chaîne via OAuth")
     creds = Credentials(
         token=None,
-        refresh_token=token,
+        refresh_token=refresh_token,
         client_id=settings.youtube_client_id,
         client_secret=settings.youtube_client_secret,
         token_uri="https://oauth2.googleapis.com/token",

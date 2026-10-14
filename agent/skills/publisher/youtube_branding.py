@@ -24,12 +24,11 @@ GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 def _build_credentials(refresh_token: str | None = None) -> Any:
     from google.oauth2.credentials import Credentials
 
-    token = refresh_token or settings.youtube_refresh_token or None
-    if not token:
-        raise RuntimeError("Token YouTube manquant — configurez YOUTUBE_REFRESH_TOKEN ou OAuth par chaîne")
+    if not refresh_token:
+        raise RuntimeError("Token YouTube manquant — connectez la chaîne via OAuth")
     return Credentials(
         token=None,
-        refresh_token=token,
+        refresh_token=refresh_token,
         client_id=settings.youtube_client_id,
         client_secret=settings.youtube_client_secret,
         token_uri="https://oauth2.googleapis.com/token",

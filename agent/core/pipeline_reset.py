@@ -19,7 +19,7 @@ from agent.core.storage import delete_s3_object
 
 logger = logging.getLogger(__name__)
 
-def _studio_dirs(project_id: uuid.UUID) -> list[Path]:
+def studio_dirs(project_id: uuid.UUID) -> list[Path]:
     from agent.core.claude_studio import OUTPUT_ROOT
     from studio.launcher import default_runs_dir
 
@@ -83,7 +83,7 @@ async def delete_project_completely(
     await session.execute(delete(Scenario).where(Scenario.project_id == project_id))
     await session.execute(delete(AgentRun).where(AgentRun.project_id == project_id))
 
-    for directory in [Path(f"./tmp/{project_id}"), *_studio_dirs(project_id)]:
+    for directory in [Path(f"./tmp/{project_id}"), *studio_dirs(project_id)]:
         if directory.exists():
             shutil.rmtree(directory)
 

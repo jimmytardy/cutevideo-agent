@@ -193,3 +193,60 @@ async def test_dequeue_drops_orphan_without_reenqueue() -> None:
     mock_reenqueue.assert_not_awaited()
     mock_claim.assert_not_awaited()
     mock_redis.delete.assert_awaited_once_with(_payload_key(str(orphan_id)))
+
+
+@pytest.mark.asyncio
+async def test_dequeue_skips_blocked_head_and_serves_next_channel() -> None:
+    """Une tête de file bloquée (chaîne occupée) ne doit pas affamer les projets suivants."""
+    from agent.core.pipeline_queue import dequeue_next_eligible
+
+    blocked_id, ready_id = uuid.uuid4(), uuid.uuid4()
+    payloads = {
+        str(blocked_id): {"project_id": str(blocked_id), "channel_id": str(uuid.uuid4())},
+        str(ready_id): {"project_id": str(ready_id), "channel_id": str(uuid.uuid4())},
+    }
+    zset = {str(blocked_id): 1.0, str(ready_id): 2.0}
+
+    async def zpopmin(_key: str, count: int = 1) -> list[tuple[str, float]]:
+        if not zset:
+            return []
+        member = min(zset, key=zset.__getitem__)
+        return [(member, zset.pop(member))]
+
+    async def zadd(_key: str, mapping: dict[str, float]) -> None:
+        zset.update(mapping)
+
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=SimpleNamespace(status="queued", config={}))
+    mock_redis = AsyncMock()
+    mock_redis.zpopmin = AsyncMock(side_effect=zpopmin)
+    mock_redis.zadd = AsyncMock(side_effect=zadd)
+
+    async def claim(project_id: uuid.UUID, _channel_id: uuid.UUID) -> bool:
+        return project_id == ready_id
+
+    with (
+        patch(
+            "agent.core.pipeline_queue.get_pipeline_settings",
+            return_value=MagicMock(queue_dequeue_max_attempts=5),
+        ),
+        patch(
+            "agent.core.pipeline_queue.AsyncSessionFactory",
+            return_value=_mock_session_factory(session),
+        ),
+        patch("agent.core.pipeline_queue.queue") as mock_queue,
+        patch(
+            "agent.core.pipeline_queue._load_payload",
+            new=AsyncMock(side_effect=lambda key: payloads[key]),
+        ),
+        patch("agent.core.pipeline_queue.is_disk_sufficient", return_value=True),
+        patch("agent.core.pipeline_queue._clear_blocked_reason", new=AsyncMock()),
+        patch("agent.core.pipeline_queue.try_claim_project", new=AsyncMock(side_effect=claim)),
+    ):
+        mock_queue.connect = AsyncMock()
+        mock_queue.client = mock_redis
+        mock_queue.is_pipeline_cancel_requested = AsyncMock(return_value=False)
+        result = await dequeue_next_eligible()
+
+    assert result.payload == payloads[str(ready_id)]
+    assert zset == {str(blocked_id): 1.0}  # la tête bloquée reste en file, avec son score

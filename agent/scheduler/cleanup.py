@@ -35,6 +35,8 @@ async def purge_video_files(videos: list[Video]) -> PurgeReport:
                 await delete_s3_object(video.storage_key)
                 report.s3_deleted += 1
                 report.bytes_freed += freed
+            if video.local_path:
+                Path(video.local_path).unlink(missing_ok=True)
 
             async with AsyncSessionFactory() as session:
                 db_video = await session.get(Video, video.id)
@@ -100,44 +102,27 @@ async def purge_old_media_files(retention_days: int | None = None) -> PurgeRepor
 
 
 async def _purge_old_project_dirs(cutoff: datetime) -> PurgeReport:
+    """Dossiers de travail (tmp, sortie et run dir Studio) des projets plus anciens que `cutoff`."""
+    from agent.core.pipeline_reset import studio_dirs
+
     report = PurgeReport()
-
     async with AsyncSessionFactory() as session:
-        projects_result = await session.execute(select(Project))
-        projects = list(projects_result.scalars().all())
+        result = await session.execute(
+            select(Project.id).where(
+                Project.created_at < cutoff,
+                Project.status.notin_(("running", "queued")),
+            )
+        )
+        project_ids = list(result.scalars().all())
 
-    for project in projects:
-        created = project.created_at
-        if created.tzinfo is None:
-            created = created.replace(tzinfo=UTC)
-        if created > cutoff:
-            continue
-
-        project_id = str(project.id)
-        tmp_dir = Path(f"./tmp/{project_id}")
-        if tmp_dir.exists():
+    for project_id in project_ids:
+        for directory in (Path(f"./tmp/{project_id}"), *studio_dirs(project_id)):
+            if not directory.exists():
+                continue
             try:
-                shutil.rmtree(tmp_dir)
+                shutil.rmtree(directory)
                 report.dirs_removed += 1
             except OSError as e:
-                report.errors.append(f"tmp/{project_id}: {e}")
-
-        for pattern_dir in (
-            Path("./output/long"),
-            Path("./output/shorts/youtube"),
-            Path("./output/shorts/tiktok"),
-            Path("./output/shorts/instagram"),
-        ):
-            if not pattern_dir.exists():
-                continue
-            for f in pattern_dir.glob(f"*{project_id}*"):
-                try:
-                    if f.is_file():
-                        f.unlink()
-                    elif f.is_dir():
-                        shutil.rmtree(f)
-                    report.dirs_removed += 1
-                except OSError:
-                    report.errors.append(str(f))
+                report.errors.append(f"{directory}: {e}")
 
     return report

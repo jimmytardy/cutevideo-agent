@@ -37,6 +37,7 @@ from studio.contracts import (
     Thumbnail,
     load_contract,
     read_json,
+    resolve_in_run_dir,
 )
 from studio.launcher import ClaudeRunError, default_runs_dir, prepare_run_dir, run_claude
 
@@ -199,7 +200,7 @@ class ClaudeStudioRunner:
 
         run_dir = self.run_dir
         scenario = load_contract(run_dir / "scenario.json", StudioScenario)
-        final_src = run_dir / result.final_video
+        final_src = resolve_in_run_dir(run_dir, result.final_video)
         if not final_src.exists():
             raise ClaudeRunError(f"vidéo finale introuvable : {result.final_video}")
 

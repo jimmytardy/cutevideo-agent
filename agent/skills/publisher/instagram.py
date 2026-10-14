@@ -17,10 +17,10 @@ async def upload_reel(
     caption: str,
     hashtags: list[str],
     video_url: str,
-    page_id: str | None = None,
+    page_id: str,
 ) -> str | None:
     """Publie un Reel Instagram via Graph API. Retourne l'ID du media."""
-    ig_page = page_id or settings.instagram_page_id
+    ig_page = page_id
     if not settings.instagram_access_token or not ig_page:
         raise RuntimeError("Credentials Instagram non configurés")
 

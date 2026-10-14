@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from typing import Any, Literal
@@ -17,6 +18,7 @@ from agent.core.config import settings
 from agent.core.database import Channel, User, get_db
 from agent.core.subscription import QuotaExceededError, check_can_create_channel
 from agent.skills.publisher import youtube_branding
+from agent.skills.publisher.credentials import youtube_refresh_token
 from api.authorization import get_user_channel
 from api.deps import get_current_user
 from api.models import (
@@ -30,6 +32,8 @@ from api.models import (
 )
 
 logger = logging.getLogger(__name__)
+# Référence forte : sans elle, le GC peut collecter une tâche en cours.
+_background_tasks: set[asyncio.Task[bool]] = set()
 
 router = APIRouter(prefix="/api/v1/channels", tags=["channel-onboarding"])
 
@@ -182,11 +186,16 @@ async def list_youtube_channels(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[YouTubeChannelItem]:
-    refresh_token: str | None = settings.youtube_refresh_token or None
+    # Le token global (.env) ne liste que les chaînes de l'exploitant : admin uniquement.
+    refresh_token = settings.youtube_refresh_token if current_user.is_admin else None
     if channel_id:
         ch = await get_user_channel(db, channel_id, current_user)
-        if ch.youtube_refresh_token:
-            refresh_token = ch.youtube_refresh_token
+        refresh_token = await youtube_refresh_token(ch)
+    if not refresh_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Connectez d'abord la chaîne YouTube (OAuth)",
+        )
 
     try:
         items = await youtube_branding.list_youtube_channels(refresh_token)
@@ -240,7 +249,7 @@ async def apply_youtube_branding(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="brand_kit.youtube manquant")
 
     brand = YouTubeBrand(**channel.brand_kit["youtube"])
-    token = channel.youtube_refresh_token or settings.youtube_refresh_token or None
+    token = await youtube_refresh_token(channel)
     try:
         await youtube_branding.update_channel_branding(
             channel.youtube_channel_id, brand, token
@@ -250,10 +259,11 @@ async def apply_youtube_branding(
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from e
 
     # Génère et uploade la bannière en arrière-plan (non bloquant)
-    import asyncio as _asyncio
-
     from agent.skills.publisher.youtube_channel_manager import generate_and_upload_banner
-    _asyncio.create_task(generate_and_upload_banner(channel))
+
+    task = asyncio.create_task(generate_and_upload_banner(channel))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
     return {"status": "applied", "youtube_channel_id": channel.youtube_channel_id}
 

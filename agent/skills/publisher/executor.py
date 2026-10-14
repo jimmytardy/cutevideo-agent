@@ -5,10 +5,9 @@ import uuid
 from datetime import datetime, UTC
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from agent.core.channel_config import ChannelRuntimeConfig
-from agent.core.config import settings
 from agent.core.database import AsyncSessionFactory, Channel, Project, Publication, Video
 from agent.core.storage import get_public_video_url_async, resolve_local_path_for_upload
 from agent.skills.publisher.tiktok_providers import build_caption, get_tiktok_publisher
@@ -49,6 +48,12 @@ async def publish_scheduled(
     description = publication.description or ""
     tags = list(publication.hashtags or channel_config.default_tags)
 
+    # Deux distributions concurrentes (job planifié + lancement manuel) ne doivent
+    # jamais uploader deux fois la même publication.
+    if not await _claim_for_publishing(publication.id):
+        logger.info("Publication %s déjà prise en charge — ignorée", publication.id)
+        return None
+
     if video.file_purged_at:
         await _mark_failed(publication.id, "video_file_purged")
         return None
@@ -72,8 +77,6 @@ async def publish_scheduled(
             )
             await _mark_failed(publication.id, msg)
             return None
-
-    await _mark_publishing(publication.id)
 
     try:
         if platform == "youtube":
@@ -112,8 +115,12 @@ async def _publish_youtube(
     from agent.skills.publisher.youtube import set_thumbnail, upload_video
     from agent.skills.publisher.youtube_channel_manager import post_publish_hook
 
+    from agent.skills.publisher.credentials import youtube_refresh_token
+
+    refresh_token = await youtube_refresh_token(channel)
+    if not refresh_token:
+        raise RuntimeError("youtube_not_connected : connectez la chaîne YouTube (OAuth)")
     video_path = await resolve_local_path_for_upload(video)
-    refresh_token = channel.youtube_refresh_token or settings.youtube_refresh_token
     from agent.skills.publisher.synthetic_disclosure import detect_realistic_synthetic_media
 
     contains_synthetic = False
@@ -245,8 +252,11 @@ async def _publish_instagram(
     caption: str,
     tags: list[str],
 ) -> Publication | None:
+    from agent.skills.publisher.credentials import instagram_publishing_allowed
     from agent.skills.publisher.instagram import upload_reel
 
+    if not channel.instagram_page_id or not await instagram_publishing_allowed(channel):
+        raise RuntimeError("instagram_not_available : publication Instagram réservée aux chaînes admin")
     video_url = await get_public_video_url_async(video)
     local_path = await resolve_local_path_for_upload(video)
     media_id = await upload_reel(
@@ -254,7 +264,7 @@ async def _publish_instagram(
         caption=caption,
         hashtags=tags,
         video_url=video_url,
-        page_id=channel.instagram_page_id or settings.instagram_page_id,
+        page_id=channel.instagram_page_id,
     )
     if not media_id:
         await _mark_failed(publication.id, "instagram_upload_no_media_id")
@@ -266,15 +276,16 @@ async def _publish_instagram(
     )
 
 
-async def _mark_publishing(publication_id: uuid.UUID) -> None:
+async def _claim_for_publishing(publication_id: uuid.UUID) -> bool:
+    """Passe la publication de `scheduled` à `publishing` ; False si une autre exécution l'a prise."""
     async with AsyncSessionFactory() as session:
         result = await session.execute(
-            select(Publication).where(Publication.id == publication_id)
+            update(Publication)
+            .where(Publication.id == publication_id, Publication.status == "scheduled")
+            .values(status="publishing")
         )
-        pub = result.scalar_one_or_none()
-        if pub:
-            pub.status = "publishing"
-            await session.commit()
+        await session.commit()
+        return result.rowcount == 1
 
 
 async def _mark_failed(publication_id: uuid.UUID, error: str) -> None:

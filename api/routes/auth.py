@@ -73,9 +73,30 @@ async def _count_real_users(db: AsyncSession) -> int:
     return int(result.scalar_one())
 
 
+def _origin(url: str) -> str:
+    parsed = urlparse(url.strip())
+    return f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else ""
+
+
+def _allowed_login_origins() -> set[str]:
+    """Origines du frontend : CORS + domaine public du callback Google."""
+    origins = {_origin(o) for o in settings.cors_origins.split(",")}
+    origins.add(_origin(settings.google_oauth_redirect_uri))
+    origins.discard("")
+    return origins
+
+
 def _resolve_login_redirect(extra: dict) -> str:
-    """Retourne l'URL frontend où déposer le JWT (toujours /login si seule l'origine est fournie)."""
-    redirect_after = extra.get("redirect_after") or settings.cors_origins.split(",")[0].strip()
+    """URL frontend où déposer le JWT (toujours /login si seule l'origine est fournie).
+
+    Seules les origines connues sont acceptées : sinon un lien de connexion piégé
+    enverrait le JWT de la victime vers un site tiers.
+    """
+    default = settings.cors_origins.split(",")[0].strip()
+    redirect_after = str(extra.get("redirect_after") or default)
+    if _origin(redirect_after) not in _allowed_login_origins():
+        logger.warning("redirect_after refusé (origine inconnue) : %s", redirect_after)
+        redirect_after = default
     parsed = urlparse(redirect_after)
     if parsed.path in ("", "/"):
         parsed = parsed._replace(path="/login")
@@ -161,7 +182,10 @@ async def google_callback(
     result = await db.execute(select(User).where(User.google_sub == google_sub))
     user = result.scalar_one_or_none()
     if user is None:
-        # Compte déjà créé par une autre méthode (code Authenticator) : on y rattache Google.
+        # Compte déjà créé par une autre méthode (code Authenticator) : on y rattache Google,
+        # seulement si Google certifie l'adresse (sinon prise de contrôle du compte).
+        if not profile.get("email_verified"):
+            raise HTTPException(status_code=400, detail="Adresse e-mail Google non vérifiée")
         user = await _find_user_by_email(db, email)
         if user is not None:
             user.google_sub = google_sub
@@ -202,6 +226,8 @@ async def google_callback(
 # ── Connexion par code Google Authenticator (TOTP) ───────────────────────────
 
 TOTP_MAX_FAILURES = 5
+# Plafond toutes IP confondues : l'IP vient d'un en-tête que le client peut falsifier.
+TOTP_MAX_GLOBAL_FAILURES = 10
 TOTP_FAILURE_WINDOW_S = 15 * 60
 TOTP_INVALID = "E-mail ou code invalide"
 
@@ -234,14 +260,16 @@ def _client_ip(request: Request) -> str:
 async def check_totp(redis, email: str, code: str, ip: str) -> None:
     """Limite d'essais, e-mail autorisé, code valide et non rejoué. Lève HTTPException sinon."""
     fail_key = f"auth:totp:fail:{ip}"
+    global_key = "auth:totp:fail:all"
     failures = int(await redis.get(fail_key) or 0)
-    if failures >= TOTP_MAX_FAILURES:
+    global_failures = int(await redis.get(global_key) or 0)
+    if failures >= TOTP_MAX_FAILURES or global_failures >= TOTP_MAX_GLOBAL_FAILURES:
         raise HTTPException(status_code=429, detail="Trop d'essais — réessayez dans 15 minutes")
 
     async def fail() -> None:
-        count = await redis.incr(fail_key)
-        if count == 1:
-            await redis.expire(fail_key, TOTP_FAILURE_WINDOW_S)
+        for key in (fail_key, global_key):
+            if await redis.incr(key) == 1:
+                await redis.expire(key, TOTP_FAILURE_WINDOW_S)
         raise HTTPException(status_code=401, detail=TOTP_INVALID)
 
     email_ok = email.strip().lower() == settings.totp_login_email.strip().lower()

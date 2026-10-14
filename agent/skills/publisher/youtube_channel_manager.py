@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from agent.skills.publisher import youtube_branding
+from agent.skills.publisher.credentials import youtube_refresh_token
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -49,7 +50,6 @@ async def _fetch_stock_banner(keywords: list[str], tmpdir: str) -> Path | None:
 
 async def generate_and_upload_banner(channel: Channel) -> bool:
     """Bannière YouTube : stock libre en priorité, AI en fallback."""
-    from agent.core.config import settings
 
     if not channel.youtube_channel_id:
         return False
@@ -87,7 +87,7 @@ async def generate_and_upload_banner(channel: Channel) -> bool:
                 return False
             banner_path = result.local_path
 
-        token = channel.youtube_refresh_token or settings.youtube_refresh_token or None
+        token = await youtube_refresh_token(channel)
         try:
             await youtube_branding.upload_channel_banner(banner_path, channel.youtube_channel_id, token)
             logger.info("Bannière uploadée pour la chaîne %s", channel.slug)
@@ -103,7 +103,6 @@ async def ensure_playlist_for_theme(
     db: AsyncSession,
 ) -> str | None:
     """Retourne l'ID de la playlist pour ce thème, la crée en DB et sur YouTube si absente."""
-    from agent.core.config import settings
 
     if not channel.youtube_channel_id:
         return None
@@ -115,7 +114,7 @@ async def ensure_playlist_for_theme(
     if theme_key in playlists:
         return playlists[theme_key]
 
-    token = channel.youtube_refresh_token or settings.youtube_refresh_token or None
+    token = await youtube_refresh_token(channel)
     try:
         playlist_id = await youtube_branding.create_playlist(
             title=theme[:100],
@@ -140,9 +139,8 @@ async def post_publish_hook(
     db: AsyncSession,
 ) -> None:
     """Après publication YouTube : ajoute la vidéo à la playlist du thème et définit le trailer."""
-    from agent.core.config import settings
 
-    token = channel.youtube_refresh_token or settings.youtube_refresh_token or None
+    token = await youtube_refresh_token(channel)
 
     # 1. Ajouter à la playlist du thème
     playlist_id = await ensure_playlist_for_theme(channel, theme, db)

@@ -109,3 +109,15 @@ def test_totp_routes_are_public() -> None:
 
     assert is_public_api_path("/api/v1/auth/totp/login")
     assert is_public_api_path("/api/v1/auth/totp/enabled")
+
+
+@pytest.mark.asyncio
+async def test_global_rate_limit_ignores_spoofed_ip(configured: str) -> None:
+    """Changer d'IP (en-tête X-Forwarded-For falsifiable) ne contourne pas le plafond global."""
+    redis = FakeRedis()
+    for i in range(auth.TOTP_MAX_GLOBAL_FAILURES):
+        with pytest.raises(HTTPException):
+            await auth.check_totp(redis, "moi@ex.fr", "000000", f"10.0.0.{i}")
+    with pytest.raises(HTTPException) as exc:
+        await auth.check_totp(redis, "moi@ex.fr", totp.totp_now(configured), "10.0.1.1")
+    assert exc.value.status_code == 429

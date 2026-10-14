@@ -50,7 +50,7 @@ async def _run_pending_projects() -> dict[str, int]:
         result = await session.execute(
             select(Project, Channel)
             .join(Channel, Channel.id == Project.channel_id)
-            .where(Project.status == "pending")
+            .where(Project.status == "pending", Channel.is_active == True)  # noqa: E712
             .order_by(Project.created_at.asc())
         )
         rows = list(result.all())

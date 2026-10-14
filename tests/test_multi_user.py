@@ -51,6 +51,20 @@ def test_resolve_login_redirect_appends_login_path() -> None:
     )
 
 
+def test_resolve_login_redirect_refuses_unknown_origin(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Le JWT est passé en query : jamais vers une origine qui n'est pas le frontend."""
+    from api.routes import auth
+
+    monkeypatch.setattr(auth.settings, "cors_origins", "http://localhost:3333")
+    monkeypatch.setattr(
+        auth.settings, "google_oauth_redirect_uri", "https://app.example.fr/api/v1/auth/google/callback"
+    )
+    assert auth._resolve_login_redirect({"redirect_after": "https://evil.example/login"}) == "http://localhost:3333/login"
+    assert auth._resolve_login_redirect({"redirect_after": "https://app.example.fr.evil.example/"}) == "http://localhost:3333/login"
+    assert auth._resolve_login_redirect({"redirect_after": "//evil.example/login"}) == "http://localhost:3333/login"
+    assert auth._resolve_login_redirect({"redirect_after": "https://app.example.fr"}) == "https://app.example.fr/login"
+
+
 def test_api_key_encryption_roundtrip() -> None:
     plain = "sk-test-key-12345"
     encrypted = encrypt_api_key(plain)

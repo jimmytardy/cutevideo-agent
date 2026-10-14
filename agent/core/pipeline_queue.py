@@ -365,73 +365,75 @@ async def _clear_blocked_reason(project_id: uuid.UUID) -> None:
 
 
 async def dequeue_next_eligible() -> DequeueResult:
-    """Pop la prochaine tâche éligible (disque + slot chaîne)."""
+    """Pop la prochaine tâche éligible (disque + slot chaîne).
+
+    Les entrées bloquées (chaîne déjà occupée) sont mises de côté et ré-enfilées
+    avec leur score à la fin : les ré-enfiler tout de suite les ferait repoper
+    aussitôt (plus petit score) et affamerait les projets des autres chaînes.
+    """
     cfg = get_pipeline_settings()
     await queue.connect()
 
-    attempts = 0
-    blocked_count = 0
+    deferred: list[tuple[str, float]] = []
+    try:
+        for _ in range(cfg.queue_dequeue_max_attempts):
+            popped = await queue.client.zpopmin(PIPELINE_ZQUEUE, count=1)
+            if not popped:
+                break
 
-    while attempts < cfg.queue_dequeue_max_attempts:
-        attempts += 1
-        popped = await queue.client.zpopmin(PIPELINE_ZQUEUE, count=1)
-        if not popped:
-            return DequeueResult(payload=None, all_blocked=False)
+            project_key, score = popped[0]
+            project_id = uuid.UUID(project_key)
+            payload = await _load_payload(project_key)
+            if payload is None:
+                logger.warning("Payload manquant pour projet %s — remis en attente", project_key)
+                if await _project_status(project_id) == "queued":
+                    await _set_project_pending(project_id)
+                continue
 
-        project_key, score = popped[0]
-        project_id = uuid.UUID(project_key)
-        payload = await _load_payload(project_key)
-        if payload is None:
-            logger.warning("Payload manquant pour projet %s — ignoré", project_key)
-            continue
-
-        # Entrée orpheline : projet supprimé ou plus en état « queued » → abandon
-        # définitif. Ne JAMAIS ré-enfiler, sinon elle reste en tête de file (plus
-        # petit score) et monopolise toutes les tentatives, bloquant les projets
-        # légitimes derrière elle.
-        project_status = await _project_status(project_id)
-        if project_status != "queued":
-            await queue.client.delete(_payload_key(project_key))
-            logger.warning(
-                "Entrée orpheline retirée de la file projet=%s status=%s",
-                project_id,
-                project_status,
-            )
-            continue
-
-        channel_id = uuid.UUID(payload["channel_id"])
-
-        if await queue.is_pipeline_cancel_requested(project_key):
-            await _abandon_dequeued_task(project_key, project_id, reason="cancel")
-            logger.info("Projet %s abandonné (annulation demandée)", project_id)
-            continue
-
-        if not is_disk_sufficient():
-            message = format_disk_wait_message()
-            await _set_disk_wait_message(project_id, message)
-            await reenqueue_with_same_score(project_id, float(score))
-            blocked_count += 1
-            continue
-
-        claimed = await try_claim_project(project_id, channel_id)
-        if not claimed:
+            # Entrée orpheline : projet supprimé ou plus en état « queued » → abandon
+            # définitif, jamais ré-enfilée.
             project_status = await _project_status(project_id)
             if project_status != "queued":
-                await _abandon_dequeued_task(project_key, project_id, reason="status")
-                logger.info(
-                    "Projet %s abandonné après échec claim (status=%s)",
+                await queue.client.delete(_payload_key(project_key))
+                logger.warning(
+                    "Entrée orpheline retirée de la file projet=%s status=%s",
                     project_id,
                     project_status,
                 )
                 continue
-            await reenqueue_with_same_score(project_id, float(score))
-            blocked_count += 1
-            continue
 
-        await _clear_blocked_reason(project_id)
-        await queue.client.delete(_payload_key(project_key))
-        logger.info("Projet %s claimé depuis la file (score=%s)", project_id, score)
-        return DequeueResult(payload=payload, all_blocked=False)
+            channel_id = uuid.UUID(payload["channel_id"])
 
-    all_blocked = blocked_count > 0
-    return DequeueResult(payload=None, all_blocked=all_blocked)
+            if await queue.is_pipeline_cancel_requested(project_key):
+                await _abandon_dequeued_task(project_key, project_id, reason="cancel")
+                logger.info("Projet %s abandonné (annulation demandée)", project_id)
+                continue
+
+            if not is_disk_sufficient():
+                # Le disque bloque toute la file : inutile d'examiner la suite.
+                await _set_disk_wait_message(project_id, format_disk_wait_message())
+                deferred.append((project_key, float(score)))
+                break
+
+            if not await try_claim_project(project_id, channel_id):
+                project_status = await _project_status(project_id)
+                if project_status != "queued":
+                    await _abandon_dequeued_task(project_key, project_id, reason="status")
+                    logger.info(
+                        "Projet %s abandonné après échec claim (status=%s)",
+                        project_id,
+                        project_status,
+                    )
+                    continue
+                deferred.append((project_key, float(score)))
+                continue
+
+            await _clear_blocked_reason(project_id)
+            await queue.client.delete(_payload_key(project_key))
+            logger.info("Projet %s claimé depuis la file (score=%s)", project_id, score)
+            return DequeueResult(payload=payload, all_blocked=False)
+    finally:
+        for project_key, score in deferred:
+            await reenqueue_with_same_score(uuid.UUID(project_key), score)
+
+    return DequeueResult(payload=None, all_blocked=bool(deferred))

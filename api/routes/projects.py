@@ -185,15 +185,15 @@ async def get_project_queue_status(
 ) -> PipelineQueueStatusResponse:
     await get_user_project(db, project_id, current_user)
     try:
-        status = await get_queue_status(project_id)
+        queue_status = await get_queue_status(project_id)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     return PipelineQueueStatusResponse(
-        position=status.position,
-        queue_length=status.queue_length,
-        priority=status.priority,
-        queued_at=status.queued_at,
-        blocked_reason=status.blocked_reason,
+        position=queue_status.position,
+        queue_length=queue_status.queue_length,
+        priority=queue_status.priority,
+        queued_at=queue_status.queued_at,
+        blocked_reason=queue_status.blocked_reason,
     )
 
 
@@ -244,10 +244,17 @@ async def publish_project(
     current_user: User = Depends(get_current_user),
 ) -> dict:
     project = await get_user_project(db, project_id, current_user)
+    if project.status != "approved":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Le projet n'est pas approuvé")
 
+    # Studio exporte un Video `short_<plateforme>` par plateforme activée.
     video_result = await db.execute(
         select(Video)
-        .where(Video.project_id == project_id, Video.status == "approved")
+        .where(
+            Video.project_id == project_id,
+            Video.video_type == f"short_{body.platform}",
+            Video.file_purged_at.is_(None),
+        )
         .order_by(Video.created_at.desc())
         .limit(1)
     )
@@ -255,7 +262,19 @@ async def publish_project(
     if not video:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Aucune vidéo approuvée pour ce projet",
+            detail=f"Aucune vidéo {body.platform} pour ce projet",
+        )
+    already = await db.execute(
+        select(Publication.id).where(
+            Publication.video_id == video.id,
+            Publication.platform == body.platform,
+            Publication.status.in_(("scheduled", "publishing", "published")),
+        )
+    )
+    if already.first():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Publication {body.platform} déjà planifiée ou publiée",
         )
 
     pub = Publication(

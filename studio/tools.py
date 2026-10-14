@@ -104,6 +104,8 @@ async def _synthesize(
     from agent.skills.audio.tts import generate_tts
     from studio.voicefx import combine_offset, concat_wavs
 
+    if not segments:
+        raise ValueError("texte vide : rien à synthétiser")
     parts: list[Path] = []
     try:
         for i, (seg_text, opts) in enumerate(segments):
