@@ -57,10 +57,6 @@ class OnboardingInstagramRequest(BaseModel):
     instagram_profile: dict[str, Any] | None = None
 
 
-class OnboardingCompleteRequest(BaseModel):
-    market_analysis_id: UUID | None = None
-
-
 class YouTubeOAuthUrlResponse(BaseModel):
     authorization_url: str
     state: str
@@ -228,7 +224,6 @@ class CriticReportResponse(BaseModel):
     global_score: int | None
     feedback: dict | None
     requested_changes: list | None
-    video_analysis: dict | None = None
     created_at: datetime
 
 

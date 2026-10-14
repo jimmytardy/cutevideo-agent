@@ -4,7 +4,7 @@ import uuid
 from collections.abc import AsyncGenerator
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, String, Integer, Float, Boolean, BigInteger, Text, UniqueConstraint, func
+from sqlalchemy import ForeignKey, String, Integer, Float, Boolean, BigInteger, Numeric, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP, UUID
 
 TIMESTAMPTZ = TIMESTAMP(timezone=True)
@@ -138,7 +138,7 @@ class Channel(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True
     )
-    slug: Mapped[str] = mapped_column(String, nullable=False)
+    slug: Mapped[str] = mapped_column(String, nullable=False, index=True)
     name: Mapped[str] = mapped_column(String, nullable=False)
     theme_category: Mapped[str] = mapped_column(String, nullable=False)
     niche_prompt: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -173,12 +173,12 @@ class Project(Base):
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     channel_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("channels.id"), nullable=False
+        UUID(as_uuid=True), ForeignKey("channels.id"), nullable=False, index=True
     )
     theme: Mapped[str] = mapped_column(String, nullable=False)
     title: Mapped[str | None] = mapped_column(String, nullable=True)
     target_duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    status: Mapped[str] = mapped_column(String, default="pending")
+    status: Mapped[str] = mapped_column(String, default="pending", index=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -195,77 +195,12 @@ class Scenario(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False
+    )
     segments: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     total_duration_s: Mapped[int | None] = mapped_column(Integer, nullable=True)
     iteration: Mapped[int] = mapped_column(Integer, default=1)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMPTZ, server_default=func.now()
-    )
-
-
-class MediaAsset(Base):
-    __tablename__ = "media_assets"
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    segment_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    source: Mapped[str | None] = mapped_column(String, nullable=True)
-    source_url: Mapped[str | None] = mapped_column(String, nullable=True)
-    local_path: Mapped[str | None] = mapped_column(String, nullable=True)
-    license: Mapped[str | None] = mapped_column(String, nullable=True)
-    attribution: Mapped[str | None] = mapped_column(String, nullable=True)
-    author: Mapped[str | None] = mapped_column(String, nullable=True)
-    requires_attribution: Mapped[bool] = mapped_column(Boolean, default=False)
-    asset_type: Mapped[str | None] = mapped_column(String, nullable=True)
-    selected: Mapped[bool] = mapped_column(Boolean, default=False)
-    relevance_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    relevance_reason: Mapped[str | None] = mapped_column(String, nullable=True)
-    beat_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    library_status: Mapped[str] = mapped_column(String, default="selected")
-    generation_prompt: Mapped[str | None] = mapped_column(String, nullable=True)
-    visual_type: Mapped[str | None] = mapped_column(String, nullable=True)
-    iteration: Mapped[int] = mapped_column(Integer, default=1)
-    duration_s: Mapped[float | None] = mapped_column(Float, nullable=True)
-    clip_metadata: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    perception: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    file_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMPTZ, server_default=func.now()
-    )
-
-
-class MontagePlan(Base):
-    __tablename__ = "montage_plans"
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    iteration: Mapped[int] = mapped_column(Integer, default=1)
-    plan_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMPTZ, server_default=func.now()
-    )
-
-
-class AudioFile(Base):
-    __tablename__ = "audio_files"
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    iteration: Mapped[int] = mapped_column(Integer, default=1)
-    segment_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    local_path: Mapped[str | None] = mapped_column(String, nullable=True)
-    duration_s: Mapped[float | None] = mapped_column(Float, nullable=True)
-    tts_engine: Mapped[str | None] = mapped_column(String, nullable=True)
-    voice: Mapped[str | None] = mapped_column(String, nullable=True)
-    transcript: Mapped[str | None] = mapped_column(String, nullable=True)
-    word_timestamps: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMPTZ, server_default=func.now()
     )
@@ -277,7 +212,9 @@ class Video(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False, index=True
+    )
     video_type: Mapped[str | None] = mapped_column(String, nullable=True)
     local_path: Mapped[str | None] = mapped_column(String, nullable=True)
     storage_key: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -297,13 +234,14 @@ class CriticReport(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    video_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    video_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("videos.id"), nullable=False
+    )
     iteration: Mapped[int | None] = mapped_column(Integer, nullable=True)
     decision: Mapped[str | None] = mapped_column(String, nullable=True)
     global_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     feedback: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     requested_changes: Mapped[list | None] = mapped_column(JSONB, nullable=True)
-    video_analysis: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMPTZ, server_default=func.now()
     )
@@ -315,8 +253,10 @@ class AgentRun(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    agent_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False, index=True
+    )
+    agent_name: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
     status: Mapped[str | None] = mapped_column(String, nullable=True)
     iteration: Mapped[int] = mapped_column(Integer, default=1)
     input_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
@@ -324,7 +264,7 @@ class AgentRun(Base):
     error: Mapped[str | None] = mapped_column(String, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
     ended_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
-    cost_estimate_usd: Mapped[float | None] = mapped_column(nullable=True)
+    cost_estimate_usd: Mapped[float | None] = mapped_column(Numeric(10, 6, asdecimal=False), nullable=True)
     llm_input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     llm_output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     llm_model: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -336,7 +276,9 @@ class Publication(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    video_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    video_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("videos.id"), nullable=False
+    )
     channel_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("channels.id"), nullable=True
     )
@@ -352,45 +294,6 @@ class Publication(Base):
     status: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
-class Analytics(Base):
-    __tablename__ = "analytics"
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    publication_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    views: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    likes: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    comments: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    shares: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    watch_time_seconds: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    retention_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
-    revenue_eur: Mapped[float | None] = mapped_column(Float, nullable=True)
-    raw_metrics: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    fetched_at: Mapped[datetime] = mapped_column(
-        TIMESTAMPTZ, server_default=func.now()
-    )
-
-
-class ChannelLearningContext(Base):
-    """Contexte d'apprentissage évolutif par chaîne (analytics + commentaires)."""
-
-    __tablename__ = "channel_learning_context"
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    channel_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("channels.id"), unique=True, nullable=False
-    )
-    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
-    insights: Mapped[list | None] = mapped_column(JSONB, nullable=True)
-    version: Mapped[int] = mapped_column(Integer, default=1)
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
-    )
-
-
 class SchedulerRun(Base):
     __tablename__ = "scheduler_runs"
 
@@ -403,48 +306,3 @@ class SchedulerRun(Base):
     ended_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
     result_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-
-class MarketAnalysis(Base):
-    __tablename__ = "market_analyses"
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True
-    )
-    prompt: Mapped[str] = mapped_column(Text, nullable=False)
-    saturation_verdict: Mapped[str | None] = mapped_column(String, nullable=True)
-    market_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
-    platforms_analyzed: Mapped[list | None] = mapped_column(JSONB, nullable=True)
-    report: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMPTZ, server_default=func.now()
-    )
-
-
-class PlatformComment(Base):
-    __tablename__ = "platform_comments"
-    __table_args__ = (
-        UniqueConstraint("platform", "platform_comment_id", name="uq_platform_comment"),
-    )
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    publication_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("publications.id"), nullable=False
-    )
-    platform: Mapped[str] = mapped_column(String, nullable=False)
-    platform_comment_id: Mapped[str] = mapped_column(String, nullable=False)
-    author_name: Mapped[str | None] = mapped_column(String, nullable=True)
-    text: Mapped[str] = mapped_column(Text, nullable=False)
-    published_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
-    status: Mapped[str] = mapped_column(String, default="new")
-    reply_text: Mapped[str | None] = mapped_column(Text, nullable=True)
-    replied_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
-    analysis: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMPTZ, server_default=func.now()
-    )

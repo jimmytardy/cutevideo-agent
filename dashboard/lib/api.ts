@@ -216,7 +216,6 @@ export interface CriticReport {
   global_score: number | null
   feedback: Record<string, unknown> | null
   requested_changes: Array<Record<string, string>> | null
-  video_analysis: Record<string, unknown> | null
   created_at: string
 }
 

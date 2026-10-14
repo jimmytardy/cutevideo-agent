@@ -14,14 +14,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from agent.core.auth import create_oauth_state, decode_oauth_state
 from agent.core.channel_brand import ChannelBrandKit, YouTubeBrand
 from agent.core.config import settings
-from agent.core.database import Channel, MarketAnalysis, User, get_db
+from agent.core.database import Channel, User, get_db
 from agent.core.subscription import QuotaExceededError, check_can_create_channel
 from agent.skills.publisher import youtube_branding
 from api.authorization import get_user_channel
 from api.deps import get_current_user
 from api.models import (
     ChannelResponse,
-    OnboardingCompleteRequest,
     OnboardingDraftRequest,
     OnboardingInstagramRequest,
     OnboardingTikTokRequest,
@@ -313,7 +312,6 @@ async def patch_onboarding_instagram(
 @router.post("/{channel_id}/onboarding/complete", response_model=ChannelResponse)
 async def complete_onboarding(
     channel_id: uuid.UUID,
-    body: OnboardingCompleteRequest | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Channel:
@@ -332,26 +330,6 @@ async def complete_onboarding(
                 else:
                     existing[key] = val
         channel.config = existing
-    if body and body.market_analysis_id:
-        ma_result = await db.execute(
-            select(MarketAnalysis).where(
-                MarketAnalysis.id == body.market_analysis_id,
-                MarketAnalysis.user_id == current_user.id,
-            )
-        )
-        market_row = ma_result.scalar_one_or_none()
-        if market_row and isinstance(market_row.report, dict):
-            report = market_row.report
-            cfg = channel.config or {}
-            cfg["market_research"] = {
-                "top_competitors": report.get("top_competitors", []),
-                "captured_at": market_row.created_at.isoformat()
-                if market_row.created_at
-                else None,
-                "market_analysis_id": str(market_row.id),
-            }
-            channel.config = cfg
-
     channel.onboarding_step = "complete"
     channel.is_active = True
     await db.commit()
