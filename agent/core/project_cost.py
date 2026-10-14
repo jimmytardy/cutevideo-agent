@@ -94,12 +94,11 @@ async def project_cost_breakdown(
     async with AsyncSessionFactory() as session:
         project = await session.get(Project, project_id)
         stop_reason: StopReason = "unknown"
+        studio: dict = {}
         if project and isinstance(project.config, dict):
-            summary = project.config.get("cost_summary") or {}
-            if isinstance(summary, dict):
-                raw_reason = summary.get("stop_reason")
-                if raw_reason in ("approved", "max_iterations", "cost_cap"):
-                    stop_reason = raw_reason  # type: ignore[assignment]
+            studio = project.config.get("claude_studio") or {}
+            if studio.get("status") in ("approved", "max_iterations"):
+                stop_reason = studio["status"]
 
         result = await session.execute(
             select(AgentRun)
@@ -141,6 +140,14 @@ async def project_cost_breakdown(
             first_start = run.started_at
         if run.ended_at and (last_end is None or run.ended_at > last_end):
             last_end = run.ended_at
+
+    # Claude Code ne rapporte que le coût total de la session (pas par sous-agent).
+    session_usd = float(studio.get("cost_usd") or 0.0)
+    if session_usd and not total_usd:
+        total_usd = session_usd
+        by_agent_map["claude_studio"] = AgentCostRow(
+            agent_name="claude_studio", usd=round(session_usd, 6), input_tokens=0, output_tokens=0
+        )
 
     elapsed_s = 0.0
     if first_start and last_end:

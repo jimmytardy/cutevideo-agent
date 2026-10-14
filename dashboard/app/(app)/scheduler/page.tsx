@@ -17,7 +17,7 @@ import Typography from '@mui/material/Typography'
 import Alert from '@mui/material/Alert'
 import AdminGuard from '@/components/AdminGuard'
 import { PageContainer, PageHeader, PageSection, LoadingState } from '@/components/layout'
-import { fetcher } from '@/lib/api'
+import { fetcher, setSchedulerRunning, triggerSchedulerJob } from '@/lib/api'
 
 interface JobInfo {
   id: string
@@ -74,10 +74,10 @@ export default function SchedulerPage() {
   const triggerJob = async (job: JobInfo) => {
     setLaunching(job.id)
     try {
-      const res = await fetch(`/api/v1/scheduler/jobs/${job.id}/run`, { method: 'POST' })
-      if (!res.ok) {
-        const body = await res.json().catch(() => null)
-        setToast(`Échec du lancement de « ${job.name} » : ${body?.detail ?? res.statusText}`)
+      try {
+        await triggerSchedulerJob(job.id)
+      } catch (e) {
+        setToast(`Échec du lancement de « ${job.name} » : ${e instanceof Error ? e.message : String(e)}`)
         return
       }
       setToast(`« ${job.name} » lancé — suivez sa progression dans l'historique ci-dessous.`)
@@ -88,7 +88,11 @@ export default function SchedulerPage() {
   }
 
   const toggleScheduler = async (action: 'start' | 'stop') => {
-    await fetch(`/api/v1/scheduler/${action}`, { method: 'POST' })
+    try {
+      await setSchedulerRunning(action)
+    } catch (e) {
+      setToast(`Échec : ${e instanceof Error ? e.message : String(e)}`)
+    }
     await mutateStatus()
   }
 

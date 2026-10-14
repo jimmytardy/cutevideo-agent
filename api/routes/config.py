@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api/v1/config", tags=["config"])
 
 
 @router.get("/agent")
-async def get_agent_config() -> dict[str, Any]:
+async def get_agent_config(_: User = Depends(require_admin_user)) -> dict[str, Any]:
     """Retourne la configuration courante des agents."""
     path = Path(settings.config_path)
     if not path.exists():

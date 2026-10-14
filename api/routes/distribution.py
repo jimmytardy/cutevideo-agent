@@ -9,14 +9,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from agent.agents.distribution_agent import DistributionAgent
 from agent.core.database import Channel, Publication, User, get_db
 from api.authorization import channel_owner_clause
-from api.deps import get_current_user
+from api.deps import get_current_user, require_admin_user
 from api.models import PublicationResponse
 
 router = APIRouter(prefix="/api/v1/distribution", tags=["distribution"])
 
 
 @router.post("/run", status_code=status.HTTP_202_ACCEPTED)
-async def run_distribution() -> dict:
+async def run_distribution(_: User = Depends(require_admin_user)) -> dict:
     """Déclenche planification + publication des créneaux dus."""
     return await DistributionAgent().run_scheduled()
 

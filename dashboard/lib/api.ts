@@ -690,6 +690,22 @@ export async function fetchUpcomingJobs(): Promise<SchedulerJob[]> {
   return fetcher(`${BASE}/scheduler/upcoming`)
 }
 
+export async function triggerSchedulerJob(jobId: string): Promise<void> {
+  await apiJson(`${BASE}/scheduler/jobs/${encodeURIComponent(jobId)}/run`, { method: 'POST' })
+}
+
+export async function setSchedulerRunning(action: 'start' | 'stop'): Promise<void> {
+  await apiJson(`${BASE}/scheduler/${action}`, { method: 'POST' })
+}
+
+export async function saveAgentConfig(config: unknown): Promise<void> {
+  await apiJson(`${BASE}/config/agent`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config),
+  })
+}
+
 export async function fetchProjectsByStatus(status: string, limit = 20): Promise<Project[]> {
   return fetcher(`${BASE}/projects?status=${encodeURIComponent(status)}&limit=${limit}`)
 }

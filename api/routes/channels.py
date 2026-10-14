@@ -378,11 +378,3 @@ async def get_runway_status(
         "cost_per_clip_usd": round(runway_cfg.default_duration_s * runway_cfg.cost_per_second_usd, 2),
     }
 
-
-async def _get_channel_or_404(db: AsyncSession, channel_id: uuid.UUID) -> Channel:
-    """Compatibilité modules externes (cost, onboarding) — préférer get_user_channel."""
-    result = await db.execute(select(Channel).where(Channel.id == channel_id))
-    channel = result.scalar_one_or_none()
-    if not channel:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chaîne introuvable")
-    return channel

@@ -11,7 +11,7 @@ from agent.agents.content_planner_agent import ContentPlannerAgent
 from agent.core.content_plan_models import DailyContentPlan
 from agent.core.database import User, get_db
 from api.authorization import get_user_channel
-from api.deps import get_current_user
+from api.deps import get_current_user, require_admin_user
 
 router = APIRouter(prefix="/api/v1/content-planning", tags=["content-planning"])
 
@@ -29,7 +29,9 @@ class ChannelPlanResponse(BaseModel):
 
 
 @router.post("/run", response_model=ContentPlanRunResponse, status_code=status.HTTP_202_ACCEPTED)
-async def run_content_planning_all() -> ContentPlanRunResponse:
+async def run_content_planning_all(
+    _: User = Depends(require_admin_user),
+) -> ContentPlanRunResponse:
     """Planifie les sujets du jour pour toutes les chaînes actives."""
     result = await ContentPlannerAgent().run_scheduled()
     return ContentPlanRunResponse(**result)

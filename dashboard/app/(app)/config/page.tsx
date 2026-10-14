@@ -10,14 +10,14 @@ import Alert from '@mui/material/Alert'
 import CircularProgress from '@mui/material/CircularProgress'
 import AdminGuard from '@/components/AdminGuard'
 import { PageContainer, PageHeader, LoadingState } from '@/components/layout'
-import { fetcher } from '@/lib/api'
+import { fetcher, saveAgentConfig } from '@/lib/api'
 
 export default function ConfigPage() {
   const { data, isLoading, mutate } = useSWR('/api/v1/config/agent', fetcher)
   const [value, setValue] = useState('')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
-  const [jsonError, setJsonError] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     if (data) setValue(JSON.stringify(data, null, 2))
@@ -25,19 +25,22 @@ export default function ConfigPage() {
 
   const handleSave = async () => {
     setSaving(true)
-    setJsonError(null)
+    setError(null)
+    let parsed: unknown
     try {
-      const parsed = JSON.parse(value)
-      await fetch('/api/v1/config/agent', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(parsed),
-      })
+      parsed = JSON.parse(value)
+    } catch {
+      setError('JSON invalide — vérifiez la syntaxe.')
+      setSaving(false)
+      return
+    }
+    try {
+      await saveAgentConfig(parsed)
       await mutate()
       setSaved(true)
       setTimeout(() => setSaved(false), 3000)
-    } catch {
-      setJsonError('JSON invalide — vérifiez la syntaxe.')
+    } catch (e) {
+      setError(`Échec de la sauvegarde : ${e instanceof Error ? e.message : String(e)}`)
     } finally {
       setSaving(false)
     }
@@ -51,7 +54,7 @@ export default function ConfigPage() {
           description="Éditez la configuration globale des agents (réservé aux administrateurs)."
         />
         {saved && <Alert severity="success" sx={{ mb: 2 }}>Configuration sauvegardée</Alert>}
-        {jsonError && <Alert severity="error" sx={{ mb: 2 }}>{jsonError}</Alert>}
+        {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
         <Card>
           <CardContent>
             {isLoading ? (

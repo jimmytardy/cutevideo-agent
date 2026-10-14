@@ -332,18 +332,31 @@ def _resolve_gemini_tts(tts: dict[str, Any]) -> GeminiTtsConfig:
     )
 
 
+DEFAULT_EDGE_VOICE = "fr-FR-RemyMultilingualNeural"
+
+
 def _normalize_tts_engine(raw: str) -> TtsEngine:
     engine = str(raw or "azure").strip().lower()
+    if engine == "edge":  # nom court utilisé par les plafonds d'abonnement et `studio.tools tts`
+        return "edge-tts"
     if engine in ("azure", "gemini", "edge-tts"):
         return engine  # type: ignore[return-value]
     return "azure"
 
 
-def _parse_tts_format_profile(raw: dict[str, Any] | None, *, fallback_engine: str, fallback_voice: str) -> TtsFormatProfile:
+def _parse_tts_format_profile(
+    raw: dict[str, Any] | None,
+    *,
+    fallback_engine: str,
+    fallback_voice: str,
+    edge_voice: str = DEFAULT_EDGE_VOICE,
+) -> TtsFormatProfile:
     if not isinstance(raw, dict):
-        return TtsFormatProfile(engine=_normalize_tts_engine(fallback_engine), voice=fallback_voice)
+        raw = {}
     engine = _normalize_tts_engine(str(raw.get("engine", fallback_engine)))
-    voice = str(raw.get("voice", fallback_voice))
+    voice = str(raw.get("voice") or fallback_voice)
+    if engine == "edge-tts" and ":" in voice:  # voix Azure HD (`…:DragonHDLatestNeural`) inconnue d'edge-tts
+        voice = edge_voice
     return TtsFormatProfile(engine=engine, voice=voice)
 
 
@@ -354,10 +367,10 @@ def _resolve_tts_format_profiles(
     """Profils voix short/long — compat legacy engine/voice + gemini.apply_to."""
     default_engine = str(tts.get("engine", "azure"))
     default_voice = str(tts.get("voice", "fr-FR-Vivienne:DragonHDLatestNeural"))
+    edge_voice = str(tts.get("fallback_voice") or DEFAULT_EDGE_VOICE)
     gemini_profile = TtsFormatProfile(engine="gemini", voice=gemini_tts.voice)
-    default_profile = TtsFormatProfile(
-        engine=_normalize_tts_engine(default_engine),
-        voice=default_voice,
+    default_profile = _parse_tts_format_profile(
+        None, fallback_engine=default_engine, fallback_voice=default_voice, edge_voice=edge_voice
     )
 
     short_raw = tts.get("short")
@@ -368,11 +381,13 @@ def _resolve_tts_format_profiles(
                 short_raw if isinstance(short_raw, dict) else None,
                 fallback_engine=default_engine,
                 fallback_voice=default_voice,
+                edge_voice=edge_voice,
             ),
             _parse_tts_format_profile(
                 long_raw if isinstance(long_raw, dict) else None,
                 fallback_engine=default_engine,
                 fallback_voice=default_voice,
+                edge_voice=edge_voice,
             ),
         )
 

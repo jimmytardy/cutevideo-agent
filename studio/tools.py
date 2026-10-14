@@ -36,6 +36,20 @@ def _inside(run_dir: Path, rel: str) -> Path:
     return path
 
 
+def _read_brief(run_dir: Path) -> dict[str, Any]:
+    try:
+        data = json.loads((run_dir / "brief.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _engine_key(engine: object) -> str:
+    """Nom de moteur TTS de la chaîne de repli (`edge-tts` → `edge`)."""
+    name = str(engine or "").strip().lower()
+    return "edge" if name == "edge-tts" else name
+
+
 # ── commandes ─────────────────────────────────────────────────────────────
 
 
@@ -74,18 +88,24 @@ async def cmd_tts(args: argparse.Namespace, run_dir: Path) -> Any:
     text = _inside(run_dir, args.text_file).read_text(encoding="utf-8").strip()
     if not text:
         raise ValueError(f"{args.text_file} est vide")
-    short_cfg = load_agent_config().get("tts", {}).get("short", {})
     out = _inside(run_dir, args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     tts_cfg = load_agent_config().get("tts", {})
-    primary = args.engine or short_cfg.get("engine") or "azure"
+    short_cfg = tts_cfg.get("short", {})
+    # Moteur/voix de la chaîne (résolus avec les plafonds d'abonnement dans `brief.json`),
+    # sinon défauts globaux.
+    brief = _read_brief(run_dir)
+    brief_engine = _engine_key(brief.get("tts_engine"))
+    primary = _engine_key(args.engine) or brief_engine or _engine_key(short_cfg.get("engine")) or "azure"
     # Chaîne de repli : moteur demandé → Gemini → edge-tts (gratuit, sans clé).
     chain = [primary] + [e for e in ("gemini", "edge") if e != primary]
     voices = {
         "azure": short_cfg.get("voice", "fr-FR-Vivienne:DragonHDLatestNeural"),
         "gemini": tts_cfg.get("gemini", {}).get("voice", "Leda"),
-        "edge": tts_cfg.get("fallback_voice", "fr-FR-DeniseNeural"),
+        "edge": tts_cfg.get("fallback_voice", "fr-FR-RemyMultilingualNeural"),
     }
+    if brief_engine and brief.get("voice"):
+        voices[brief_engine] = str(brief["voice"])
     from studio.voicefx import combine_offset, concat_wavs, has_emphasis, parse_emphasis
 
     # Emphase par ligne (`[rate=+12% pitch=+4Hz] Nous !`) : chaque ligne est synthétisée avec ses réglages

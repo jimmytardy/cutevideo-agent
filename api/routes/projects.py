@@ -41,10 +41,6 @@ from api.models import (
 router = APIRouter(prefix="/api/v1/projects", tags=["projects"])
 
 
-async def _owned_project(db: AsyncSession, project_id: uuid.UUID, user: User) -> Project:
-    return await get_user_project(db, project_id, user)
-
-
 def _project_response(project: Project, channel_name: str | None = None) -> ProjectResponse:
     config = project.config or {}
     queued_at_raw = config.get("queued_at")
@@ -163,7 +159,10 @@ async def create_project(
 async def check_topic_similarity(
     channel_id: uuid.UUID = Query(...),
     theme: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> dict:
+    await get_user_channel(db, channel_id, current_user)
     from agent.scheduler.content_planning import load_topic_history
     from agent.skills.content_planning.heuristic_planner import find_similar_in_history
     history = await load_topic_history(channel_id)
@@ -244,8 +243,11 @@ async def run_pipeline(
 
 @router.get("/{project_id}/videos", response_model=list[VideoResponse])
 async def list_project_videos(
-    project_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> list[VideoResponse]:
+    await get_user_project(db, project_id, current_user)
     result = await db.execute(
         select(Video).where(Video.project_id == project_id).order_by(Video.created_at.desc())
     )
@@ -282,7 +284,9 @@ async def stream_video(
 
 @router.get("/{project_id}/final-preview", response_model=FinalPreviewResponse)
 async def get_final_preview(
-    project_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> FinalPreviewResponse:
     from agent.core.final_preview import (
         build_duration_warnings,
@@ -291,10 +295,7 @@ async def get_final_preview(
     )
     from agent.core.channel_config import resolve_channel_config
 
-    project_result = await db.execute(select(Project).where(Project.id == project_id))
-    project = project_result.scalar_one_or_none()
-    if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Projet introuvable")
+    project = await get_user_project(db, project_id, current_user)
 
     video = await resolve_preview_video(db, project_id)
     if video is None:
@@ -338,12 +339,12 @@ async def get_final_preview(
 
 @router.post("/{project_id}/publish", status_code=status.HTTP_202_ACCEPTED)
 async def publish_project(
-    project_id: uuid.UUID, body: PublishRequest, db: AsyncSession = Depends(get_db)
+    project_id: uuid.UUID,
+    body: PublishRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> dict:
-    proj_result = await db.execute(select(Project).where(Project.id == project_id))
-    project = proj_result.scalar_one_or_none()
-    if not project:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Projet introuvable")
+    project = await get_user_project(db, project_id, current_user)
 
     video_result = await db.execute(
         select(Video)
@@ -363,7 +364,7 @@ async def publish_project(
         channel_id=project.channel_id,
         platform=body.platform,
         status="scheduled",
-        scheduled_at=__import__("datetime").datetime.now(timezone.utc),
+        scheduled_at=datetime.now(timezone.utc),
     )
     db.add(pub)
     await db.commit()
@@ -372,8 +373,11 @@ async def publish_project(
 
 @router.get("/{project_id}/critic-reports", response_model=list[CriticReportResponse])
 async def list_critic_reports(
-    project_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> list[CriticReportResponse]:
+    await get_user_project(db, project_id, current_user)
     result = await db.execute(
         select(CriticReport)
         .join(Video, Video.id == CriticReport.video_id)
@@ -428,7 +432,7 @@ async def stop_pipeline(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> dict:
-    project = await _owned_project(db, project_id, current_user)
+    project = await get_user_project(db, project_id, current_user)
     if project.status == "queued" or await is_queued(project_id):
         removed = await dequeue_pipeline(project_id)
         if not removed:
@@ -454,11 +458,12 @@ async def stop_pipeline(
 
 
 @router.post("/{project_id}/restart", status_code=status.HTTP_202_ACCEPTED)
-async def restart_pipeline(project_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> dict:
-    result = await db.execute(select(Project).where(Project.id == project_id))
-    project = result.scalar_one_or_none()
-    if not project:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Projet introuvable")
+async def restart_pipeline(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    project = await get_user_project(db, project_id, current_user)
     await _ensure_enqueue_allowed(project)
 
     try:
@@ -513,7 +518,9 @@ async def get_project_scenario(
     project_id: uuid.UUID,
     scenario_id: uuid.UUID | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> ScenarioResponse | None:
+    await get_user_project(db, project_id, current_user)
     resolved_id = scenario_id
     if resolved_id is not None:
         row = await db.get(Scenario, resolved_id)
@@ -533,11 +540,11 @@ async def get_project_scenario(
 
 @router.get("/{project_id}/metadata", response_model=ProjectMetadataResponse | None)
 async def get_project_metadata(
-    project_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> ProjectMetadataResponse | None:
-    project = await db.get(Project, project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Projet introuvable")
+    project = await get_user_project(db, project_id, current_user)
     metadata = (project.config or {}).get("youtube_metadata")
     if not metadata or not isinstance(metadata, dict):
         return None
@@ -546,11 +553,11 @@ async def get_project_metadata(
 
 @router.get("/{project_id}/thumbnails", response_model=list[ThumbnailCandidateResponse])
 async def get_project_thumbnails(
-    project_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> list[ThumbnailCandidateResponse]:
-    project = await db.get(Project, project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Projet introuvable")
+    project = await get_user_project(db, project_id, current_user)
     raw = (project.config or {}).get("thumbnail_candidates")
     if not isinstance(raw, list):
         return []
@@ -564,10 +571,7 @@ async def stream_project_thumbnail(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> FileResponse:
-    await get_user_project(db, project_id, current_user)
-    project = await db.get(Project, project_id)
-    if not project:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Projet introuvable")
+    project = await get_user_project(db, project_id, current_user)
     raw = (project.config or {}).get("thumbnail_candidates")
     if not isinstance(raw, list) or index < 0 or index >= len(raw):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Miniature introuvable")
@@ -604,10 +608,9 @@ def _progress_item(data: AgentProgressData) -> AgentProgressItem:
 async def get_project_pipeline_progress(
     project_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> PipelineProgressResponse:
-    project = await db.get(Project, project_id)
-    if not project:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Projet introuvable")
+    await get_user_project(db, project_id, current_user)
     try:
         snapshot = await compute_pipeline_progress(db, project_id)
     except ValueError as exc:
@@ -638,7 +641,7 @@ async def delete_project(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> None:
-    project = await _owned_project(db, project_id, current_user)
+    project = await get_user_project(db, project_id, current_user)
     if project.status == "running":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Impossible de supprimer un projet en cours d'exécution")
     # Retirer le projet de la file Redis avant suppression, sinon son entrée

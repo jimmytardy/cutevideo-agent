@@ -107,6 +107,12 @@ async def get_user_subscription_limits(
     return await resolve_user_limits(session, user)
 
 
+def _tts_engine_key(engine: object) -> str:
+    """`edge` et `edge-tts` désignent le même moteur."""
+    name = str(engine or "").strip().lower()
+    return "edge" if name == "edge-tts" else name
+
+
 def apply_subscription_caps(
     channel_config_dict: dict,
     limits: SubscriptionLimits,
@@ -154,9 +160,16 @@ def apply_subscription_caps(
     out["content_planning"] = content_planning
 
     tts = dict(out.get("tts") or {})
-    engine = str(tts.get("engine", "edge"))
-    if engine not in limits.tts_allowed_engines:
+    allowed = {_tts_engine_key(e) for e in limits.tts_allowed_engines}
+    if _tts_engine_key(tts.get("engine", "edge")) not in allowed:
         tts["engine"] = limits.tts_allowed_engines[0]
+    # Le brief Studio lit le profil `tts.short` : le plafond doit s'y appliquer aussi.
+    for profile_key in ("short", "long"):
+        profile = tts.get(profile_key)
+        if isinstance(profile, dict) and _tts_engine_key(profile.get("engine", "")) not in allowed:
+            tts[profile_key] = {
+                k: v for k, v in profile.items() if k != "voice"
+            } | {"engine": limits.tts_allowed_engines[0]}
     if "gemini" not in limits.tts_allowed_engines:
         gemini = dict(tts.get("gemini") or {})
         gemini["apply_to"] = "off"

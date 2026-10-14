@@ -1,52 +1,29 @@
+"""Déclaration « contenu altéré ou synthétique » (YouTube) d'un projet Studio."""
+
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
-from sqlalchemy import select
+from agent.core.database import AsyncSessionFactory, Project
 
-from agent.core.database import AsyncSessionFactory, MediaAsset
-
-_PHOTOREALISTIC_VISUAL_TYPES = frozenset({
-    "documentary_photo",
-    "portrait_photo",
-    "news_broll",
-    "archival_footage",
-    "historical_photo",
-    "landscape_photo",
-    "wildlife_photo",
-    "sports_action",
-    "wildlife_action",
-})
+AI_IMAGE_SOURCE = "ai_image"
 
 
-def is_photorealistic_ai_asset(asset: MediaAsset) -> bool:
-    """True si asset IA sélectionné avec rendu photoréaliste."""
-    if (asset.source or "").lower() != "ai":
-        return False
-    if not asset.selected:
-        return False
-    vtype = (asset.visual_type or "").lower().strip()
-    if vtype in _PHOTOREALISTIC_VISUAL_TYPES:
-        return True
-    license_tag = (asset.license or "").lower()
-    return "synthetic" in license_tag and vtype not in (
-        "diagram",
-        "animated_text",
-        "infographic",
-        "chart",
-        "meme",
-        "illustration",
-    )
+def credits_contain_ai_media(credits: list[dict[str, Any]] | None) -> bool:
+    """Vrai si un média effectivement monté vient du générateur d'images IA.
+
+    Les crédits sont ceux du rendu final (`studio/render.py:_used_credits`),
+    persistés dans `Project.config.claude_studio.credits`. Les images IA
+    Studio (Flux) sont photoréalistes par défaut : on les déclare toujours.
+    """
+    return any(isinstance(c, dict) and c.get("source") == AI_IMAGE_SOURCE for c in credits or [])
 
 
 async def detect_realistic_synthetic_media(project_id: uuid.UUID) -> bool:
-    """Au moins un média IA photoréaliste sélectionné dans le projet."""
     async with AsyncSessionFactory() as session:
-        result = await session.execute(
-            select(MediaAsset).where(
-                MediaAsset.project_id == project_id,
-                MediaAsset.selected == True,  # noqa: E712
-            )
-        )
-        assets = list(result.scalars().all())
-    return any(is_photorealistic_ai_asset(a) for a in assets)
+        project = await session.get(Project, project_id)
+    if project is None:
+        return False
+    studio = (project.config or {}).get("claude_studio") or {}
+    return credits_contain_ai_media(studio.get("credits"))

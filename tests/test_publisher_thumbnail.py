@@ -145,3 +145,11 @@ async def test_publish_youtube_calls_set_thumbnail_with_agent_path(tmp_path: Pat
 
     set_thumb_mock.assert_awaited_once()
     assert set_thumb_mock.await_args.args[1] == thumb_file
+
+
+def test_ai_disclosure_from_used_media_credits() -> None:
+    from agent.skills.publisher.synthetic_disclosure import credits_contain_ai_media
+
+    assert credits_contain_ai_media([{"media": "media/a.png", "source": "ai_image"}])
+    assert not credits_contain_ai_media([{"media": "media/b.jpg", "source": "pexels"}])
+    assert not credits_contain_ai_media(None)

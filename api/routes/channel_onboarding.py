@@ -203,7 +203,7 @@ async def disconnect_youtube_oauth(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> dict[str, str]:
-    channel = await _get_channel_for_user(db, channel_id, current_user)
+    channel = await get_user_channel(db, channel_id, current_user)
     channel.youtube_refresh_token = None
     await db.commit()
     return {"status": "ok"}
@@ -216,7 +216,7 @@ async def patch_onboarding_youtube(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Channel:
-    channel = await _get_channel_for_user(db, channel_id, current_user)
+    channel = await get_user_channel(db, channel_id, current_user)
     channel.youtube_channel_id = body.youtube_channel_id
     if body.youtube_channel_url:
         channel.youtube_channel_url = body.youtube_channel_url
@@ -234,7 +234,7 @@ async def apply_youtube_branding(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> dict[str, str]:
-    channel = await _get_channel_for_user(db, channel_id, current_user)
+    channel = await get_user_channel(db, channel_id, current_user)
     if not channel.youtube_channel_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="youtube_channel_id manquant")
     if not channel.brand_kit or "youtube" not in channel.brand_kit:
@@ -266,7 +266,7 @@ async def skip_onboarding_step(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Channel:
-    channel = await _get_channel_for_user(db, channel_id, current_user)
+    channel = await get_user_channel(db, channel_id, current_user)
     next_step = ONBOARDING_SKIP_NEXT.get(step)
     if not next_step:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Étape invalide")
@@ -284,7 +284,7 @@ async def patch_onboarding_tiktok(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Channel:
-    channel = await _get_channel_for_user(db, channel_id, current_user)
+    channel = await get_user_channel(db, channel_id, current_user)
     if body.tiktok_publish_defaults is not None:
         channel.tiktok_publish_defaults = body.tiktok_publish_defaults
     channel.onboarding_step = "instagram"
@@ -300,7 +300,7 @@ async def patch_onboarding_instagram(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Channel:
-    channel = await _get_channel_for_user(db, channel_id, current_user)
+    channel = await get_user_channel(db, channel_id, current_user)
     channel.instagram_page_id = body.instagram_page_id
     if body.instagram_profile is not None:
         channel.instagram_profile = body.instagram_profile
@@ -317,7 +317,7 @@ async def complete_onboarding(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Channel:
-    channel = await _get_channel_for_user(db, channel_id, current_user)
+    channel = await get_user_channel(db, channel_id, current_user)
     if channel.brand_kit:
         kit = ChannelBrandKit.model_validate(channel.brand_kit)
         channel.niche_prompt = kit.niche_prompt
@@ -358,9 +358,3 @@ async def complete_onboarding(
     await db.refresh(channel)
 
     return channel
-
-
-async def _get_channel_for_user(
-    db: AsyncSession, channel_id: uuid.UUID, user: User
-) -> Channel:
-    return await get_user_channel(db, channel_id, user)
