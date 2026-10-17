@@ -106,3 +106,18 @@ async def test_saving_a_key_without_credit_is_allowed(transport) -> None:
     """Seules les clés invalides ou expirées bloquent l'enregistrement (crédit épuisé : averti, pas refusé)."""
     transport(400, {"error": {"message": "Your credit balance is too low"}})
     await v.validate_api_key("anthropic", "sk-ant-api03-x")
+
+
+@pytest.mark.asyncio
+async def test_instagram_check_targets_configured_graph_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("INSTAGRAM_GRAPH_API_VERSION", "v99.0")
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"id": "1"})
+
+    monkeypatch.setattr(v, "_transport", httpx.MockTransport(handler))
+    assert (await v.check_api_key("instagram", "tok", {"page_id": "1"})).status == "ok"
+    assert seen[0].url.host == "graph.facebook.com" and seen[0].url.path == "/v99.0/me"
+    assert seen[0].url.params["access_token"] == "tok"

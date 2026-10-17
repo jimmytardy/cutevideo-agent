@@ -40,6 +40,7 @@ from typing import Literal
 import httpx
 
 from agent.core.config import settings
+from agent.skills.publisher.graph_api import graph_api_url
 
 logger = logging.getLogger(__name__)
 
@@ -267,7 +268,7 @@ async def _check_instagram(token: str, metadata: dict) -> KeyHealth:
         return KeyHealth("invalid", "ID du compte Instagram requis (champ « page_id »).")
     async with _client() as client:
         # Forme documentée par Meta ; la valeur est masquée dans les logs httpx (agent/core/log_redaction.py).
-        resp = await client.get("https://graph.facebook.com/v19.0/me", params={"access_token": token})
+        resp = await client.get(graph_api_url("me"), params={"access_token": token})
     if resp.is_success:
         return OK
     try:

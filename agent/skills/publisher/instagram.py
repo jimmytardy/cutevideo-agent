@@ -5,9 +5,9 @@ from pathlib import Path
 
 import aiohttp
 
-logger = logging.getLogger(__name__)
+from agent.skills.publisher.graph_api import graph_api_url
 
-GRAPH_API_URL = "https://graph.facebook.com/v19.0"
+logger = logging.getLogger(__name__)
 
 
 async def upload_reel(
@@ -34,7 +34,7 @@ async def upload_reel(
 
 
 async def _create_container(video_url: str, caption: str, page_id: str, access_token: str) -> str | None:
-    url = f"{GRAPH_API_URL}/{page_id}/media"
+    url = graph_api_url(f"{page_id}/media")
     params = {
         "media_type": "REELS",
         "video_url": video_url,
@@ -42,20 +42,29 @@ async def _create_container(video_url: str, caption: str, page_id: str, access_t
         "access_token": access_token,
     }
 
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, data=params, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-            data = await resp.json()
-            return data.get("id")
+    return await _graph_post(url, params, step="création du conteneur")
 
 
 async def _publish_container(container_id: str, page_id: str, access_token: str) -> str | None:
-    url = f"{GRAPH_API_URL}/{page_id}/media_publish"
+    url = graph_api_url(f"{page_id}/media_publish")
     params = {
         "creation_id": container_id,
         "access_token": access_token,
     }
 
+    return await _graph_post(url, params, step="publication")
+
+
+async def _graph_post(url: str, params: dict[str, str], *, step: str) -> str | None:
+    """POST Graph API ; renvoie l'`id` du résultat, sinon None en journalisant l'erreur Meta (code, message)."""
     async with aiohttp.ClientSession() as session:
         async with session.post(url, data=params, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-            data = await resp.json()
-            return data.get("id")
+            data = await resp.json(content_type=None)  # Meta renvoie du JSON même en erreur ; HTML d'un 5xx toléré
+    if not isinstance(data, dict) or not data.get("id"):
+        error = (data.get("error") if isinstance(data, dict) else None) or {}
+        logger.warning(
+            "Instagram : %s refusée (HTTP %s, code %s%s) : %s", step, resp.status, error.get("code"),
+            f"/{error['error_subcode']}" if error.get("error_subcode") else "", error.get("message") or data,
+        )
+        return None
+    return str(data["id"])
