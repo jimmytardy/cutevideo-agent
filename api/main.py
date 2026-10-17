@@ -11,6 +11,7 @@ from sqlalchemy import select, text
 from agent.core.auth import decode_access_token
 from agent.core.config import settings
 from agent.core.database import AsyncSessionFactory, User
+from agent.core.log_redaction import setup_logging
 from agent.core.queue import queue
 from agent.core.pipeline_queue import prune_orphan_queue_entries
 from agent.scheduler.service import scheduler_service
@@ -33,7 +34,7 @@ from api.routes import (
     cost,
 )
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+setup_logging()
 logger = logging.getLogger(__name__)
 
 

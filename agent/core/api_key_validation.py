@@ -266,6 +266,7 @@ async def _check_instagram(token: str, metadata: dict) -> KeyHealth:
     if not str(metadata.get("page_id") or "").strip():
         return KeyHealth("invalid", "ID du compte Instagram requis (champ « page_id »).")
     async with _client() as client:
+        # Forme documentée par Meta ; la valeur est masquée dans les logs httpx (agent/core/log_redaction.py).
         resp = await client.get("https://graph.facebook.com/v19.0/me", params={"access_token": token})
     if resp.is_success:
         return OK

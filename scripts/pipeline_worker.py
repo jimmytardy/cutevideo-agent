@@ -11,6 +11,7 @@ import uuid
 import redis.exceptions
 
 from agent.core.config import get_pipeline_settings
+from agent.core.log_redaction import setup_logging
 from agent.core.orchestrator import Orchestrator
 from agent.core.pipeline_cancel import bind_project, mark_worker_shutdown, unbind_project
 from agent.core.pipeline_lease import (
@@ -24,7 +25,7 @@ from agent.core.pipeline_reconcile import reconcile_orphan_running_projects, res
 from agent.core.queue import queue
 from agent.core.subprocess_registry import kill_all
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+setup_logging()
 logger = logging.getLogger(__name__)
 
 WORKER_ID = os.environ.get("WORKER_ID", os.environ.get("HOSTNAME", "worker-1"))
