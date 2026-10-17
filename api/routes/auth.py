@@ -12,7 +12,13 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.core.auth import create_access_token, create_oauth_state, decode_oauth_state
+from agent.core.auth import (
+    MEDIA_TOKEN_MINUTES,
+    create_access_token,
+    create_media_token,
+    create_oauth_state,
+    decode_oauth_state,
+)
 from agent.core.config import settings
 from agent.core.database import SubscriptionPlan, User, get_db
 from agent.core.totp import verify_totp
@@ -46,6 +52,18 @@ class LoginUrlResponse(BaseModel):
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+
+
+class MediaTokenResponse(BaseModel):
+    media_token: str
+    expires_in: int
+
+
+@router.post("/media-token", response_model=MediaTokenResponse)
+async def issue_media_token(current_user: User = Depends(get_current_user)) -> MediaTokenResponse:
+    """Jeton court pour les URL média du dashboard (`?access_token=` des balises <video>/<img>, EventSource) :
+    accepté uniquement sur les routes de flux, jamais en en-tête ; le JWT de session ne sort plus dans une URL."""
+    return MediaTokenResponse(media_token=create_media_token(current_user.id), expires_in=MEDIA_TOKEN_MINUTES * 60)
 
 
 MIGRATION_SYSTEM_GOOGLE_SUB = "migration-system"

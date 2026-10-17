@@ -18,6 +18,7 @@ import { PageContainer, PageHeader, PageSection, LoadingState, useConfirmDialog 
 import { projectStatusLabel, projectStatusColor } from '@/lib/status'
 import StudioPipeline from '@/components/StudioPipeline'
 import FinalPreviewSection from '@/components/FinalPreviewSection'
+import { useMediaToken } from '@/lib/useMediaToken'
 import {
   fetcher,
   stopPipeline,
@@ -64,6 +65,7 @@ export default function ProjectDetailPage({ params }: Props) {
   const { data: scenario } = useSWR<Scenario | null>(`/api/v1/projects/${id}/scenario`, fetcher, refresh)
   const { data: metadata } = useSWR<ProjectMetadata | null>(`/api/v1/projects/${id}/metadata`, fetcher, refresh)
   const { data: thumbnails } = useSWR<ThumbnailCandidate[]>(`/api/v1/projects/${id}/thumbnails`, fetcher, refresh)
+  const mediaToken = useMediaToken()
 
   if (isLoading) return <LoadingState variant="page" />
   if (error || !project) return <PageContainer><Alert severity="error">Projet introuvable</Alert></PageContainer>
@@ -237,7 +239,7 @@ export default function ProjectDetailPage({ params }: Props) {
                 <Box key={index} sx={{ maxWidth: 320 }}>
                   <Box
                     component="img"
-                    src={projectThumbnailStreamUrl(id, index)}
+                    src={mediaToken ? projectThumbnailStreamUrl(id, index, mediaToken) : undefined}
                     alt={thumb.prompt ?? `Miniature ${index + 1}`}
                     sx={{ width: '100%', maxHeight: 320, objectFit: 'contain', borderRadius: 1, border: 1, borderColor: 'divider' }}
                   />

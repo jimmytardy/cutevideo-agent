@@ -3,7 +3,7 @@ from __future__ import annotations
 import secrets
 import uuid
 from datetime import datetime, timedelta, UTC
-from typing import Any
+from typing import Any, Literal
 
 from jose import JWTError, jwt
 
@@ -12,24 +12,25 @@ from agent.core.config import settings
 ALGORITHM = "HS256"
 TOKEN_TYPE_ACCESS = "access"
 TOKEN_TYPE_OAUTH_STATE = "oauth_state"
+# Jeton court pour les URL média (balises <video>/<img>, EventSource : pas d'en-tête Authorization possible) :
+# passé en `?access_token=`, accepté uniquement sur les routes de flux (api/middleware_auth.py), jamais en header.
+TOKEN_TYPE_MEDIA = "media"
+MEDIA_TOKEN_MINUTES = 15
+
+# Provenance d'un jeton dans une requête : en-tête Authorization (`access`) ou query des routes de flux (`media`).
+TokenKind = Literal["access", "media"]
+_TOKEN_TYPES: dict[str, str] = {"access": TOKEN_TYPE_ACCESS, "media": TOKEN_TYPE_MEDIA}
 
 
-def create_access_token(user_id: uuid.UUID, *, expires_minutes: int | None = None) -> str:
-    expire = datetime.now(UTC) + timedelta(
-        minutes=expires_minutes or settings.jwt_expire_minutes
-    )
-    payload = {
-        "sub": str(user_id),
-        "type": TOKEN_TYPE_ACCESS,
-        "exp": expire,
-    }
+def _create_subject_token(user_id: uuid.UUID, token_type: str, minutes: int) -> str:
+    payload = {"sub": str(user_id), "type": token_type, "exp": datetime.now(UTC) + timedelta(minutes=minutes)}
     return jwt.encode(payload, settings.jwt_secret_key, algorithm=ALGORITHM)
 
 
-def decode_access_token(token: str) -> uuid.UUID:
+def _decode_subject(token: str, expected_type: str) -> uuid.UUID:
     try:
         payload = jwt.decode(token, settings.jwt_secret_key, algorithms=[ALGORITHM])
-        if payload.get("type") != TOKEN_TYPE_ACCESS:
+        if payload.get("type") != expected_type:
             raise JWTError("Invalid token type")
         sub = payload.get("sub")
         if not sub:
@@ -37,6 +38,27 @@ def decode_access_token(token: str) -> uuid.UUID:
         return uuid.UUID(str(sub))
     except (JWTError, ValueError) as exc:
         raise ValueError("Token invalide ou expiré") from exc
+
+
+def create_access_token(user_id: uuid.UUID, *, expires_minutes: int | None = None) -> str:
+    return _create_subject_token(user_id, TOKEN_TYPE_ACCESS, expires_minutes or settings.jwt_expire_minutes)
+
+
+def decode_token(token: str, kind: TokenKind) -> uuid.UUID:
+    """Décode un jeton selon sa provenance ; un jeton d'un autre type est refusé (ValueError)."""
+    return _decode_subject(token, _TOKEN_TYPES[kind])
+
+
+def decode_access_token(token: str) -> uuid.UUID:
+    return decode_token(token, "access")
+
+
+def create_media_token(user_id: uuid.UUID) -> str:
+    return _create_subject_token(user_id, TOKEN_TYPE_MEDIA, MEDIA_TOKEN_MINUTES)
+
+
+def decode_media_token(token: str) -> uuid.UUID:
+    return decode_token(token, "media")
 
 
 def create_oauth_state(

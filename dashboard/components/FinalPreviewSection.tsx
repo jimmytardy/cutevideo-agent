@@ -8,7 +8,8 @@ import Chip from '@mui/material/Chip'
 import Alert from '@mui/material/Alert'
 import Stack from '@mui/material/Stack'
 import CircularProgress from '@mui/material/CircularProgress'
-import { authenticatedMediaUrl, fetcher, type FinalPreview } from '@/lib/api'
+import { fetcher, withMediaToken, type FinalPreview } from '@/lib/api'
+import { useMediaToken } from '@/lib/useMediaToken'
 
 const VIDEO_TYPE_LABELS: Record<string, string> = {
   long: 'Vidéo longue',
@@ -29,6 +30,7 @@ export default function FinalPreviewSection({ projectId, refreshInterval = 5000 
     fetcher,
     { refreshInterval },
   )
+  const mediaToken = useMediaToken()
 
   if (isLoading && !data) {
     return (
@@ -87,7 +89,7 @@ export default function FinalPreviewSection({ projectId, refreshInterval = 5000 
         component="video"
         controls
         sx={{ width: '100%', borderRadius: 1, maxHeight: 480, bgcolor: 'black', display: 'block' }}
-        src={data.stream_url ? authenticatedMediaUrl(data.stream_url) : undefined}
+        src={data.stream_url && mediaToken ? withMediaToken(data.stream_url, mediaToken) : undefined}
       />
 
       <Stack direction="row" spacing={1} sx={{ mt: 1.5, flexWrap: 'wrap', gap: 1 }} alignItems="center">

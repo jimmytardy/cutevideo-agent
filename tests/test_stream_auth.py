@@ -10,7 +10,7 @@ from starlette.requests import Request
 
 from agent.core.database import User
 from api.authorization import get_user_project
-from api.middleware_auth import resolve_request_auth_token
+from api.middleware_auth import is_media_stream_path, resolve_request_auth_token
 
 
 def _make_request(
@@ -34,24 +34,41 @@ def _make_request(
 
 def test_resolve_request_auth_token_prefers_bearer_header() -> None:
     request = _make_request(
-        "/api/v1/projects/x/stream",
+        "/api/v1/projects/x/studio/file",
         authorization="Bearer header-token",
         query="access_token=query-token",
     )
-    assert resolve_request_auth_token(request) == "header-token"
+    assert resolve_request_auth_token(request) == ("header-token", "access")
 
 
-def test_resolve_request_auth_token_falls_back_to_query() -> None:
-    request = _make_request(
-        "/api/v1/projects/x/stream",
-        query="access_token=query-token",
-    )
-    assert resolve_request_auth_token(request) == "query-token"
+def test_resolve_request_auth_token_accepts_media_token_in_query_on_stream_routes() -> None:
+    request = _make_request("/api/v1/projects/x/studio/file", query="path=voice.wav&access_token=query-token")
+    assert resolve_request_auth_token(request) == ("query-token", "media")
+
+
+def test_resolve_request_auth_token_refuses_query_token_outside_stream_routes() -> None:
+    request = _make_request("/api/v1/projects", query="access_token=query-token")
+    assert resolve_request_auth_token(request) is None
 
 
 def test_resolve_request_auth_token_returns_none_without_credentials() -> None:
-    request = _make_request("/api/v1/projects/x/stream")
+    request = _make_request("/api/v1/projects/x/studio/file")
     assert resolve_request_auth_token(request) is None
+
+
+@pytest.mark.parametrize("path, expected", [
+    ("/api/v1/projects/11111111-1111-1111-1111-111111111111/videos/22222222-2222-2222-2222-222222222222/stream", True),
+    ("/api/v1/projects/p/thumbnails/0/stream", True),
+    ("/api/v1/projects/p/studio/file", True),
+    ("/api/v1/agents/runs/p/r/log/stream", True),
+    ("/api/v1/projects/p/videos", False),
+    ("/api/v1/projects/p/studio/artifacts", False),
+    ("/api/v1/agents/runs/p/r/log", False),
+    ("/api/v1/auth/media-token", False),
+    ("/api/v1/projects/p/studio/file/../../me", False),
+])
+def test_is_media_stream_path(path: str, expected: bool) -> None:
+    assert is_media_stream_path(path) is expected
 
 
 @pytest.mark.asyncio

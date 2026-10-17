@@ -8,10 +8,12 @@ export function getAuthToken(): string | null {
 
 export function setAuthToken(token: string): void {
   localStorage.setItem(AUTH_TOKEN_KEY, token)
+  mediaToken = null
 }
 
 export function clearAuthToken(): void {
   localStorage.removeItem(AUTH_TOKEN_KEY)
+  mediaToken = null
 }
 
 function authHeaders(): HeadersInit {
@@ -19,10 +21,49 @@ function authHeaders(): HeadersInit {
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
-/** URL média avec JWT en query string (balises video/img ne supportent pas Authorization). */
-export function authenticatedMediaUrl(path: string): string {
-  const token = getAuthToken()
-  if (!token) return path
+// ── Jeton média ──────────────────────────────────────────────────────────
+// Les balises <video>/<audio>/<img> et EventSource ne peuvent pas envoyer d'en-tête Authorization : elles
+// reçoivent en query un jeton court dédié (POST /auth/media-token, 15 min), que l'API n'accepte que sur les
+// routes de flux. Le JWT de session, lui, ne sort jamais dans une URL.
+
+interface MediaToken {
+  token: string
+  /** Horodatage (ms) d'expiration côté client. */
+  expiresAt: number
+  /** JWT de session pour lequel ce jeton a été émis : un autre compte connecté entre-temps ne le réutilise pas. */
+  session: string | null
+}
+
+let mediaToken: MediaToken | null = null
+let mediaTokenInflight: Promise<MediaToken> | null = null
+/** Marge avant expiration à partir de laquelle un nouveau jeton est demandé. */
+export const MEDIA_TOKEN_REFRESH_MARGIN_MS = 60_000
+
+/** Jeton média courant, mis en cache pour la session en cours jusqu'à ~1 min avant son expiration
+ *  (appels concurrents dédoublonnés). */
+export async function getMediaToken(): Promise<MediaToken> {
+  const session = getAuthToken()
+  if (mediaToken && mediaToken.session === session && mediaToken.expiresAt - Date.now() > MEDIA_TOKEN_REFRESH_MARGIN_MS) {
+    return mediaToken
+  }
+  if (!mediaTokenInflight) {
+    mediaTokenInflight = apiJson<{ media_token: string; expires_in: number }>(`${API_BASE}/auth/media-token`, {
+      method: 'POST',
+    })
+      .then((data) => {
+        const fresh: MediaToken = { token: data.media_token, expiresAt: Date.now() + data.expires_in * 1000, session }
+        if (getAuthToken() === session) mediaToken = fresh // déconnexion ou changement de compte entre-temps : pas de cache
+        return fresh
+      })
+      .finally(() => {
+        mediaTokenInflight = null
+      })
+  }
+  return mediaTokenInflight
+}
+
+/** URL d'une route de flux avec le jeton média en query string. */
+export function withMediaToken(path: string, token: string): string {
   const sep = path.includes('?') ? '&' : '?'
   return `${path}${sep}access_token=${encodeURIComponent(token)}`
 }
@@ -179,8 +220,8 @@ export interface ThumbnailCandidate {
   ctr_score?: number | null
 }
 
-export function projectThumbnailStreamUrl(projectId: string, index: number): string {
-  return authenticatedMediaUrl(`/api/v1/projects/${projectId}/thumbnails/${index}/stream`)
+export function projectThumbnailStreamUrl(projectId: string, index: number, mediaToken: string): string {
+  return withMediaToken(`${API_BASE}/projects/${projectId}/thumbnails/${index}/stream`, mediaToken)
 }
 
 export interface Scenario {
@@ -705,9 +746,9 @@ export interface StudioArtifacts {
 }
 
 /** Média du run dir Studio (voice.wav, renders/, thumbnails/) ; `mtime` invalide le cache quand le fichier est refait. */
-export function studioFileUrl(projectId: string, file: StudioMediaFile): string {
+export function studioFileUrl(projectId: string, file: StudioMediaFile, mediaToken: string): string {
   const query = `path=${encodeURIComponent(file.path)}&v=${file.mtime}`
-  return authenticatedMediaUrl(`${API_BASE}/projects/${projectId}/studio/file?${query}`)
+  return withMediaToken(`${API_BASE}/projects/${projectId}/studio/file?${query}`, mediaToken)
 }
 
 // ── Compte ───────────────────────────────────────────────────────────────

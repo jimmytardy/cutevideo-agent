@@ -13,6 +13,7 @@ import Accordion from '@mui/material/Accordion'
 import AccordionSummary from '@mui/material/AccordionSummary'
 import AccordionDetails from '@mui/material/AccordionDetails'
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
+import { useMediaToken } from '@/lib/useMediaToken'
 import {
   STUDIO_STEPS,
   fetcher,
@@ -238,6 +239,7 @@ function StepOutput({
   scenarioPasses,
   dbReport,
 }: StepOutputProps) {
+  const mediaToken = useMediaToken()
   const slot = artifacts?.iterations[String(iteration)]
   const purged = artifacts && !artifacts.available
   // scenario.json et voice.wav sont réécrits à chaque passage : seule la dernière version existe.
@@ -281,7 +283,7 @@ function StepOutput({
         <OutputBlock title="voice.wav" note={voice ? overwritten : null}>
           {voice ? (
             <>
-              <Box component="audio" controls preload="metadata" src={studioFileUrl(projectId, voice)} sx={{ width: '100%', maxWidth: 480 }} />
+              <Box component="audio" controls preload="metadata" src={mediaToken ? studioFileUrl(projectId, voice, mediaToken) : undefined} sx={{ width: '100%', maxWidth: 480 }} />
               <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
                 {[
                   voice.duration_s != null && `${voice.duration_s.toFixed(1)} s`,
@@ -306,7 +308,7 @@ function StepOutput({
               component="video"
               controls
               preload="metadata"
-              src={studioFileUrl(projectId, slot.render)}
+              src={mediaToken ? studioFileUrl(projectId, slot.render, mediaToken) : undefined}
               sx={{ width: '100%', maxWidth: 300, aspectRatio: '9 / 16', bgcolor: 'black', borderRadius: 1 }}
             />
           ) : (
@@ -458,7 +460,8 @@ function ScenarioView({ scenario }: { scenario: StudioScenarioFile }) {
 
 function ThumbnailImage({ projectId, file }: { projectId: string; file: StudioMediaFile }) {
   const name = file.path.split('/').pop() ?? file.path
-  const src = studioFileUrl(projectId, file)
+  const mediaToken = useMediaToken()
+  const src = mediaToken ? studioFileUrl(projectId, file, mediaToken) : undefined
   return (
     <Box sx={{ maxWidth: name.includes('16x9') ? 360 : 220 }}>
       <Box component="a" href={src} target="_blank" rel="noopener">

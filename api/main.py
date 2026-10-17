@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import select, text
 
-from agent.core.auth import decode_access_token
+from agent.core.auth import decode_token
 from agent.core.config import settings
 from agent.core.database import AsyncSessionFactory, User
 from agent.core.log_redaction import setup_logging
@@ -82,10 +82,11 @@ app.add_middleware(
 async def authenticate_api_requests(request: Request, call_next):
     path = request.url.path
     if path.startswith("/api/v1/") and not is_public_api_path(path):
-        token = resolve_request_auth_token(request)
-        if token:
+        credential = resolve_request_auth_token(request)
+        if credential:
+            token, kind = credential
             try:
-                user_id = decode_access_token(token)
+                user_id = decode_token(token, kind)
                 async with AsyncSessionFactory() as session:
                     result = await session.execute(
                         select(User).where(User.id == user_id, User.is_active.is_(True))

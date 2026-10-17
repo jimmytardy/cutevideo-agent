@@ -12,7 +12,14 @@ from agent.core.api_keys import (
     format_api_key_hint,
     resolve_api_key,
 )
-from agent.core.auth import create_access_token, decode_access_token, create_oauth_state, decode_oauth_state
+from agent.core.auth import (
+    create_access_token,
+    create_media_token,
+    create_oauth_state,
+    decode_access_token,
+    decode_media_token,
+    decode_oauth_state,
+)
 from agent.core.subscription import (
     SubscriptionLimits,
     apply_subscription_caps,
@@ -26,6 +33,16 @@ def test_jwt_roundtrip() -> None:
     user_id = uuid.uuid4()
     token = create_access_token(user_id, expires_minutes=30)
     assert decode_access_token(token) == user_id
+
+
+def test_media_token_roundtrip_and_type_isolation() -> None:
+    user_id = uuid.uuid4()
+    media = create_media_token(user_id)
+    assert decode_media_token(media) == user_id
+    with pytest.raises(ValueError):
+        decode_access_token(media)  # un jeton média n'ouvre pas une session
+    with pytest.raises(ValueError):
+        decode_media_token(create_access_token(user_id))  # un JWT de session n'est pas un jeton média
 
 
 def test_oauth_state_roundtrip() -> None:

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { API_BASE, authenticatedMediaUrl, fetcher } from '@/lib/api'
+import { API_BASE, fetcher, getMediaToken, withMediaToken } from '@/lib/api'
 import { coalesceAgentStreamLogLine } from '@/lib/agentStream'
 
 interface LogSnapshot {
@@ -54,30 +54,42 @@ export function useAgentLogSse(projectId: string, runId: string, enabled: boolea
       }
     }
 
-    const source = new EventSource(authenticatedMediaUrl(`${base}/stream`))
-    source.addEventListener('history', (e) => applySnapshot(JSON.parse((e as MessageEvent<string>).data) as LogSnapshot))
-    source.addEventListener('line', (e) => {
-      const { line } = JSON.parse((e as MessageEvent<string>).data) as { line: string }
-      setLines((prev) => {
-        const next = [...prev]
-        coalesceAgentStreamLogLine(next, line)
-        return next
+    // EventSource ne porte pas d'en-tête : le flux SSE s'ouvre avec le jeton média court (query).
+    let source: EventSource | undefined
+    const connect = (token: string) => {
+      if (closed) return
+      source = new EventSource(withMediaToken(`${base}/stream`, token))
+      source.addEventListener('history', (e) => applySnapshot(JSON.parse((e as MessageEvent<string>).data) as LogSnapshot))
+      source.addEventListener('line', (e) => {
+        const { line } = JSON.parse((e as MessageEvent<string>).data) as { line: string }
+        setLines((prev) => {
+          const next = [...prev]
+          coalesceAgentStreamLogLine(next, line)
+          return next
+        })
+        setRunning(true)
       })
-      setRunning(true)
-    })
-    source.addEventListener('done', () => {
-      finished = true
-      setRunning(false)
-      source.close()
-    })
-    source.onerror = () => {
-      source.close()
-      if (!closed && !finished) void poll()
+      source.addEventListener('done', () => {
+        finished = true
+        setRunning(false)
+        source?.close()
+      })
+      source.onerror = () => {
+        // Flux coupé (proxy, jeton média expiré) : repli sur le polling de /log, authentifié par en-tête.
+        source?.close()
+        if (!closed && !finished) void poll()
+      }
     }
+    getMediaToken().then(
+      ({ token }) => connect(token),
+      () => {
+        if (!closed) void poll()
+      },
+    )
 
     return () => {
       closed = true
-      source.close()
+      source?.close()
       clearTimeout(timer)
     }
   }, [projectId, runId, enabled])
