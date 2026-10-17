@@ -2,12 +2,18 @@
 
 Toutes les encodes passent par `run_ffmpeg()` avec les garde-fous CPU
 (`thread_args` en sortie, `filter_thread_args` avant le premier `-i`).
+
+Chaque clip est encodé en un segment intermédiaire mis en cache dans
+`.render/segments/` (clé = média source + paramètres du clip) : d'une itération
+à l'autre, seuls les plans modifiés sont ré-encodés, les autres sont repris tels
+quels — sans perte, le mux final repart toujours de ces segments haute qualité.
 """
 
 from __future__ import annotations
 
 import logging
 import shutil
+import time
 from pathlib import Path
 
 from agent.skills.audio.whisper_utils import WordSegment
@@ -17,13 +23,14 @@ from agent.skills.video.ffmpeg_runtime import (
     run_ffmpeg,
     thread_args,
 )
-from studio.assets import IMAGE_EXTENSIONS, SHORT_FPS, SHORT_HEIGHT, SHORT_WIDTH
+from studio.assets import FONT_FILE, IMAGE_EXTENSIONS, SHORT_FPS, SHORT_HEIGHT, SHORT_WIDTH
 from studio.audiomix import mix_short_audio
 from studio.contracts import (
     TIMELINE_DURATION_TOLERANCE_S,
     ContractError,
     Timeline,
     TimelineClip,
+    cache_key,
     load_contract,
     read_json,
     resolve_in_run_dir,
@@ -39,6 +46,14 @@ logger = logging.getLogger(__name__)
 SHORT_ZOOM_FACTOR = 0.08
 CLIP_TEXT_FONTSIZE = 80
 CLIP_TEXT_MAX_CHARS = 18
+# Segments de clips réutilisés entre deux rendus du même run dir. Les réglages de ce module et de
+# `studio.assets` entrent dans la clé ; à incrémenter quand le code des filtres change (`studio/kenburns.py`,
+# `studio/textfx.py`, `_render_clip`) sans que ces réglages bougent.
+SEGMENT_CACHE_VERSION = 1
+# `<run_dir>/.render/` : dossiers de travail `<stem du rendu>` (jetables) et cache `segments/`.
+RENDER_DIR = ".render"
+SEGMENTS_DIR = "segments"
+_SEGMENT_ENCODE_ARGS = ("-c:v", "libx264", "-crf", "17", "-preset", "veryfast")
 # Haut du bloc de texte, en fraction de la hauteur (les sous-titres sont en bas).
 _TEXT_TOP = {"top": 0.12, "center": 0.42, "bottom": 0.66}
 
@@ -51,6 +66,7 @@ def _clip_text_filter(clip: TimelineClip, work: Path, idx: int) -> str:
 
 
 async def _render_clip(clip: TimelineClip, src: Path, out: Path, work: Path, idx: int) -> None:
+    """Encode un clip en segment 9:16 muet. Tout paramètre ajouté ici doit entrer dans `_segment_key`."""
     duration = round(clip.duration, 3)
     is_image = src.suffix.lower() in IMAGE_EXTENSIONS
     if is_image:
@@ -86,11 +102,52 @@ async def _render_clip(clip: TimelineClip, src: Path, out: Path, work: Path, idx
         "-an",
         *thread_args(),
         # Intermédiaire ré-encodé au mux final : preset rapide, qualité haute.
-        "-c:v", "libx264", "-crf", "17", "-preset", "veryfast",
+        *_SEGMENT_ENCODE_ARGS,
         "-r", str(SHORT_FPS),
         str(out),
     ]
     await run_ffmpeg(cmd, error_prefix=f"Rendu clip {idx} ({src.name})")
+
+
+def _segment_key(clip: TimelineClip, src: Path) -> str:
+    """Clé de cache d'un segment : ce qui entre dans `_render_clip` pour ce type de média, et rien d'autre.
+
+    - source identifiée par taille + mtime (un média re-téléchargé ou une animation refaite change de clé) ;
+    - la durée compte, pas `start`/`end` : un plan décalé (voix retouchée en amont) de même longueur est repris ;
+    - `motion` ne joue que pour une image, `video_offset` que pour une vidéo, le texte que s'il est non vide ;
+    - `sfx` n'entre que dans l'audio ; les réglages fixes (format, zoom, police, encodage) sont inclus.
+    """
+    stat = src.stat()
+    is_image = src.suffix.lower() in IMAGE_EXTENSIONS
+    payload: dict = {
+        "version": SEGMENT_CACHE_VERSION,
+        "source": [src.suffix.lower(), stat.st_size, stat.st_mtime_ns],
+        "duration": round(clip.duration, 3),
+        "settings": [SHORT_WIDTH, SHORT_HEIGHT, SHORT_FPS, SHORT_ZOOM_FACTOR, *_SEGMENT_ENCODE_ARGS],
+    }
+    if is_image:
+        payload["motion"] = clip.motion
+    else:
+        payload["video_offset"] = clip.video_offset
+    if clip.text.strip():
+        payload["text"] = [clip.text, clip.text_position, CLIP_TEXT_FONTSIZE, CLIP_TEXT_MAX_CHARS, FONT_FILE]
+    return cache_key(payload)
+
+
+def _prune_segments(cache_dir: Path, keep: set[Path], *, started_at: float) -> None:
+    """Supprime les segments antérieurs à ce rendu qu'il n'a pas utilisés (disque borné à un rendu).
+
+    Les fichiers plus récents que le début du rendu et les `.tmp` (fichiers cachés) sont laissés : ils peuvent
+    appartenir à un autre rendu en cours dans le même run dir.
+    """
+    for path in cache_dir.glob("*.mp4"):
+        if path.name.startswith(".") or path in keep:
+            continue
+        try:
+            if path.stat().st_mtime < started_at:
+                path.unlink(missing_ok=True)
+        except FileNotFoundError:
+            continue  # déjà supprimé par un autre rendu ou la purge
 
 
 def _load_words(path: Path) -> list[WordSegment]:
@@ -124,13 +181,32 @@ async def _validate_inputs(run_dir: Path, timeline: Timeline) -> tuple[Path, lis
     return voice, sources, music
 
 
-async def _render_video_track(timeline: Timeline, sources: list[Path], work: Path) -> Path:
-    """Un segment encodé par clip, puis concaténation sans réencodage."""
+async def _render_video_track(
+    timeline: Timeline, sources: list[Path], work: Path, cache_dir: Path
+) -> tuple[Path, dict[str, int]]:
+    """Un segment encodé par clip (repris du cache s'il existe), puis concaténation sans réencodage.
+
+    Renvoie la piste vidéo et les compteurs `clips_encoded` / `clips_reused`.
+    """
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    started_at = time.time()
+    stats = {"clips_encoded": 0, "clips_reused": 0}
     segment_paths: list[Path] = []
     for idx, (clip, src) in enumerate(zip(timeline.clips, sources)):
-        seg = work / f"seg_{idx:02d}.mp4"
-        await _render_clip(clip, src, seg, work, idx)
+        seg = cache_dir / f"{_segment_key(clip, src)}.mp4"
+        if seg.exists():
+            stats["clips_reused"] += 1
+        else:
+            tmp = cache_dir / f".{seg.stem}.{work.name}.tmp.mp4"
+            try:
+                await _render_clip(clip, src, tmp, work, idx)
+            except BaseException:
+                tmp.unlink(missing_ok=True)
+                raise
+            tmp.replace(seg)
+            stats["clips_encoded"] += 1
         segment_paths.append(seg)
+    _prune_segments(cache_dir, set(segment_paths), started_at=started_at)
     concat_list = work / "concat.txt"
     concat_list.write_text("".join(f"file '{p}'\n" for p in segment_paths), encoding="utf-8")
     video_only = work / "video.mp4"
@@ -139,7 +215,7 @@ async def _render_video_track(timeline: Timeline, sources: list[Path], work: Pat
          "-c", "copy", str(video_only)],
         error_prefix="Concat clips",
     )
-    return video_only
+    return video_only, stats
 
 
 def _subtitle_filter_args(run_dir: Path, timeline: Timeline, work: Path) -> list[str]:
@@ -182,14 +258,16 @@ async def render_timeline(run_dir: Path, timeline_path: Path, output_path: Path)
     voice, sources, music = await _validate_inputs(run_dir, timeline)
 
     output_path = resolve_in_run_dir(run_dir, str(output_path))
+    if output_path.stem == SEGMENTS_DIR:
+        raise ContractError(f"nom de rendu réservé : {output_path.name} (utilise renders/v<N>.mp4)")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     # Laissé en place si le rendu échoue (diagnostic) ; recréé au rendu suivant.
-    work = run_dir / ".render" / output_path.stem
+    work = run_dir / RENDER_DIR / output_path.stem
     if work.exists():
         shutil.rmtree(work)
     work.mkdir(parents=True)
 
-    video_only = await _render_video_track(timeline, sources, work)
+    video_only, stats = await _render_video_track(timeline, sources, work, run_dir / RENDER_DIR / SEGMENTS_DIR)
     audio = work / "audio.m4a"
     sfx_events = [(clip.start, clip.sfx) for clip in timeline.clips if clip.sfx]
     mix = await mix_short_audio(
@@ -206,6 +284,7 @@ async def render_timeline(run_dir: Path, timeline_path: Path, output_path: Path)
         "width": info.get("width"),
         "height": info.get("height"),
         "clips": len(timeline.clips),
+        **stats,
         "subtitles": bool(vf_args),
         "music": timeline.music,
         "mix": mix,

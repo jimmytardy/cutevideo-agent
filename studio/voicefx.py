@@ -96,10 +96,6 @@ def parse_emphasis(text: str) -> list[tuple[str, dict[str, str]]]:
     return lines
 
 
-def has_emphasis(text: str) -> bool:
-    return any(opts for _, opts in parse_emphasis(text))
-
-
 def concat_wavs(parts: list[Path], out: Path, *, gap_s: float = 0.12) -> float:
     """Concatène des WAV (même format) avec un court silence entre eux. Renvoie la durée."""
     import soundfile as sf

@@ -1,7 +1,8 @@
 # Claude Studio — production d'un Short vertical 9:16
 
 Ce dossier est le **run dir** d'une vidéo. Tout ce que tu produis reste ici, en chemins relatifs.
-Tu n'as pas accès à Internet directement : les médias, la voix et le rendu passent **uniquement** par
+Seul le **scénariste** a la recherche web (WebSearch / WebFetch), pour vérifier ses faits ; les autres rôles et le
+producteur ne l'utilisent pas. Les médias, la voix et le rendu passent **uniquement** par
 `python -m studio.tools <commande>` (sortie JSON ; `{"error": ...}` si échec → lis le message et corrige).
 **Bash n'autorise que `python -m studio.tools …`** (une commande par appel, sans `&&`, `|` ni redirection) :
 pour lire, écrire ou lister des fichiers utilise Read, Write, Edit et Glob.
@@ -20,12 +21,18 @@ pour lire, écrire ou lister des fichiers utilise Read, Write, Edit et Glob.
 6. **Fin en boucle** : le dernier beat est inachevé et **se complète par la 1re phrase** (« Alors la prochaine fois
    que vous [geste quotidien], dites-vous que… » + hook) ; la dernière image rappelle la première. Pas de résumé,
    pas de « abonnez-vous » en fin.
-7. **Débit** : ~3,1 mots/s (40 s ≈ 125 mots ; références virales 3,1-3,6). Durée cible : `brief.json.target_duration_s`, tolérance ±15 %.
+7. **Débit** : ~3,1 mots/s (40 s ≈ 125 mots ; références virales 3,1-3,6). Durée cible : `brief.json.target_duration_s` — viser ±10 %, tolérer ±15 % (au-delà, le signaler), bloquant au-delà de ±20 %.
 
-## Direction visuelle : full animation par défaut
-- `scenario.visual_mode` : `animation` (défaut, **concepts, mécanismes, histoires, chiffres**), `mixed` (animation +
-  vraies images quand elles apportent vraiment : lieu réel, objet réel, photo historique), `footage` (rare).
-  Si `brief.json.animations` = `off`, on est en `footage` ; si `templates`, seulement les modèles.
+## Direction visuelle : selon `brief.json.visual_style` (style de la chaîne, imposé)
+- `animation` (défaut) : `scenario.visual_mode` au choix — `animation` pour **concepts, mécanismes, histoires,
+  chiffres**, `mixed` quand de vraies images apportent vraiment (lieu réel, objet réel, photo historique), `footage` rare.
+- `mixed` : `visual_mode` = `mixed`. **Vraies photos/vidéos** des banques libres pour tout ce qui existe : lieux,
+  animaux, objets, personnes, faits historiques ; **animations** pour les chiffres, comparaisons, cartes et mécanismes.
+  Viser au moins la moitié des plans en images réelles.
+- `realistic` : `visual_mode` = `footage` (ou `mixed`) : images réelles sur presque tous les plans, animations
+  seulement pour les données (chiffre, carte, comparaison) ; `ai-image` en dernier recours, dans son plafond.
+- Si `brief.json.animations` = `off`, on est en `footage` ; si `templates`, seulement les modèles.
+  `validate --kind scenario` refuse un `visual_mode` incompatible avec le style de la chaîne.
 - **Aucune image vide à une coupe** : à t = 0 de chaque plan, le mot-clé (affiché d'office) et l'objet principal
   sont déjà là (`at: 0`, `enter: "none"`, puis `idle` ou caméra pour le mouvement) ; les suivants arrivent ensuite.
 - **Une idée visuelle littérale par phrase**, et **un nouvel élément à l'écran toutes les ~2 s** (la scène se
@@ -73,7 +80,7 @@ Polices : Poppins (déjà chargée). `window.renderFrame` est posé par la scèn
 ## Droits des médias
 - Seuls les médias obtenus via `search-media` + `download`, `ai-image`, `music`, `animate-template` ou `animate` sont
   autorisés (licences tracées dans `media/credits.json`). Les icônes du kit sont libres (Apache 2.0).
-- `ai-image` coûte de l'argent et est plafonné : dernier recours.
+- `ai-image` coûte de l'argent et est plafonné : dernier recours. Modèle et prompt : lis `docs/ai-images.md` avant.
 - Jamais de logo de marque, de visage de célébrité identifiable ni de texte incrusté illisible.
 
 ## Animations (selon `brief.json.animations`)
@@ -101,8 +108,10 @@ fichiers de `anim/` sont accessibles. Python (numpy, matplotlib, Pillow) : lis `
 ## Fichiers (contrats validés par `python -m studio.tools validate --kind <kind> --path <fichier>`)
 
 `brief.json` (fourni, lecture seule) : `theme`, `niche`, `angle`, `language`, `target_duration_s`, `voice`,
-`tts_engine`, `max_iterations`, `min_score`, `editorial_tone`, `creative_brief` (charte éditoriale de la chaîne : ton,
-style narratif, interdits — à respecter), `content_plan`, `animations` (off | templates | scripts).
+`tts_engine`, `max_scenario_iterations` / `min_scenario_score` (boucle scénario, défaut 5 / 90), `max_iterations` /
+`min_score` (boucle vidéo, défaut 5 / 80), `editorial_tone`, `creative_brief` (charte éditoriale de la chaîne : ton,
+style narratif, interdits — à respecter), `content_plan`, `animations` (off | templates | scripts),
+`visual_style` (animation | mixed | realistic : direction visuelle imposée par la chaîne).
 
 `scenario.json` (scénariste) :
 ```json
@@ -110,11 +119,24 @@ style narratif, interdits — à respecter), `content_plan`, `animations` (off |
  "beats": [{"text": "phrase(s) dite(s)", "visual_intent": "ce qu'on doit voir", "on_screen_text": "MOT-CLÉ"}],
  "cta": "…", "mood": "mysterieux", "music_mood": "mysterieux",
  "visual_mode": "animation", "theme": "night", "accent": "#FFB938",
- "publish": {"title": "titre ≤ 100 car.", "description": "2-3 phrases", "hashtags": ["#shorts", "…"]}}
+ "publish": {"title": "titre ≤ 100 car.", "description": "2-3 phrases", "hashtags": ["#shorts", "…"]},
+ "sources": [{"claim": "le fait vérifié", "url": "https://…", "checked": true}]}
 ```
+`sources` : faits vérifiés sur le web par le scénariste (chiffres, dates, records, faits surprenants).
 `music_mood` ∈ energique, calme, dramatique, mysterieux, inspirant, humoristique, tension, revelateur, ou "".
 
+`scenario_critique_<N>.json` (critique-scenario, boucle scénario avant la voix) :
+```json
+{"iteration": 1, "score": 84, "decision": "iterate",
+ "scores": {"hook": 17, "structure": 13, "valeur_verite": 15, "oralite": 13, "duree": 9, "chute_boucle": 13, "brief": 4},
+ "summary": "…", "strengths": ["…"], "issues": ["…"],
+ "unverified_claims": ["« 1 mètre d'envergure » : à vérifier"],
+ "changes": ["beat 4 : …"]}
+```
+`scenario_v<N>.json` : copie du scénario noté par `scenario_critique_<N>.json` (le producteur restaure la meilleure).
+
 `subtitles.txt`, `narration.txt`, `voice.wav`, `words.json`, `voice.json` (voix) — `voice.json` : `{"duration_s", "engine", "voice"}`.
+`voice_cache/` : une synthèse par ligne de `narration.txt` ; `tts` réutilise toute ligne inchangée (`lines_reused`).
 
 `timeline.json` (monteur) :
 ```json
@@ -131,7 +153,8 @@ d'affilée**. `music_volume` 0.08 ≈ musique 17 dB sous la voix (0.06-0.12). So
 `subtitle_keywords` + nombres en couleur, centrés à y ≈ 1290 (`high`).
 
 `renders/v<N>.mp4` (monteur) ; `thumbnail.json` (miniaturiste) :
-`{"vertical": "thumbnails/v<N>_9x16.png", "horizontal": "thumbnails/v<N>_16x9.png", "text": "…", "background": "media/…"}`.
+`{"vertical": "thumbnails/final_9x16.png", "horizontal": "thumbnails/final_16x9.png", "text": "…", "background": "media/…"}`
+(une seule fois, après la boucle, sur la vidéo finale).
 
 `critique_<N>.json` (critique) :
 ```json
@@ -139,9 +162,11 @@ d'affilée**. `music_volume` 0.08 ≈ musique 17 dB sous la voix (0.06-0.12). So
  "scores": {"hook": 14, "retention": 10, "valeur": 12, "visuels": 14, "voix_son": 10, "sous_titres": 4, "chute_partage": 8},
  "analysis": {"source": "claude", "path": "review/v1/analysis/analysis.json", "flags": ["…"]},
  "summary": "…", "strengths": ["…"], "issues": ["…"],
- "changes": [{"role": "monteur", "instruction": "plan 4 (11,2-14,0 s) : …"}]}
+ "changes": [{"role": "monteur", "instruction": "plan 4 (11,2-14,0 s) : …"},
+             {"role": "voix", "lines": [6], "instruction": "« ingénieurs » avalé : ralentir la ligne"}]}
 ```
-`role` ∈ scenariste, voix, monteur, miniaturiste.
+`role` ∈ voix, monteur : le scénario est déjà validé par la boucle scénario (`scenariste` est refusé) ; `voix`
+exige `lines` (numéros de ligne de `narration.txt`, 1 = première). La miniature n'est pas critiquée.
 
 `result.json` (orchestrateur, en dernier) : `{"status": "approved|max_iterations|failed", "iterations": N, "final_video": "renders/vK.mp4", "notes": "…"}`.
 
@@ -151,15 +176,15 @@ d'affilée**. `music_volume` 0.08 ≈ musique 17 dB sous la voix (0.06-0.12). So
 | `search-media --query "volcano eruption" [--type image\|video] [--sources pexels,pixabay,unsplash,coverr,wikimedia,nasa,europeana,internet_archive,gallica]` | requêtes **en anglais**, 2-4 mots concrets ; ids `cN` |
 | `preview --ids c1,c4,c7` | planche contact PNG (≤ 12) → **Read** avant de choisir |
 | `download --id c4 --name 03_lave` | → `media/03_lave.<ext>` + crédits |
-| `ai-image --prompt "…" --name 05_carte` | image IA 9:16 (dernier recours) |
+| `ai-image --prompt "…" --name 05_carte [--model flux_2_dev] [--aspect 16:9]` | image IA 9:16 (dernier recours ; modèles autorisés et écriture du prompt : `docs/ai-images.md`) |
 | `music --mood dramatique` | musique libre → `media/music/…` |
-| `tts --text-file narration.txt [--mood …] [--rate +8%] [--pitch -2Hz] [--max-pause 0.4]` | → `voice.wav` (Azure → Gemini → edge ; silences > 0,4 s raccourcis ; ligne préfixée `[rate=-4% pitch=+12Hz]` = emphase) |
+| `tts --text-file narration.txt [--mood …] [--rate +8%] [--pitch -2Hz] [--max-pause 0.4]` | → `voice.wav` (Azure → Gemini → edge ; une synthèse par ligne, lignes inchangées reprises de `voice_cache/` ; silences > 0,4 s raccourcis ; ligne préfixée `[rate=-4% pitch=+12Hz]` = emphase) |
 | `transcribe --text-file subtitles.txt` | `voice.wav` → `words.json` (timings Whisper, orthographe du script) |
 | `cues --start 26.68 --end 29.9` | mots du plan avec `at` relatif au début du plan → valeurs `at` exactes pour le kit |
-| `render --out renders/v1.mp4` | rend `timeline.json` (plusieurs minutes : normal) |
+| `render --out renders/v1.mp4` | rend `timeline.json` (plusieurs minutes : normal ; les plans inchangés depuis le rendu précédent sont repris sans ré-encodage : `clips_reused`) |
 | `frames --video renders/v1.mp4 [--every 2]` | frames + `review/v1/sheet.png` + loudness |
 | `analyze --video renders/v1.mp4 [--words words.json] [--timeline timeline.json]` | analyse multimodale : avis Gemini si dispo, sinon planches hook/chronologie/coupes, débit, pauses, loudness, rapport voix/fond, intonation, spectrogramme + alertes |
-| `thumbnail --background media/x.jpg --text "MOT\|CHOC" --out thumbnails/v1_9x16.png [--aspect 16:9] [--position top\|center\|bottom] [--color yellow]` | miniature |
+| `thumbnail --background media/x.jpg --text "MOT\|CHOC" --out thumbnails/final_9x16.png [--aspect 16:9] [--position top\|center\|bottom] [--color yellow]` | miniature |
 | `animate-template --template <modèle> --params '{…}' --duration 3 --name 04_x` | animation prête → `media/anim_04_x.mp4` |
 | `animate --script anim/05_x.html\|.py --duration 4 --name 05_x` | rend un script jetable (bac à sable) |
 | `probe --path … [--loudness]` / `validate --kind … --path …` | contrôle |

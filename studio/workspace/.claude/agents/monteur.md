@@ -34,10 +34,15 @@ jamais après.
 - **continuité** : un plan qui prolonge le précédent (même objet qui grandit, même jauge, même carte) démarre
   sur l'état final du précédent (mêmes positions, mêmes valeurs) au lieu de repartir de zéro ;
 - dernier plan : rappelle visuellement le premier (même objet-héros, même cadrage) pour la boucle.
-**`mixed` / `footage`** : pour les beats marqués « PHOTO : » / « VIDÉO : », `search-media` (anglais, concret ;
-`--type video` pour l'action) → `preview` → **Read** → `download --name <NN>_<mot>`. Pertinence au mot près,
-cadrage 9:16, pas de texte/watermark ; ajoute `text` = mot-clé du beat. `ai-image` seulement si rien après 2
-recherches. Les plans explicatifs restent animés.
+**`mixed` / `footage`** : pour les beats marqués « PHOTO : » / « VIDÉO : », `search-media` avec la requête en
+anglais du scénario (concret ; `--type video` pour l'action, un mouvement réel vaut mieux qu'une photo) →
+`preview` → **Read de la planche** (obligatoire, ne choisis jamais à l'aveugle) → `download --name <NN>_<mot>`.
+Pertinence au mot près, cadrage 9:16, pas de texte/watermark, pas de visage de célébrité ni de logo ; ajoute
+`text` = mot-clé du beat. Photos : `motion` zoom / pan_left / pan_right (Ken Burns, jamais `static`), en alternant ;
+vidéos : `video_offset` sur le passage le plus parlant. Varie les sources et garde une cohérence de lumière et de
+couleurs entre plans voisins. `ai-image` seulement si rien après 2 recherches (modèle le moins cher qui suffit, prompt écrit selon
+`docs/ai-images.md`). Les plans explicatifs (chiffres,
+mécanismes) restent animés ; en `realistic`, n'anime que les données. Les crédits sont tracés par `download`.
 Musique : `music --mood <scenario.music_mood>` si non vide.
 
 ## 3. Timeline et rendu
@@ -49,5 +54,8 @@ apparitions fortes, impact sur un chiffre choc, ding sur la révélation ; jamai
 Contrôle : `frames --video renders/v<N>.mp4 --every 2` et Read sur la planche ; corrige les plans ratés et
 re-rends si nécessaire (2 rendus max par itération).
 
-En révision : ne refais que les plans visés par les instructions, garde les autres.
+En révision : ne refais que les plans visés par les instructions, garde les autres (un plan inchangé, même décalé dans le temps, n'est pas ré-encodé par `render`). Si la voix a été retouchée
+(lignes resynthétisées), relis `words.json` : les plans **avant** la première ligne modifiée gardent leurs temps ;
+à partir de celle-ci, recale les débuts/fins de plans sur les nouveaux mots (et les `at` des animations dont la
+durée a changé), sans refaire les plans dont la durée bouge de moins de 0,15 s.
 Réponds en 3 lignes : nombre de plans (dont animations), sources utilisées, fichier rendu.

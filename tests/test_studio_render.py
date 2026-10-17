@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from studio.contracts import ContractError
+from studio.contracts import ContractError, TimelineClip
 from studio.media import probe_media, record_credit
-from studio.render import render_timeline
+from studio.render import _segment_key, render_timeline
 
 
 def _ffmpeg(*args: str) -> None:
@@ -67,3 +67,82 @@ async def test_render_rejects_paths_outside_run_dir(run_dir: Path) -> None:
     timeline = _write_timeline(run_dir, [{"media": "../evil.png", "start": 0, "end": 2.0}])
     with pytest.raises(ContractError, match="hors du run dir"):
         await render_timeline(run_dir, timeline, Path("renders/v1.mp4"))
+
+
+@pytest.mark.asyncio
+async def test_render_reuses_unchanged_clip_segments(run_dir: Path) -> None:
+    clip_image = {"media": "media/01.png", "start": 0, "end": 1.0, "motion": "zoom", "text": "Texte"}
+    clip_video = {"media": "media/02.mp4", "start": 1.0, "end": 2.0, "video_offset": 0.2}
+    first = await render_timeline(run_dir, _write_timeline(run_dir, [clip_image, clip_video]), Path("renders/v1.mp4"))
+    assert (first["clips_encoded"], first["clips_reused"]) == (2, 0)
+
+    segments = run_dir / ".render" / "segments"
+    # Même durée mais décalé dans le temps (voix retouchée en amont) : repris ; offset vidéo changé : ré-encodé.
+    clip_video_v2 = {**clip_video, "start": 0, "end": 1.0, "video_offset": 0.5}
+    second = await render_timeline(
+        run_dir,
+        _write_timeline(run_dir, [clip_video_v2, {**clip_image, "start": 1.0, "end": 2.0}]),
+        Path("renders/v2.mp4"),
+    )
+    assert (second["clips_encoded"], second["clips_reused"]) == (1, 1)
+    # Le segment de v1 devenu inutile est supprimé : il ne reste que ceux du dernier rendu.
+    assert len(list(segments.glob("*.mp4"))) == 2
+    assert not list(segments.glob(".*.tmp.mp4"))
+    assert abs((await probe_media(run_dir / "renders" / "v2.mp4"))["duration_s"] - 2.0) < 0.2
+
+    # Un média refait sous le même nom (animation relancée, nouveau téléchargement) change de clé.
+    _ffmpeg("-f", "lavfi", "-i", "testsrc=size=640x360", "-frames:v", "1", str(run_dir / "media" / "01.png"))
+    third = await render_timeline(
+        run_dir, _write_timeline(run_dir, [clip_image, {**clip_video_v2, "start": 1.0, "end": 2.0}]), Path("renders/v3.mp4")
+    )
+    assert (third["clips_encoded"], third["clips_reused"]) == (1, 1)
+
+
+@pytest.mark.asyncio
+async def test_render_failure_leaves_cache_clean(run_dir: Path) -> None:
+    clip_ok = {"media": "media/02.mp4", "start": 0, "end": 1.0}
+    await render_timeline(run_dir, _write_timeline(run_dir, [clip_ok, {"media": "media/01.png", "start": 1.0, "end": 2.0}]),
+                          Path("renders/v1.mp4"))
+    segments = run_dir / ".render" / "segments"
+    before = sorted(segments.glob("*.mp4"))
+
+    # Un mp4 corrompu : ffmpeg le refuse à l'ouverture (un PNG corrompu avec `-loop 1` tournerait en boucle).
+    (run_dir / "media" / "bad.mp4").write_bytes(b"pas une video")
+    with pytest.raises(RuntimeError, match="Rendu clip 1"):
+        await render_timeline(run_dir, _write_timeline(run_dir, [clip_ok, {"media": "media/bad.mp4", "start": 1.0, "end": 2.0}]),
+                              Path("renders/v2.mp4"))
+    # Aucun segment partiel promu ni .tmp oublié ; les segments valides du rendu précédent sont intacts.
+    assert sorted(segments.glob("*.mp4")) == before
+    assert not list(segments.glob(".*.tmp.mp4"))
+
+
+_IMAGE = {"media": "media/01.png", "start": 2.0, "end": 3.5, "motion": "zoom", "text": "Un mot"}
+_VIDEO = {"media": "media/02.mp4", "start": 2.0, "end": 3.5, "video_offset": 1.0, "text": ""}
+
+
+@pytest.mark.parametrize("base, change, same_key", [
+    # Décalé dans le temps à durée égale, bruitage : sans effet sur l'image du segment.
+    (_IMAGE, {"start": 7.0, "end": 8.5}, True),
+    (_IMAGE, {"sfx": "whoosh"}, True),
+    # Une image ignore `video_offset`, une vidéo ignore `motion` ; le placement d'un texte vide ne compte pas.
+    (_IMAGE, {"video_offset": 3.0}, True),
+    (_VIDEO, {"motion": "pan_left"}, True),
+    (_VIDEO, {"text_position": "bottom"}, True),
+    # Ce qui change l'image rend une autre clé.
+    (_IMAGE, {"end": 4.0}, False),
+    (_IMAGE, {"motion": "pan_right"}, False),
+    (_IMAGE, {"text": "Autre"}, False),
+    (_IMAGE, {"text_position": "bottom"}, False),
+    (_VIDEO, {"video_offset": 2.0}, False),
+])
+def test_segment_key_depends_only_on_what_the_clip_renders(run_dir: Path, base: dict, change: dict, same_key: bool) -> None:
+    src = run_dir / base["media"]
+    key = _segment_key(TimelineClip(**base), src)
+    assert (_segment_key(TimelineClip(**{**base, **change}), src) == key) is same_key
+
+
+def test_segment_key_changes_with_the_source_file(run_dir: Path) -> None:
+    src = run_dir / _IMAGE["media"]
+    key = _segment_key(TimelineClip(**_IMAGE), src)
+    src.write_bytes(src.read_bytes() + b"\0")
+    assert _segment_key(TimelineClip(**_IMAGE), src) != key

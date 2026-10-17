@@ -7,14 +7,19 @@ renvoyer des erreurs explicites à Claude plutôt que d'échouer plus loin.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any, Literal, TypeVar
 
-from pydantic import BaseModel, Field, ValidationError, model_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
-Role = Literal["scenariste", "voix", "monteur", "miniaturiste"]
+# Rôles auxquels la critique peut demander des changements (la miniature n'est pas critiquée).
+Role = Literal["scenariste", "voix", "monteur"]
 Motion = Literal["zoom", "pan_left", "pan_right", "static"]
+# Style visuel d'une chaîne (réglages → Général), imposé au scénario par `allowed_visual_modes()`.
+VisualStyle = Literal["animation", "mixed", "realistic"]
+VISUAL_STYLES: tuple[str, ...] = ("animation", "mixed", "realistic")
 TextPosition = Literal["top", "center", "bottom"]
 Sfx = Literal["", "whoosh", "pop", "ding", "click", "riser", "impact"]
 
@@ -32,17 +37,26 @@ class Brief(BaseModel):
     target_duration_s: int = Field(default=45, ge=10, le=180)
     voice: str = ""
     tts_engine: str = ""
-    max_iterations: int = Field(default=3, ge=1, le=6)
-    min_score: int = Field(default=75, ge=0, le=100)
+    # Boucle vidéo (monteur ⇄ critique) : plafond et seuil de `critique_N.json`.
+    max_iterations: int = Field(default=5, ge=1, le=6)
+    min_score: int = Field(default=80, ge=0, le=100)
+    # Boucle scénario (scénariste ⇄ critique-scenario) : plafond et seuil de `scenario_critique_N.json`.
+    max_scenario_iterations: int = Field(default=5, ge=1, le=6)
+    min_scenario_score: int = Field(default=90, ge=0, le=100)
     editorial_tone: str = ""
     # Brief créatif de la chaîne (réglages → Général) : ton, style narratif, interdits éditoriaux.
     creative_brief: str = ""
     content_plan: dict | None = None
     # Animations autorisées : off | templates (modèles intégrés) | scripts (scripts jetables + modèles).
     animations: Literal["off", "templates", "scripts"] = "scripts"
+    # Style visuel de la chaîne : animation (kit), mixed (images réelles + animations), realistic (images réelles).
+    visual_style: VisualStyle = "animation"
     # Images IA autorisées pour ce Short (0 = désactivées par la chaîne ou l'abonnement ;
     # None = plafond plateforme STUDIO_MAX_AI_IMAGES).
     max_ai_images: int | None = Field(default=None, ge=0)
+    # Modèles d'image IA que `ai-image --model` accepte (le premier = défaut) : plan de la chaîne
+    # et modèles moins chers (`models_up_to`). Vide = défaut plateforme `flux_2_dev`.
+    ai_models: list[str] = Field(default_factory=list)
 
 
 class ScenarioBeat(BaseModel):
@@ -57,6 +71,14 @@ class PublishMetadata(BaseModel):
     hashtags: list[str] = Field(default_factory=list)
 
 
+class ScenarioSource(BaseModel):
+    """Fait du script vérifié sur le web par le scénariste."""
+
+    claim: str = Field(min_length=1)
+    url: str = Field(min_length=1)
+    checked: bool = True
+
+
 class Scenario(BaseModel):
     title: str = Field(min_length=1)
     hook: str = Field(min_length=1)
@@ -69,6 +91,7 @@ class Scenario(BaseModel):
     theme: str = "night"
     accent: str = ""
     publish: PublishMetadata
+    sources: list[ScenarioSource] = Field(default_factory=list)
 
     @property
     def narration(self) -> str:
@@ -130,6 +153,40 @@ class Timeline(BaseModel):
 class RequestedChange(BaseModel):
     role: Role
     instruction: str = Field(min_length=1)
+    # Rôle `voix` : lignes de narration.txt à resynthétiser (1 = première ligne) ; les autres sont réutilisées.
+    lines: list[int] = Field(default_factory=list)
+
+    @field_validator("lines")
+    @classmethod
+    def _line_numbers(cls, lines: list[int]) -> list[int]:
+        if any(n < 1 for n in lines):
+            raise ValueError("lines : numéros de ligne à partir de 1 (1 = première ligne de narration.txt)")
+        if len(set(lines)) != len(lines):
+            raise ValueError("lines : numéros en double")
+        return lines
+
+
+class ScenarioCritique(BaseModel):
+    """Analyse du script avant la voix (`scenario_critique_N.json`)."""
+
+    iteration: int = Field(ge=1)
+    score: int = Field(ge=0, le=100)
+    decision: Literal["approve", "iterate"]
+    summary: str = ""
+    strengths: list[str] = Field(default_factory=list)
+    issues: list[str] = Field(default_factory=list)
+    # Faits que le scénariste doit vérifier sur le web (ou retirer).
+    unverified_claims: list[str] = Field(default_factory=list)
+    # Instructions pour le scénariste, localisées (« beat 4 : … »).
+    changes: list[str] = Field(default_factory=list)
+    # Notes par critère (hook, structure, valeur_verite, oralite, duree, chute_boucle, brief).
+    scores: dict[str, int] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _changes_when_iterating(self) -> ScenarioCritique:
+        if self.decision == "iterate" and not (self.changes or self.unverified_claims):
+            raise ValueError("decision=iterate exige au moins un élément dans changes ou unverified_claims")
+        return self
 
 
 class Critique(BaseModel):
@@ -143,13 +200,20 @@ class Critique(BaseModel):
     changes: list[RequestedChange] = Field(default_factory=list)
     # Notes par critère de la grille virale (hook, retention, valeur, visuels, voix_son, sous_titres, chute_partage).
     scores: dict[str, int] = Field(default_factory=dict)
-    # Résumé de `analyze` : {"source": "gemini"|"claude", "path": "review/vN/analysis/analysis.json", "flags": […]}.
+    # Résumé de `analyze` : {"source": "gemini"|"gemini-vertex"|"claude", "path": "review/vN/analysis/analysis.json", "flags": […]}.
     analysis: dict | None = None
 
     @model_validator(mode="after")
     def _changes_when_iterating(self) -> Critique:
         if self.decision == "iterate" and not self.changes:
             raise ValueError("decision=iterate exige au moins un élément dans changes")
+        if any(c.role == "scenariste" for c in self.changes):
+            raise ValueError(
+                "le scénario est déjà validé (scenario_critique) : la critique vidéo ne s'adresse qu'à "
+                "`monteur` ou `voix` (avec `lines`)"
+            )
+        if any(c.role == "voix" and not c.lines for c in self.changes):
+            raise ValueError("un changement `voix` exige `lines` (numéros de ligne de narration.txt à refaire)")
         return self
 
 
@@ -170,6 +234,17 @@ class StudioResult(BaseModel):
 ModelT = TypeVar("ModelT", bound=BaseModel)
 
 
+def allowed_visual_modes(visual_style: str, animations: str) -> tuple[str, ...]:
+    """`scenario.visual_mode` autorisés par le style visuel de la chaîne et la politique d'animations."""
+    if animations == "off":
+        return ("footage",)
+    if visual_style == "mixed":
+        return ("mixed",)
+    if visual_style == "realistic":
+        return ("footage", "mixed")
+    return ("animation", "mixed", "footage")  # animation (ou style inconnu) : au choix
+
+
 class ContractError(ValueError):
     """Fichier de contrat absent ou invalide (message destiné à Claude)."""
 
@@ -182,6 +257,16 @@ def resolve_in_run_dir(run_dir: Path, rel: str, *, within: str | None = None) ->
         where = f"{within}/" if within else "du run dir"
         raise ContractError(f"chemin hors {where} interdit : {rel}")
     return path
+
+
+# Une synthèse par ligne de `narration.txt` (studio.tools tts) ; supprimé avec le run dir en fin de création.
+VOICE_CACHE_DIR = "voice_cache"
+
+
+def cache_key(payload: dict[str, Any]) -> str:
+    """Clé de cache stable d'un dict JSON-sérialisable (caches TTS par ligne et segments de rendu)."""
+    data = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(data.encode("utf-8")).hexdigest()[:32]
 
 
 def read_json(path: Path, default: Any = None) -> Any:

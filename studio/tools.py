@@ -14,6 +14,7 @@ import asyncio
 import json
 import logging
 import os
+import shutil
 import sys
 from pathlib import Path
 from typing import Any
@@ -25,8 +26,16 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 os.chdir(REPO_ROOT)
 
 from agent.core.config import load_agent_config  # noqa: E402
+from agent.skills.media_sources.ai.registry import ALLOWED_PLANS  # noqa: E402
 from studio import media  # noqa: E402
-from studio.contracts import ContractError, read_json, resolve_in_run_dir, write_json  # noqa: E402
+from studio.contracts import (  # noqa: E402
+    VOICE_CACHE_DIR,
+    ContractError,
+    cache_key,
+    read_json,
+    resolve_in_run_dir,
+    write_json,
+)
 
 
 def _read_brief(run_dir: Path) -> dict[str, Any]:
@@ -68,7 +77,7 @@ async def cmd_download(args: argparse.Namespace, run_dir: Path) -> Any:
 
 
 async def cmd_ai_image(args: argparse.Namespace, run_dir: Path) -> Any:
-    return await media.generate_ai_image(run_dir, args.prompt, args.name, args.aspect)
+    return await media.generate_ai_image(run_dir, args.prompt, args.name, args.aspect, args.model)
 
 
 async def cmd_music(args: argparse.Namespace, run_dir: Path) -> Any:
@@ -97,43 +106,102 @@ def _tts_engine_chain(run_dir: Path, requested: str | None) -> tuple[list[str], 
     return chain, voices
 
 
+# Une ligne de narration déjà synthétisée avec les mêmes réglages est relue ici (`VOICE_CACHE_DIR`) au lieu
+# d'être refaite : une retouche de la voix ne resynthétise que les lignes modifiées.
+def _line_cache_key(text: str, *, engine: str, voice: str, rate: str, pitch: str, style: str, mood: str) -> str:
+    return cache_key(
+        {"text": text, "engine": engine, "voice": voice, "rate": rate, "pitch": pitch, "style": style, "mood": mood}
+    )
+
+
 async def _synthesize(
     segments: list[tuple[str, dict]], out: Path, *, engine: str, voice: str, args: argparse.Namespace
-) -> tuple[float, str]:
-    """Synthétise chaque ligne (emphase propre) puis les recolle ; renvoie (durée, moteur effectif)."""
-    from agent.skills.audio.tts import generate_tts
-    from studio.user_keys import AZURE_SPEECH_KEY, AZURE_SPEECH_REGION, GEMINI_API_KEY, user_key
+) -> tuple[float, str, dict[str, int]]:
+    """Synthétise chaque ligne (emphase propre, cache par ligne) puis les recolle.
+
+    Renvoie (durée, moteur effectif, compteurs `lines_synthesized` / `lines_reused` / `chars_synthesized`).
+    """
+    from agent.skills.audio.tts import generate_tts, resolve_engine
+    from studio.user_keys import (
+        AZURE_SPEECH_KEY,
+        AZURE_SPEECH_REGION,
+        GCP_CREDENTIALS_JSON,
+        GCP_LOCATION,
+        GEMINI_API_KEY,
+        user_key,
+    )
     from studio.voicefx import combine_offset, concat_wavs
 
     if not segments:
         raise ValueError("texte vide : rien à synthétiser")
+    cache_dir = out.parent / VOICE_CACHE_DIR
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    style = args.style or "narration-professional"
+    # Clé sur le moteur effectif : sans clé Gemini, `gemini` est en fait synthétisé par azure/edge ; une ligne
+    # mise en cache à ce moment-là ne doit pas être reprise plus tard comme une vraie ligne Gemini.
+    effective_engine = resolve_engine(
+        engine,
+        gemini_api_key=user_key(GEMINI_API_KEY),
+        azure_speech_key=user_key(AZURE_SPEECH_KEY),
+        gcp_credentials_json=user_key(GCP_CREDENTIALS_JSON),
+    )
+    stats = {"lines_synthesized": 0, "lines_reused": 0, "chars_synthesized": 0}
     parts: list[Path] = []
-    try:
-        for i, (seg_text, opts) in enumerate(segments):
-            part = out if len(segments) == 1 else out.with_name(f".{out.stem}_part{i:02d}.wav")
-            duration, used = await generate_tts(
-                seg_text,
-                part,
-                voice=voice,
-                engine=engine,
-                tts_style=args.style or "narration-professional",
-                tts_rate=combine_offset(args.rate, opts.get("rate")),
-                tts_pitch=combine_offset(args.pitch, opts.get("pitch")),
-                mood=args.mood or "",
-                # Clés du propriétaire de la chaîne (sans clé : moteur indisponible → edge-tts).
-                gemini_api_key=user_key(GEMINI_API_KEY),
-                azure_speech_key=user_key(AZURE_SPEECH_KEY),
-                azure_speech_region=user_key(AZURE_SPEECH_REGION),
-            )
-            parts.append(part)
-        return (duration if len(parts) == 1 else concat_wavs(parts, out)), used
-    finally:
-        for p in out.parent.glob(f".{out.stem}_part*.wav"):
-            p.unlink(missing_ok=True)
+    durations: list[float] = []
+    used = engine
+    for seg_text, opts in segments:
+        rate = combine_offset(args.rate, opts.get("rate"))
+        pitch = combine_offset(args.pitch, opts.get("pitch"))
+        key = _line_cache_key(
+            seg_text, engine=effective_engine, voice=voice, rate=rate, pitch=pitch, style=style, mood=args.mood or ""
+        )
+        part = cache_dir / f"{key}.wav"
+        meta_path = part.with_suffix(".json")
+        try:
+            meta = read_json(meta_path, None)
+        except (OSError, ValueError):
+            meta = None  # méta tronquée (process tué entre le .wav et le .json) : on resynthétise
+        if part.exists() and meta:
+            used = str(meta.get("engine") or engine)
+            durations.append(float(meta.get("duration_s") or 0.0))
+            stats["lines_reused"] += 1
+        else:
+            tmp = part.with_name(f".{key}.tmp.wav")
+            try:
+                line_duration, used = await generate_tts(
+                    seg_text,
+                    tmp,
+                    voice=voice,
+                    engine=engine,
+                    tts_style=style,
+                    tts_rate=rate,
+                    tts_pitch=pitch,
+                    mood=args.mood or "",
+                    # Clés du propriétaire de la chaîne (sans clé : moteur indisponible → edge-tts).
+                    gemini_api_key=user_key(GEMINI_API_KEY),
+                    azure_speech_key=user_key(AZURE_SPEECH_KEY),
+                    azure_speech_region=user_key(AZURE_SPEECH_REGION),
+                    # Compte de service GCP : repli Vertex de la voix Gemini.
+                    gcp_credentials_json=user_key(GCP_CREDENTIALS_JSON),
+                    gcp_location=user_key(GCP_LOCATION),
+                )
+            except BaseException:
+                tmp.unlink(missing_ok=True)
+                raise
+            tmp.replace(part)
+            write_json(meta_path, {"engine": used, "text": seg_text, "duration_s": line_duration})
+            durations.append(line_duration)
+            stats["lines_synthesized"] += 1
+            stats["chars_synthesized"] += len(seg_text)
+        parts.append(part)
+    if len(parts) == 1:
+        shutil.copy2(parts[0], out)
+        return durations[0], used, stats
+    return concat_wavs(parts, out), used, stats
 
 
 async def cmd_tts(args: argparse.Namespace, run_dir: Path) -> Any:
-    from studio.voicefx import has_emphasis, parse_emphasis, tighten_pauses
+    from studio.voicefx import parse_emphasis, tighten_pauses
 
     text = resolve_in_run_dir(run_dir, args.text_file).read_text(encoding="utf-8").strip()
     if not text:
@@ -141,14 +209,14 @@ async def cmd_tts(args: argparse.Namespace, run_dir: Path) -> Any:
     out = resolve_in_run_dir(run_dir, args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     chain, voices = _tts_engine_chain(run_dir, args.engine)
-    # Emphase par ligne (`[rate=+12% pitch=+4Hz] Nous !`) : chaque ligne est synthétisée avec ses réglages
-    # puis recollée (edge-tts n'accepte pas de SSML).
-    segments = parse_emphasis(text) if has_emphasis(text) else [(text, {})]
+    # Une synthèse par ligne (emphase propre `[rate=+12% pitch=+4Hz] Nous !`, edge-tts n'accepte pas de SSML),
+    # mise en cache : une ligne inchangée n'est jamais resynthétisée.
+    segments = parse_emphasis(text)
     errors: dict[str, str] = {}
     for engine in chain:
         voice = args.voice if (args.voice and engine == chain[0]) else voices.get(engine, "")
         try:
-            duration, used = await _synthesize(segments, out, engine=engine, voice=voice, args=args)
+            duration, used, stats = await _synthesize(segments, out, engine=engine, voice=voice, args=args)
         except Exception as exc:
             errors[engine] = str(exc)[:200]
             continue
@@ -162,6 +230,7 @@ async def cmd_tts(args: argparse.Namespace, run_dir: Path) -> Any:
             "engine": used,
             "voice": voice,
             "chars": len(text),
+            **stats,
             **({"fallback_errors": errors} if errors else {}),
         }
     raise RuntimeError(f"tous les moteurs TTS ont échoué : {errors}")
@@ -282,11 +351,22 @@ async def cmd_validate(args: argparse.Namespace, run_dir: Path) -> Any:
         "scenario": contracts.Scenario,
         "timeline": contracts.Timeline,
         "critique": contracts.Critique,
+        "scenario-critique": contracts.ScenarioCritique,
         "thumbnail": contracts.Thumbnail,
         "result": contracts.StudioResult,
     }
     model = models[args.kind]
-    contracts.load_contract(resolve_in_run_dir(run_dir, args.path), model)
+    data = contracts.load_contract(resolve_in_run_dir(run_dir, args.path), model)
+    if isinstance(data, contracts.Scenario):
+        # Style visuel imposé par la chaîne (posé par le launcher, pas lu dans brief.json).
+        style = os.getenv("STUDIO_VISUAL_STYLE", "animation")
+        animations = os.getenv("STUDIO_ANIMATIONS", "scripts")
+        allowed = contracts.allowed_visual_modes(style, animations)
+        if data.visual_mode not in allowed:
+            raise contracts.ContractError(
+                f"visual_mode « {data.visual_mode} » interdit (style visuel de la chaîne : {style}, "
+                f"animations : {animations}) : utilise {' ou '.join(allowed)}"
+            )
     return {"path": args.path, "valid": True}
 
 
@@ -313,10 +393,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--name", required=True, help="nom de fichier sans extension, ex. 03_volcan")
     p.set_defaults(func=cmd_download)
 
-    p = sub.add_parser("ai-image", help="génère une image IA (Flux) en dernier recours")
-    p.add_argument("--prompt", required=True, help="prompt en anglais, sans texte dans l'image")
+    p = sub.add_parser("ai-image", help="génère une image IA (Flux / Imagen 3) en dernier recours")
+    p.add_argument("--prompt", required=True, help="prompt en anglais, envoyé tel quel (docs/ai-images.md)")
     p.add_argument("--name", required=True)
     p.add_argument("--aspect", choices=["9:16", "16:9"], default="9:16")
+    p.add_argument("--model", choices=sorted(ALLOWED_PLANS),
+                   help="modèle (défaut : celui de la chaîne) ; seuls ceux de STUDIO_AI_MODELS sont acceptés")
     p.set_defaults(func=cmd_ai_image)
 
     p = sub.add_parser("music", help="télécharge une musique de fond libre")
@@ -404,7 +486,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_probe)
 
     p = sub.add_parser("validate", help="valide un fichier de contrat")
-    p.add_argument("--kind", required=True, choices=["brief", "scenario", "timeline", "critique", "thumbnail", "result"])
+    p.add_argument("--kind", required=True, choices=["brief", "scenario", "scenario-critique", "timeline", "critique", "thumbnail", "result"])
     p.add_argument("--path", required=True)
     p.set_defaults(func=cmd_validate)
 

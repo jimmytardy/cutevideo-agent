@@ -3,7 +3,8 @@
 L'orchestrateur Python ne fait plus que :
 1. écrire `brief.json` dans un run dir à partir du `PipelineContext` ;
 2. lancer `claude -p /make-video` (cf. `studio/launcher.py`) qui orchestre les
-   sous-agents scénariste → voix → monteur → miniaturiste → critique ;
+   sous-agents scénariste → voix → monteur → critique en boucle, puis le miniaturiste
+   une fois sur la vidéo finale ;
 3. refléter la progression en DB (`AgentRun`) et Redis (statut temps réel) ;
 4. persister le résultat : Scenario, Video (short_master + exports plateformes),
    CriticReport, métadonnées de publication et miniature dans `Project.config`.
@@ -11,14 +12,16 @@ L'orchestrateur Python ne fait plus que :
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import shutil
+import time
 import uuid
 from datetime import datetime, UTC
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NoReturn
 
-from sqlalchemy import update
+from sqlalchemy import func, select, update
 
 from agent.core.database import (
     AgentRun,
@@ -28,20 +31,30 @@ from agent.core.database import (
     Scenario,
     Video,
 )
+from agent.core.pipeline_cancel import is_worker_shutdown
+from agent.core import studio_resume
+from agent.skills.media_sources.ai.registry import models_up_to
+from studio.agent_stream import coalesce, encode, trim
 from studio.contracts import (
+    VOICE_CACHE_DIR,
     Brief,
     ContractError,
     Critique,
     Scenario as StudioScenario,
+    ScenarioCritique,
     StudioResult,
     Thumbnail,
     load_contract,
     read_json,
     resolve_in_run_dir,
+    write_json,
 )
 from studio.launcher import ClaudeRunError, default_runs_dir, prepare_run_dir, run_claude
+from studio.render import RENDER_DIR
 
 if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
     from agent.core.orchestrator import PipelineContext
 
 logger = logging.getLogger(__name__)
@@ -49,20 +62,34 @@ logger = logging.getLogger(__name__)
 # Rôle Claude → nom d'agent historique (dashboard, AgentRun, statuts Redis).
 ROLE_AGENT_NAMES = {
     "scenariste": "scenario_agent",
+    "critique-scenario": "scenario_critic_agent",  # boucle scénario, avant la voix (itération 1)
     "voix": "narrator_agent",
     "monteur": "editor_agent",
-    "miniaturiste": "thumbnail_agent",
     "critique": "critic_agent",
+    "miniaturiste": "thumbnail_agent",  # une fois, après la boucle
 }
 STUDIO_AGENT_ORDER = list(ROLE_AGENT_NAMES.values())
+# Étapes non relancées par une itération (rôle non cité par la critique) : dupliquées en `reused`.
+REUSABLE_AGENTS = ("scenario_agent", "scenario_critic_agent", "narrator_agent")
 PLATFORMS = ("youtube", "tiktok", "instagram")
 OUTPUT_ROOT = Path("./output/studio")
 _MAX_LOGGED_CHARS = 4000
+# Écriture de la trace d'un sous-agent (AgentRun.log) au plus toutes les N secondes.
+LOG_FLUSH_INTERVAL_S = 1.5
+# Reprise après un redémarrage du worker (cf. agent/core/studio_resume.py).
+RESUME_FILE = "resume.json"
+RESUME_PROMPT = (
+    "La session a été interrompue par un redémarrage du serveur. Reprends la production là où elle en était "
+    "(section « Reprise » de /make-video, `resume.json`) : ne refais pas ce qui est déjà produit et valide, "
+    "relance l'étape interrompue en demandant au rôle de réutiliser les fichiers déjà présents."
+)
 
 
 def build_brief(ctx: PipelineContext) -> Brief:
     cfg = ctx.channel_config
     plan = ctx.content_plan or {}
+    ai = cfg.ai_fallback
+    ai_on = ai.enabled and ai.plan.value != "off"
     return Brief(
         theme=ctx.theme,
         niche=ctx.niche_prompt,
@@ -71,24 +98,35 @@ def build_brief(ctx: PipelineContext) -> Brief:
         target_duration_s=max(15, min(int(ctx.target_duration_seconds or cfg.short_duration_s), 180)),
         voice=cfg.tts_short.voice or cfg.tts_voice,
         tts_engine=cfg.tts_short.engine or cfg.tts_engine,
-        max_iterations=max(1, min(ctx.max_critic_iterations or cfg.quality_max_iterations, 6)),
+        max_iterations=max(1, min(ctx.max_critic_iterations or cfg.max_critic_iterations, 6)),
         min_score=cfg.min_critic_score,
+        max_scenario_iterations=max(1, min(cfg.max_scenario_iterations, 6)),
+        min_scenario_score=cfg.min_scenario_score,
         editorial_tone=cfg.editorial_tone,
         creative_brief=(ctx.channel.creative_brief or "").strip(),
         content_plan=plan or None,
         animations=cfg.studio_animations,
-        max_ai_images=cfg.ai_fallback.max_ai_images_per_video if cfg.ai_fallback.enabled else 0,
+        visual_style=cfg.studio_visual_style,
+        max_ai_images=ai.max_ai_images_per_video if ai_on else 0,
+        ai_models=models_up_to(ai.plan.value) if ai_on else [],
     )
 
 
 class _ProgressRecorder:
-    """Reflète les événements du stream Claude en AgentRun + statuts Redis."""
+    """Reflète les événements du stream Claude en AgentRun (statut + trace `log` au fil de l'eau)."""
 
-    def __init__(self, project_id: uuid.UUID) -> None:
+    def __init__(self, project_id: uuid.UUID, *, iteration: int = 1) -> None:
         self.project_id = project_id
         self.pid = str(project_id)
-        self.iteration = 1
+        self.iteration = iteration
         self.runs: dict[str, uuid.UUID] = {}
+        self.logs: dict[str, list[str]] = {}  # tool_use_id du sous-agent → lignes de trace
+        self._last_flush: dict[str, float] = {}
+        self._pending: dict[str, asyncio.Task[None]] = {}
+        self._writing: set[str] = set()  # écritures différées en cours vers la base (à ne pas annuler)
+        # Étapes finies en erreur sur un texte de limite d'usage : « interrupted » seulement si la session est
+        # ensuite mise en pause (`mark_limit_interrupted`), sinon elles restent des échecs.
+        self.limit_failures: list[uuid.UUID] = []
         self.result: dict[str, Any] | None = None
 
     async def __call__(self, kind: str, data: dict[str, Any]) -> None:
@@ -96,6 +134,8 @@ class _ProgressRecorder:
             await self._start(data)
         elif kind == "agent_end":
             await self._end(data)
+        elif kind == "agent_stream":
+            self._stream(data)
         elif kind == "result":
             self.result = data
 
@@ -103,30 +143,128 @@ class _ProgressRecorder:
         name = ROLE_AGENT_NAMES.get(data["role"])
         if not name:
             return
+        # Le miniaturiste tourne après la boucle : rattaché à la dernière itération critiquée.
+        iteration = max(1, self.iteration - 1) if data["role"] == "miniaturiste" else self.iteration
+        log = [f"--- Démarrage : {data.get('description') or data['role']} ---"]
         async with AsyncSessionFactory() as session:
+            if data["role"] == "critique" and iteration > 1:
+                await self._record_reused(session, iteration)
             run = AgentRun(
                 project_id=self.project_id,
                 agent_name=name,
                 status="running",
-                iteration=self.iteration,
+                iteration=iteration,
                 input_json={
                     "description": data.get("description", ""),
                     "prompt": str(data.get("prompt", ""))[:_MAX_LOGGED_CHARS],
                 },
+                log=log,
                 started_at=datetime.now(UTC),
                 llm_model="claude-code",
             )
             session.add(run)
             await session.commit()
             self.runs[data["id"]] = run.id
+            self.logs[data["id"]] = log
+            self._last_flush[data["id"]] = time.monotonic()
+
+    async def _record_reused(self, session: AsyncSession, iteration: int) -> None:
+        """Duplique en `reused` (coût nul) les étapes que l'itération n'a pas relancées."""
+        runs = (
+            await session.execute(
+                select(AgentRun)
+                .where(
+                    AgentRun.project_id == self.project_id,
+                    AgentRun.agent_name.in_(REUSABLE_AGENTS),
+                    AgentRun.iteration <= iteration,
+                )
+                .order_by(AgentRun.iteration.asc(), AgentRun.started_at.asc())
+            )
+        ).scalars().all()
+        latest: dict[str, AgentRun] = {}
+        for run in runs:
+            if run.status in ("success", "reused") or run.iteration == iteration:
+                latest[run.agent_name or ""] = run
+        now = datetime.now(UTC)
+        for name, source in latest.items():
+            if source.iteration == iteration:
+                continue
+            origin = int((source.output_json or {}).get("reused_from") or source.iteration)
+            session.add(AgentRun(
+                project_id=self.project_id,
+                agent_name=name,
+                status="reused",
+                iteration=iteration,
+                input_json=source.input_json,
+                output_json={**(source.output_json or {}), "reused_from": origin},
+                log=[f"--- Réutilisé de l'itération {origin} (non cité par la critique) ---"],
+                started_at=now,
+                ended_at=now,
+                llm_model=source.llm_model,
+            ))
+
+    def _stream(self, data: dict[str, Any]) -> None:
+        tool_id = data["id"]
+        log = self.logs.get(tool_id)
+        if log is None:
+            return
+        for line in data["lines"]:
+            coalesce(log, line)
+        if tool_id not in self._pending:
+            delay = max(0.0, self._last_flush.get(tool_id, 0.0) + LOG_FLUSH_INTERVAL_S - time.monotonic())
+            self._pending[tool_id] = asyncio.create_task(self._flush_later(tool_id, delay))
+
+    async def _flush_later(self, tool_id: str, delay: float) -> None:
+        """Écrit la trace après `delay` : un outil long (rendu) reste visible « en cours » sans attendre la suite."""
+        try:
+            await asyncio.sleep(delay)
+            run_id = self.runs.get(tool_id)
+            if run_id is None:
+                return
+            self._last_flush[tool_id] = time.monotonic()
+            log = self.logs[tool_id] = trim(self.logs[tool_id])
+            self._writing.add(tool_id)
+            try:
+                async with AsyncSessionFactory() as session:
+                    await session.execute(update(AgentRun).where(AgentRun.id == run_id).values(log=list(log)))
+                    await session.commit()
+            finally:
+                self._writing.discard(tool_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Trace du sous-agent %s non enregistrée", tool_id)
+        finally:
+            if self._pending.get(tool_id) is asyncio.current_task():
+                del self._pending[tool_id]
+
+    async def _final_log(self, tool_id: str, *lines: str) -> list[str]:
+        """Annule l'écriture différée et renvoie la trace complétée, à écrire avec le statut final.
+
+        Une écriture déjà en cours n'est pas annulée mais attendue : son UPDATE ne doit pas être validé
+        après l'écriture finale (il effacerait « --- Fin --- »)."""
+        task = self._pending.pop(tool_id, None)
+        if task:
+            if tool_id not in self._writing:
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        self._last_flush.pop(tool_id, None)
+        log = self.logs.pop(tool_id, [])
+        log.extend(lines)
+        return trim(log)
 
     async def _end(self, data: dict[str, Any]) -> None:
         name = ROLE_AGENT_NAMES.get(data["role"])
         run_id = self.runs.pop(data["id"], None)
         if not name or run_id is None:
             return
-        status = "failed" if data["is_error"] else "success"
         output = str(data.get("output", ""))[:_MAX_LOGGED_CHARS]
+        status = "failed" if data["is_error"] else "success"
+        if data["is_error"] and studio_resume.is_usage_limit_text(output):
+            self.limit_failures.append(run_id)
+        end_lines = [encode({"type": "error", "text": output[:500]})] if data["is_error"] else []
+        end_lines.append(f"--- Fin : {'erreur' if data['is_error'] else 'succès'} ---")
+        log = await self._final_log(data["id"], *end_lines)
         async with AsyncSessionFactory() as session:
             await session.execute(
                 update(AgentRun)
@@ -135,6 +273,7 @@ class _ProgressRecorder:
                     status=status,
                     output_json={"summary": output},
                     error=output if data["is_error"] else None,
+                    log=log,
                     ended_at=datetime.now(UTC),
                 )
             )
@@ -142,16 +281,31 @@ class _ProgressRecorder:
         if data["role"] == "critique" and not data["is_error"]:
             self.iteration += 1
 
+    async def mark_limit_interrupted(self) -> None:
+        """Session mise en pause : les étapes arrêtées par la limite seront relancées à la reprise."""
+        if not self.limit_failures:
+            return
+        async with AsyncSessionFactory() as session:
+            await session.execute(
+                update(AgentRun)
+                .where(AgentRun.id.in_(self.limit_failures))
+                .values(status="interrupted", error=studio_resume.LIMIT_MESSAGE)
+            )
+            await session.commit()
+        self.limit_failures.clear()
+
     async def close_dangling(self, status: str, reason: str) -> None:
         """Clôt les AgentRun restés ouverts (session interrompue)."""
         if not self.runs:
             return
         async with AsyncSessionFactory() as session:
-            await session.execute(
-                update(AgentRun)
-                .where(AgentRun.id.in_(list(self.runs.values())))
-                .values(status=status, error=reason, ended_at=datetime.now(UTC))
-            )
+            for tool_id, run_id in self.runs.items():
+                log = await self._final_log(tool_id, f"--- Interrompu : {reason} ---")
+                await session.execute(
+                    update(AgentRun)
+                    .where(AgentRun.id == run_id)
+                    .values(status=status, error=reason, log=log, ended_at=datetime.now(UTC))
+                )
             await session.commit()
         self.runs.clear()
 
@@ -168,33 +322,96 @@ class ClaudeStudioRunner:
 
         # Clés du propriétaire de la chaîne, vérifiées avant d'effacer la création précédente.
         keys = await resolve_user_keys(self.ctx.channel.user_id)
-        if not keys.anthropic:
+        if not (keys.anthropic or keys.claude_subscription):
             raise ClaudeRunError(
                 "Aucune clé API Anthropic : ajoutez-la dans Compte → Clés API pour créer des vidéos"
             )
-        brief = build_brief(self.ctx)
-        # Relance complète : on repart d'un état propre (DB et run dir).
-        async with AsyncSessionFactory() as session:
-            await clear_creation_artifacts(self.ctx.project_id, session)
-            await session.commit()
-        for directory in (self.run_dir, self.output_dir):
-            if directory.exists():
-                shutil.rmtree(directory)
-        prepare_run_dir(self.run_dir, brief)
+        config_dir = default_runs_dir() / ".claude-config" / str(self.ctx.channel.user_id)
+
+        decision = await self._resume_decision() if self.ctx.resume else None
+        if decision and decision.action == "give_up":
+            self._forget_session(config_dir)
+            await self._save_session_state(None)
+            raise ClaudeRunError(decision.reason)
+        resuming = decision is not None and decision.action == "resume"
+        # Abonnement Claude (mode CLI) : une limite d'usage met la création en pause jusqu'au reset.
+        subscription = bool(keys.claude_subscription)
+        if subscription and (limited_until := await studio_resume.get_user_limit(self.ctx.channel.user_id)):
+            # Limite déjà connue pour ce compte : on attend le reset sans appeler Claude. Avant tout lancement,
+            # seul le compteur de pauses est gardé (pas la session d'une création précédente).
+            state = decision.state if resuming and decision else {
+                "limit_pauses": (await self._session_state() or {}).get("limit_pauses", 0)
+            }
+            await self._pause(limited_until, state, config_dir)
+
+        if resuming:
+            assert decision is not None
+            session_id = str(decision.state["session_id"])
+            write_json(self.run_dir / RESUME_FILE, {
+                "attempt": decision.state.get("resumes", 0),
+                "limit_pauses": decision.state.get("limit_pauses", 0),
+                "reason": decision.reason,
+                "at": datetime.now(UTC).isoformat(),
+            })
+            await self._save_session_state(decision.state, error_message=f"Reprise automatique ({decision.reason})")
+            logger.info("Claude Studio — projet %s : %s de la session %s", self.ctx.project_id, decision.reason, session_id)
+        else:
+            # Démarrage qui suit une pause d'avant lancement : le compteur de pauses continue (plafond borné).
+            prior = (await self._session_state() or {}) if self.ctx.resume else {}
+            carried = {"limit_pauses": prior["limit_pauses"]} if prior.get("limit_pauses") else {}
+            brief = build_brief(self.ctx)
+            # Relance complète : on repart d'un état propre (DB et run dir).
+            async with AsyncSessionFactory() as session:
+                await clear_creation_artifacts(self.ctx.project_id, session)
+                await session.commit()
+            for directory in (self.run_dir, self.output_dir):
+                if directory.exists():
+                    shutil.rmtree(directory)
+            self._forget_session(config_dir)
+            prepare_run_dir(self.run_dir, brief)
+            session_id = str(uuid.uuid4())
+            # Enregistré avant le lancement : un worker interrompu pourra reprendre cette session.
+            await self._save_session_state({"session_id": session_id, **carried})
+        session_state = decision.state if resuming and decision else {"session_id": session_id, **carried}
         logger.info("Claude Studio — projet %s, run dir %s", self.ctx.project_id, self.run_dir)
 
-        recorder = _ProgressRecorder(self.ctx.project_id)
+        recorder = _ProgressRecorder(self.ctx.project_id, iteration=self._next_iteration() if resuming else 1)
+        launch = {"on_event": recorder, "keys": keys, "config_dir": config_dir}
         try:
-            session_result = await run_claude(
-                self.run_dir,
-                on_event=recorder,
-                keys=keys,
-                config_dir=default_runs_dir() / ".claude-config" / str(self.ctx.channel.user_id),
-            )
+            try:
+                session_result = await run_claude(
+                    self.run_dir,
+                    prompt=RESUME_PROMPT if resuming else "/make-video",
+                    session_id=session_id,
+                    resume=resuming,
+                    **launch,
+                )
+            except ClaudeRunError as exc:
+                limited = subscription and studio_resume.usage_limit_reset(exc) is not None
+                if limited or not (resuming and exc.no_turn_played):
+                    raise
+                # Session introuvable : nouvelle session qui reconstitue l'état depuis le run dir (resume.json).
+                logger.warning("Projet %s : reprise de session impossible (%s), nouvelle session", self.ctx.project_id, exc)
+                session_id = str(uuid.uuid4())
+                session_state = {**session_state, "session_id": session_id}
+                await self._save_session_state(session_state)
+                session_result = await run_claude(self.run_dir, session_id=session_id, **launch)
         except BaseException as exc:
+            if not isinstance(exc, Exception) and is_worker_shutdown():
+                # Reprise au redémarrage : on garde la session et le run dir.
+                await recorder.close_dangling("interrupted", studio_resume.INTERRUPTED_MESSAGE)
+                raise
+            if subscription and isinstance(exc, ClaudeRunError) and (until := studio_resume.usage_limit_reset(exc)):
+                # Limite d'usage : session et run dir gardés, reprise au reset.
+                await recorder.close_dangling("interrupted", studio_resume.LIMIT_MESSAGE)
+                await recorder.mark_limit_interrupted()
+                await self._pause(until, session_state, config_dir)
             await recorder.close_dangling("stopped" if not isinstance(exc, Exception) else "failed", str(exc)[:500])
+            self._forget_session(config_dir)
+            await self._save_session_state(None)  # plus de session à reprendre : état effacé comme en succès
             raise
         await recorder.close_dangling("failed", "sous-agent non terminé")
+        self._forget_session(config_dir)
 
         try:
             result = load_contract(self.run_dir / "result.json", StudioResult)
@@ -203,7 +420,71 @@ class ClaudeStudioRunner:
         if result.status == "failed" or not result.final_video:
             raise ClaudeRunError(f"Claude Studio a échoué : {result.notes or 'aucune vidéo finale'}")
 
-        return await self._persist(result, session_result)
+        video = await self._persist(result, session_result)
+        await self._save_session_state(None, error_message="")
+        return video
+
+    # ── reprise ──────────────────────────────────────────────────────────
+
+    async def _pause(self, until: datetime, state: dict[str, Any] | None, config_dir: Path) -> NoReturn:
+        """Pause jusqu'à `until` (limite d'usage) ; abandon au-delà de `STUDIO_MAX_LIMIT_PAUSES`."""
+        allowed, state = studio_resume.record_pause(state, until)
+        await studio_resume.set_user_limit(self.ctx.channel.user_id, until)
+        if not allowed:
+            self._forget_session(config_dir)
+            await self._save_session_state(None)
+            raise ClaudeRunError(
+                f"Limite d'usage Claude atteinte {state['limit_pauses']} fois, création abandonnée"
+            )
+        await self._save_session_state(state)
+        logger.info("Projet %s : limite d'usage Claude, pause jusqu'à %s", self.ctx.project_id, until.isoformat())
+        raise studio_resume.StudioPaused(until)
+
+    async def _session_state(self) -> dict[str, Any] | None:
+        async with AsyncSessionFactory() as session:
+            project = await session.get(Project, self.ctx.project_id)
+            state = (project.config or {}).get(studio_resume.CONFIG_KEY) if project else None
+        return state if isinstance(state, dict) else None
+
+    async def _resume_decision(self) -> studio_resume.ResumeDecision:
+        async with AsyncSessionFactory() as session:
+            progress = await session.scalar(
+                select(func.count()).select_from(AgentRun).where(
+                    AgentRun.project_id == self.ctx.project_id, AgentRun.status == "success"
+                )
+            )
+        return studio_resume.decide(
+            await self._session_state(),
+            progress=int(progress or 0),
+            run_dir_ok=studio_resume.run_dir_resumable(self.run_dir),
+        )
+
+    async def _save_session_state(self, state: dict[str, Any] | None, *, error_message: str | None = None) -> None:
+        """État de reprise dans Project.config (None = terminé) ; `error_message=""` l'efface."""
+        async with AsyncSessionFactory() as session:
+            project = await session.get(Project, self.ctx.project_id)
+            if project is None:
+                return
+            config = dict(project.config or {})
+            if state is None:
+                config.pop(studio_resume.CONFIG_KEY, None)
+            else:
+                config[studio_resume.CONFIG_KEY] = state
+            values: dict[str, Any] = {"config": config}
+            if error_message is not None:
+                values["error_message"] = error_message or None
+            await session.execute(update(Project).where(Project.id == self.ctx.project_id).values(**values))
+            await session.commit()
+
+    def _forget_session(self, config_dir: Path) -> None:
+        """Supprime la transcription Claude Code de ce run et le marqueur de reprise."""
+        for path in (config_dir / "projects").glob(f"*{self.ctx.project_id}*"):
+            shutil.rmtree(path, ignore_errors=True)
+        (self.run_dir / RESUME_FILE).unlink(missing_ok=True)
+
+    def _next_iteration(self) -> int:
+        """Itération en cours : la suivante de la dernière critique valide."""
+        return max((c.iteration for c in self._load_critiques()), default=0) + 1
 
     # ── persistance ──────────────────────────────────────────────────────
 
@@ -251,6 +532,9 @@ class ClaudeStudioRunner:
                         "strengths": critique.strengths,
                         "issues": critique.issues,
                         "video": critique.video,
+                        # Repli du dashboard une fois le run dir purgé : barres par critère + alertes.
+                        "scores": critique.scores,
+                        "analysis": critique.analysis,
                     },
                     requested_changes=[c.model_dump() for c in critique.changes],
                 ))
@@ -259,7 +543,9 @@ class ClaudeStudioRunner:
 
         await self._export_platforms(master_path, duration, result.iterations)
         await self._update_project_config(scenario, credits, result, session_result, critiques)
-        shutil.rmtree(run_dir / "media" / ".cache", ignore_errors=True)
+        # Caches de travail (médias, segments de rendu, lignes de voix) : inutiles une fois la vidéo persistée.
+        for cache in (run_dir / "media" / ".cache", run_dir / RENDER_DIR, run_dir / VOICE_CACHE_DIR):
+            shutil.rmtree(cache, ignore_errors=True)
         return master
 
     async def _export_platforms(self, master_path: Path, duration: float, iteration: int) -> None:
@@ -292,6 +578,26 @@ class ClaudeStudioRunner:
             except ContractError as exc:
                 logger.warning("Critique ignorée (%s) : %s", path.name, exc)
         return sorted(critiques, key=lambda c: c.iteration)
+
+    def _scenario_critiques(self) -> list[dict[str, Any]]:
+        """Passes de la boucle scénario (stockées dans Project.config, pas de table dédiée)."""
+        out: list[dict[str, Any]] = []
+        for path in self.run_dir.glob("scenario_critique_*.json"):
+            try:
+                c = load_contract(path, ScenarioCritique)
+            except ContractError as exc:
+                logger.warning("Analyse scénario ignorée (%s) : %s", path.name, exc)
+                continue
+            out.append({
+                "iteration": c.iteration,
+                "score": c.score,
+                "decision": c.decision,
+                "summary": c.summary,
+                "scores": c.scores,
+                "changes": c.changes,
+                "unverified_claims": c.unverified_claims,
+            })
+        return sorted(out, key=lambda c: c["iteration"])
 
     @staticmethod
     def _load_credits(final_video: Path) -> list[dict[str, Any]]:
@@ -346,6 +652,7 @@ class ClaudeStudioRunner:
             "iterations": result.iterations,
             "final_video": result.final_video,
             "scores": [c.score for c in critiques],
+            "scenario_critiques": self._scenario_critiques(),
             "notes": result.notes,
             "cost_usd": session_result.get("total_cost_usd"),
             "num_turns": session_result.get("num_turns"),

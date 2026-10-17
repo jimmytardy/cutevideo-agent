@@ -105,8 +105,6 @@ def test_emphasis_tags_are_parsed_per_line() -> None:
     text = "Le plus fou ?\n[rate=-4% pitch=+12Hz] Nous !\n\n[bidon] La Terre freine."
     lines = voicefx.parse_emphasis(text)
     assert lines == [("Le plus fou ?", {}), ("Nous !", {"rate": "-4%", "pitch": "+12Hz"}), ("La Terre freine.", {})]
-    assert voicefx.has_emphasis(text)
-    assert not voicefx.has_emphasis("Phrase simple.\nAutre phrase.")
 
 
 def test_concat_wavs_inserts_short_gaps(tmp_path: Path) -> None:
