@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 import uuid
 from dataclasses import dataclass
@@ -19,6 +18,7 @@ from agent.core.llm_usage import (
     usage_from_anthropic,
     usage_from_gemini,
 )
+from agent.core.vertex import vertex_genai_client
 
 logger = logging.getLogger(__name__)
 
@@ -45,14 +45,10 @@ CONTINUATION_PROMPT = (
     "de préambule : ta sortie sera concaténée telle quelle à la précédente."
 )
 
-LlmProvider = Literal["gemini", "anthropic"]
+LlmProvider = Literal["gemini", "anthropic", "claude_cli"]
 LlmTier = Literal["free", "paid"]
 
 FREE_GEMINI_MODEL = "gemini-2.5-flash-lite"
-DEFAULT_FREE_GEMINI_MODEL = "gemini-2.5-flash"
-PAID_GEMINI_MODELS: frozenset[str] = frozenset(
-    {"gemini-2.5-pro", "gemini-2.5-flash", "gemini-3.1-pro-preview", "gemini-3.5-flash"}
-)
 
 # Seuls les agents Python restants appellent un LLM ; la création passe par Claude Code CLI.
 CONFIGURABLE_AGENTS: frozenset[str] = frozenset(
@@ -99,10 +95,7 @@ def parse_agent_preferences(raw: dict | None) -> dict[str, AgentLlmPreference]:
             continue
         provider = cfg.get("provider", "gemini")
         tier = cfg.get("tier", "free")
-        if provider == "claude_cli":
-            # Ancien choix « Claude CLI (abonnement) » : remplacé par la clé API Anthropic de l'utilisateur.
-            provider, tier = "anthropic", "paid"
-        if provider not in ("gemini", "anthropic"):
+        if provider not in ("gemini", "anthropic", "claude_cli"):
             provider = "gemini"
         if tier not in ("free", "paid"):
             tier = "free"
@@ -150,10 +143,9 @@ def _resolve_gemini_model(
     tier: LlmTier,
 ) -> str:
     """Retourne un modèle Gemini valide pour l'agent (jamais un identifiant Claude)."""
-    from agent.core.agent_llm_constraints import allowed_models_for_agent, normalize_agent_preference
+    from agent.core.agent_llm_constraints import allowed_models, normalize_preference
 
-    normalized = normalize_agent_preference(
-        agent_name,
+    normalized = normalize_preference(
         AgentLlmPreference(
             provider="gemini",
             model=pref.model if pref else FREE_GEMINI_MODEL,
@@ -161,7 +153,7 @@ def _resolve_gemini_model(
         ),
     )
     if model_override and _is_gemini_model(model_override):
-        allowed = allowed_models_for_agent(agent_name, provider="gemini", tier=tier)
+        allowed = allowed_models(provider="gemini", tier=tier)
         if model_override in allowed:
             return model_override
     return normalized.model
@@ -193,6 +185,25 @@ async def _try_user_gemini(
     return LlmCallConfig(provider="gemini", model=model, api_key=ctx.key, tier=tier, source=ctx.source)
 
 
+async def _try_user_subscription(
+    session: AsyncSession, user_id: uuid.UUID, model: str | None
+) -> LlmCallConfig | None:
+    """Claude CLI avec le token d'abonnement de l'utilisateur (admins seulement, cf. ADMIN_ONLY_PROVIDERS)."""
+    from agent.core.agent_llm_constraints import CLAUDE_CLI_MODELS
+    from agent.core.claude_cli_llm import claude_cli_available
+
+    ctx = await resolve_api_key(session, user_id, "claude_subscription", purpose="llm_agent")
+    if not ctx.key or not claude_cli_available():
+        return None
+    return LlmCallConfig(
+        provider="claude_cli",
+        model=model if model in CLAUDE_CLI_MODELS else CLAUDE_CLI_MODELS[0],
+        api_key=ctx.key,
+        tier="free",
+        source=ctx.source,
+    )
+
+
 async def _default_llm(
     session: AsyncSession,
     user_id: uuid.UUID | None,
@@ -202,8 +213,8 @@ async def _default_llm(
     model_override: str | None,
 ) -> LlmCallConfig:
     """Gemini via Vertex AI (compte de service GCP de l'utilisateur) si configuré, sinon sa clé
-    Gemini Developer, sinon sa clé Anthropic. Vertex est préféré car il évite la restriction
-    des clés AQ. de l'API Gemini Developer. Aucune clé plateforme."""
+    Gemini Developer, sinon sa clé Anthropic, sinon son abonnement Claude (admins). Vertex est
+    préféré car il évite la restriction des clés AQ. de l'API Gemini Developer. Aucune clé plateforme."""
     model = _resolve_gemini_model(config_agent, pref=pref, model_override=model_override, tier="free")
     gcp = await _resolve_gcp_for_vertex(session, user_id)
     if gcp is not None:
@@ -215,6 +226,9 @@ async def _default_llm(
         return LlmCallConfig(provider="gemini", model=model, api_key=ctx.key, tier="free", source=ctx.source)
     if user_id is not None:
         resolved = await _try_user_anthropic(session, user_id, resolve_model(config_agent), resolve_model(config_agent))
+        if resolved:
+            return resolved
+        resolved = await _try_user_subscription(session, user_id, None)
         if resolved:
             return resolved
     raise RuntimeError(
@@ -232,12 +246,17 @@ async def resolve_llm_call(
 ) -> LlmCallConfig:
     """Résout provider/modèle/clé pour un appel LLM agent.
 
-    Ordre : clé Anthropic de l'utilisateur (si modèle Claude demandé) → sa clé Gemini
-    (si préférence) → `_default_llm` (Vertex, Gemini puis Anthropic de l'utilisateur).
+    Ordre : abonnement Claude via le CLI (si préférence `claude_cli`, admins) → clé Anthropic de
+    l'utilisateur (si modèle Claude demandé) → sa clé Gemini (si préférence) → `_default_llm`.
     """
     user_id = user.id if user else None
     config_agent = preference_agent_name(agent_name)
     pref = parse_agent_preferences(user.agent_llm_preferences if user else None).get(config_agent)
+
+    if user_id is not None and pref is not None and pref.provider == "claude_cli":
+        resolved = await _try_user_subscription(session, user_id, pref.model)
+        if resolved:
+            return resolved
 
     if user_id is not None:
         config_default = resolve_model(config_agent)
@@ -270,6 +289,18 @@ async def call_llm(
 ) -> str:
     cfg = await resolve_llm_call(session, user, agent_name, model_override=model_override)
     resolved_max = resolve_max_tokens(agent_name, max_tokens)
+
+    if cfg.provider == "claude_cli":
+        from agent.core.claude_cli_llm import call_claude_cli
+
+        return await call_claude_cli(
+            model=cfg.model,
+            prompt=prompt,
+            oauth_token=cfg.api_key,
+            system=system,
+            cacheable_context=cacheable_context,
+            agent_name=agent_name,
+        )
 
     if cfg.provider == "anthropic":
         import anthropic
@@ -412,17 +443,6 @@ def _gemini_truncated(response: Any) -> bool:
     return getattr(reason, "name", str(reason)) == "MAX_TOKENS"
 
 
-def _build_vertex_credentials(gcp: GcpCredentials) -> Any:
-    """Credentials google-auth pour Vertex AI à partir du compte de service GCP de l'utilisateur."""
-    from google.oauth2 import service_account
-
-    if not gcp.credentials_json:
-        raise RuntimeError("compte de service GCP absent : ajoutez-le dans Compte → Clés API")
-    return service_account.Credentials.from_service_account_info(
-        json.loads(gcp.credentials_json), scopes=["https://www.googleapis.com/auth/cloud-platform"]
-    )
-
-
 async def _call_gemini_text(
     *,
     api_key: str,
@@ -439,12 +459,9 @@ async def _call_gemini_text(
     from google.genai import types
 
     if use_vertex and gcp is not None:
-        client = genai.Client(
-            vertexai=True,
-            project=gcp.project_id,
-            location=gcp.location,
-            credentials=_build_vertex_credentials(gcp),
-        )
+        if not gcp.credentials_json:
+            raise RuntimeError("compte de service GCP absent : ajoutez-le dans Compte → Clés API")
+        client = vertex_genai_client(gcp.credentials_json, gcp.location, project_id=gcp.project_id)
     else:
         client = genai.Client(api_key=api_key)
     full_prompt = prompt

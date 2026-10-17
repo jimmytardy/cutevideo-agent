@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from studio.contracts import Brief, Critique, Scenario, StudioResult, Thumbnail, Timeline, load_contract
+from studio.contracts import Brief, Critique, Scenario, ScenarioCritique, StudioResult, Thumbnail, Timeline, load_contract
 from studio.launcher import ROLES, WORKSPACE_TEMPLATE, LaunchConfig, prepare_run_dir, run_claude
 from studio.media import probe_media
 from studio.sandbox import scripts_supported
@@ -65,7 +65,12 @@ def test_session_succeeds(generated: dict) -> None:
 
 def test_subagents_run_in_pipeline_order_with_iteration(generated: dict) -> None:
     starts = [d["role"] for kind, d in generated["events"] if kind == "agent_start"]
-    assert starts == ["scenariste", "voix", "monteur", "miniaturiste", "critique", "monteur", "critique"]
+    # Boucle scénario (2 passes) avant la voix ; itération vidéo 2 : seul le monteur est cité (voix réutilisée) ;
+    # la miniature est faite une fois, à la fin.
+    assert starts == [
+        "scenariste", "critique-scenario", "scenariste", "critique-scenario",
+        "voix", "monteur", "critique", "monteur", "critique", "miniaturiste",
+    ]
     ends = [d for kind, d in generated["events"] if kind == "agent_end"]
     assert len(ends) == len(starts)
     assert not any(d["is_error"] for d in ends)
@@ -85,6 +90,10 @@ def test_all_contract_files_are_valid(generated: dict) -> None:
     run_dir: Path = generated["run_dir"]
     scenario = load_contract(run_dir / "scenario.json", Scenario)
     assert scenario.publish.title
+    # Boucle scénario : la passe 1 signale un fait à vérifier, la passe 2 (sourcée) est approuvée.
+    passes = [load_contract(run_dir / f"scenario_critique_{i}.json", ScenarioCritique) for i in (1, 2)]
+    assert [c.decision for c in passes] == ["iterate", "approve"]
+    assert passes[0].unverified_claims and scenario.sources
     assert load_contract(run_dir / "timeline.json", Timeline).duration == pytest.approx(3.0)
     critiques = [load_contract(run_dir / f"critique_{i}.json", Critique) for i in (1, 2)]
     assert [c.decision for c in critiques] == ["iterate", "approve"]
@@ -124,7 +133,7 @@ def test_thumbnails_have_expected_formats(generated: dict) -> None:
     for rel in (thumb.vertical, thumb.horizontal):
         info = asyncio.run(probe_media(run_dir / rel))
         sizes[rel] = (info["width"], info["height"])
-    assert sizes == {"thumbnails/v1_9x16.png": (1080, 1920), "thumbnails/v1_16x9.png": (1280, 720)}
+    assert sizes == {"thumbnails/final_9x16.png": (1080, 1920), "thumbnails/final_16x9.png": (1280, 720)}
 
 
 def test_workspace_only_references_existing_tools() -> None:
@@ -132,6 +141,7 @@ def test_workspace_only_references_existing_tools() -> None:
     commands = set(build_parser()._subparsers._group_actions[0].choices)  # type: ignore[union-attr]
     texts = [WORKSPACE_TEMPLATE.joinpath("CLAUDE.md").read_text(encoding="utf-8")]
     texts += [p.read_text(encoding="utf-8") for p in (WORKSPACE_TEMPLATE / ".claude").rglob("*.md")]
+    texts += [p.read_text(encoding="utf-8") for p in (WORKSPACE_TEMPLATE / "docs").rglob("*.md")]
     cited = set()
     for text in texts:
         cited |= set(re.findall(r"studio\.tools ([a-z-]+)", text))

@@ -3,14 +3,17 @@ from __future__ import annotations
 import asyncio
 import logging
 import wave
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from agent.core.llm_retry import retry_transient_sync
+from agent.core.llm_retry import MAX_TRANSIENT_RETRIES, retry_transient_sync
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_GEMINI_TTS_MODEL = "gemini-2.5-flash-preview-tts"
+# Sur Vertex AI, les modèles TTS ne portent pas les mêmes noms que sur AI Studio.
+DEFAULT_VERTEX_TTS_MODEL = "gemini-2.5-flash-tts"
 DEFAULT_GEMINI_VOICE = "Leda"
 DEFAULT_GEMINI_LANGUAGE = "fr"
 
@@ -67,6 +70,33 @@ def build_gemini_tts_prompt(
     return f"{style_block}\n\nLis exactement le texte suivant, sans rien ajouter ni modifier :\n{text}"
 
 
+@dataclass(frozen=True)
+class VertexTarget:
+    """Gemini TTS servi par Vertex AI avec le compte de service de l'utilisateur."""
+
+    credentials_json: str
+    location: str | None
+    model: str = DEFAULT_VERTEX_TTS_MODEL
+
+
+def vertex_tts_target(credentials_json: str | None, location: str | None = None) -> VertexTarget | None:
+    """Cible Vertex de la voix (None sans compte GCP).
+
+    Modèle et région viennent de `data/agent_config.json → tts.gemini.vertex_model / vertex_location` :
+    le modèle TTS n'est pas servi dans toutes les régions, la région du compte ne sert qu'à défaut.
+    """
+    if not (credentials_json or "").strip():
+        return None
+    from agent.core.config import load_agent_config
+
+    cfg = load_agent_config().get("tts", {}).get("gemini", {})
+    return VertexTarget(
+        credentials_json=credentials_json.strip(),
+        location=str(cfg.get("vertex_location") or "").strip() or location,
+        model=str(cfg.get("vertex_model") or "").strip() or DEFAULT_VERTEX_TTS_MODEL,
+    )
+
+
 def _write_pcm_wav(path: Path, pcm: bytes, *, rate: int = 24000) -> None:
     with wave.open(str(path), "wb") as wf:
         wf.setnchannels(1)
@@ -85,11 +115,18 @@ async def synthesize_gemini_tts(
     mood: str = "",
     editorial_tone: str = "",
     tts_style: str = "",
-    api_key: str,
+    api_key: str | None = None,
+    vertex: VertexTarget | None = None,
     mastering: dict[str, Any] | None = None,
+    transient_retries: int = MAX_TRANSIENT_RETRIES,
 ) -> float:
-    """Synthèse Gemini Flash TTS → WAV normalisé 48 kHz."""
-    if not api_key.strip():
+    """Synthèse Gemini Flash TTS → WAV normalisé 48 kHz.
+
+    Avec la clé Gemini (`api_key`) si elle est fournie, sinon via Vertex AI (`vertex`, dont le
+    modèle remplace `model`).
+    """
+    key = (api_key or "").strip()
+    if not key and vertex is None:
         raise RuntimeError("Clé Gemini non configurée pour la synthèse TTS")
 
     try:
@@ -104,7 +141,13 @@ async def synthesize_gemini_tts(
         editorial_tone=editorial_tone,
         tts_style=tts_style,
     )
-    client = genai.Client(api_key=api_key.strip())
+    if key:
+        client = genai.Client(api_key=key)
+    else:
+        from agent.core.vertex import vertex_genai_client
+
+        client = vertex_genai_client(vertex.credentials_json, vertex.location)
+        model = vertex.model
 
     def _call() -> object:
         return retry_transient_sync(
@@ -124,6 +167,7 @@ async def synthesize_gemini_tts(
                 ),
             ),
             label="gemini_tts",
+            max_retries=transient_retries,
         )
 
     loop = asyncio.get_event_loop()

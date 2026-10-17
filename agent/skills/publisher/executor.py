@@ -149,6 +149,7 @@ async def _publish_youtube(
                 title=title,
                 theme=channel.theme_category or description[:80],
                 channel_config=channel_config,
+                user_id=channel.user_id,
                 output_dir=Path(tmp),
             )
             if thumbnail_path:
@@ -184,6 +185,7 @@ async def _resolve_youtube_thumbnail_path(
     title: str,
     theme: str,
     channel_config: ChannelRuntimeConfig,
+    user_id: uuid.UUID | None,
     output_dir: Path,
 ) -> Path | None:
     """Miniature agent (Project.config) ou fallback generate_thumbnail."""
@@ -215,6 +217,7 @@ async def _resolve_youtube_thumbnail_path(
         theme=theme,
         output_dir=output_dir,
         ai_cfg=channel_config.ai_fallback,
+        user_id=user_id,
         editorial_tone=channel_config.editorial_tone,
         aspect_ratio="16:9",
     )

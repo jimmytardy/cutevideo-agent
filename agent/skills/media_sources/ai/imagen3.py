@@ -8,10 +8,12 @@ from typing import TYPE_CHECKING
 
 import aiohttp
 
-from agent.core.config import load_agent_config
-from agent.skills.media_sources.ai.base import ImageGenerationRequest, ImageGenerationResult
-from agent.skills.media_sources.ai.prompt_builder import build_documentary_prompt
-
+from agent.skills.media_sources.ai.base import (
+    ImageGenerationRequest,
+    ImageGenerationResult,
+    ai_fallback_config,
+    ai_license_label,
+)
 
 if TYPE_CHECKING:
     from agent.core.api_keys import GcpCredentials
@@ -25,7 +27,7 @@ IMAGEN3_ATTRIBUTIONS: dict[str, str] = {
 
 
 def _model_for_plan(plan_id: str) -> str | None:
-    cfg = load_agent_config().get("media_sources", {}).get("ai_fallback", {}).get("imagen3", {})
+    cfg = ai_fallback_config().get("imagen3", {})
     mapping = {
         "imagen3_fast": str(cfg.get("fast_model", "imagen-3.0-fast-generate-001")),
         "imagen3": str(cfg.get("standard_model", "imagen-3.0-generate-002")),
@@ -89,21 +91,10 @@ class Imagen3Provider:
             f"/locations/{location}/publishers/google/models/{model}:predict"
         )
 
-        full_prompt = (
-            request.prompt
-            if request.use_prompt_as_is
-            else build_documentary_prompt(
-                request.prompt,
-                theme_category=request.theme_category,
-                editorial_tone=request.editorial_tone,
-                aspect_ratio=request.aspect_ratio,
-                style_block=request.style_block,
-            )
-        )
         aspect = "9:16" if request.aspect_ratio == "9:16" else "16:9"
 
         payload = {
-            "instances": [{"prompt": full_prompt}],
+            "instances": [{"prompt": request.prompt}],
             "parameters": {
                 "sampleCount": 1,
                 "aspectRatio": aspect,
@@ -143,18 +134,12 @@ class Imagen3Provider:
             dest = request.output_dir / f"ai_{uuid.uuid4().hex[:8]}.jpg"
             dest.write_bytes(base64.b64decode(encoded))
 
-            license_label = str(
-                load_agent_config()
-                .get("media_sources", {})
-                .get("ai_fallback", {})
-                .get("license", "synthetic-ai-generated")
-            )
             return ImageGenerationResult(
                 local_path=dest,
                 attribution=IMAGEN3_ATTRIBUTIONS.get(
                     self.plan_id, "Image générée par IA (Google Imagen 3)"
                 ),
-                license=license_label,
+                license=ai_license_label(),
                 title=request.prompt[:120],
                 provider_plan=self.plan_id,
             )

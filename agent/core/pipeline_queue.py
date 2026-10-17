@@ -116,8 +116,9 @@ async def enqueue_pipeline_task(
     *,
     user_id: uuid.UUID | None = None,
     reconcile_orphan: bool = False,
+    resume: bool = False,
 ) -> QueueStatus:
-    """Ajoute un pipeline à la file prioritaire."""
+    """Ajoute un pipeline à la file prioritaire (`resume` : reprendre la création au lieu de repartir de zéro)."""
     project_key = str(project_id)
     await queue.connect()
 
@@ -157,6 +158,9 @@ async def enqueue_pipeline_task(
         "enqueued_at_ms": enqueued_at_ms,
         "queued_at": queued_at.isoformat(),
     }
+    if reconcile_orphan or resume:
+        # Worker interrompu ou fin de pause (limite d'usage) : la création reprend où elle en était.
+        payload["resume"] = True
 
     await queue.client.set(_payload_key(project_key), json.dumps(payload))
     await queue.client.zadd(PIPELINE_ZQUEUE, {project_key: score})

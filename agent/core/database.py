@@ -262,6 +262,8 @@ class AgentRun(Base):
     input_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     output_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     error: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Trace d'exécution du sous-agent (lignes `studio.agent_stream`), écrite au fil de l'eau.
+    log: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
     ended_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
     cost_estimate_usd: Mapped[float | None] = mapped_column(Numeric(10, 6, asdecimal=False), nullable=True)
@@ -306,3 +308,30 @@ class SchedulerRun(Base):
     ended_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
     result_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class SchedulerSettings(Base):
+    """Réglage global du scheduler (ligne unique id=1 ; absente = activé)."""
+
+    __tablename__ = "scheduler_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class SchedulerJobConfig(Base):
+    """Planification d'un job (absente = valeurs de `jobs.JOB_DEFAULTS`)."""
+
+    __tablename__ = "scheduler_job_configs"
+
+    job_id: Mapped[str] = mapped_column(String, primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    cron: Mapped[str] = mapped_column(String, nullable=False)
+    timezone: Mapped[str] = mapped_column(String, nullable=False)
+    params: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
+    )

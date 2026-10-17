@@ -121,3 +121,30 @@ async def test_resolve_llm_call_claude_override_with_anthropic_key() -> None:
 
     assert cfg.provider == "anthropic"
     assert cfg.model == "claude-sonnet-5-5"
+
+
+@pytest.mark.asyncio
+async def test_call_gemini_text_via_vertex_uses_shared_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Le client Vertex vient de `agent.core.vertex` : projet et région de la clé GCP résolue."""
+    from types import SimpleNamespace
+
+    from agent.core.api_keys import GcpCredentials
+    from agent.core.llm_resolver import _call_gemini_text
+
+    clients: list[dict] = []
+    response = SimpleNamespace(text="ok", candidates=None, usage_metadata=None)
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            clients.append(kwargs)
+            self.aio = SimpleNamespace(models=SimpleNamespace(generate_content=AsyncMock(return_value=response)))
+
+    monkeypatch.setattr("google.genai.Client", FakeClient)
+    monkeypatch.setattr("agent.core.vertex.vertex_credentials", lambda _json: "creds")
+    gcp = GcpCredentials(project_id="proj-meta", location="europe-west1", credentials_json='{"project_id": "x"}')
+    text, _usage = await _call_gemini_text(
+        api_key="", model="gemini-2.5-flash", prompt="p", system=None, max_tokens=10,
+        cacheable_context=None, use_vertex=True, gcp=gcp,
+    )
+    assert text == "ok"
+    assert clients == [{"vertexai": True, "project": "proj-meta", "location": "europe-west1", "credentials": "creds"}]

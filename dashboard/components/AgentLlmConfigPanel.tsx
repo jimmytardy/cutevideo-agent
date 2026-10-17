@@ -30,9 +30,8 @@ import {
   getAgentLabel,
   groupConfigurableAgents,
   isLinkedAgent,
-  allowedProvidersFor,
-  defaultModelForAgent,
-  modelOptionsForAgent,
+  defaultModel,
+  modelOptionsFor,
   normalizePreference,
   resolvePreferenceAgent,
 } from '@/lib/agentLlm'
@@ -48,6 +47,7 @@ interface AgentLlmRowProps {
   linkedToLabel?: string
   hasGeminiKey: boolean
   hasAnthropicKey: boolean
+  hasClaudeCli: boolean
   onToggleDetails: () => void
   onProviderChange: (provider: LlmProvider) => void
   onTierChange: (tier: LlmTier) => void
@@ -63,17 +63,15 @@ function AgentLlmRow({
   linkedToLabel,
   hasGeminiKey,
   hasAnthropicKey,
+  hasClaudeCli,
   onToggleDetails,
   onProviderChange,
   onTierChange,
   onModelChange,
 }: AgentLlmRowProps) {
   const info = getAgentInfo(agentName)
-  const sourceAgent = resolvePreferenceAgent(agentName)
-  const providers = allowedProvidersFor(sourceAgent)
-  const models = modelOptionsForAgent(sourceAgent, pref.provider, pref.tier)
-  const controlsDisabled = readOnly || (!hasGeminiKey && !hasAnthropicKey)
-  const geminiOnly = providers.length === 1 && providers[0] === 'gemini'
+  const models = modelOptionsFor(pref.provider, pref.tier)
+  const controlsDisabled = readOnly || (!hasGeminiKey && !hasAnthropicKey && !hasClaudeCli)
 
   return (
     <>
@@ -144,9 +142,12 @@ function AgentLlmRow({
             <MenuItem value="gemini" disabled={!hasGeminiKey}>
               Gemini
             </MenuItem>
-            {!geminiOnly && (
-              <MenuItem value="anthropic" disabled={!hasAnthropicKey || readOnly}>
-                Anthropic
+            <MenuItem value="anthropic" disabled={!hasAnthropicKey || readOnly}>
+              Anthropic
+            </MenuItem>
+            {hasClaudeCli && (
+              <MenuItem value="claude_cli" disabled={readOnly}>
+                Claude CLI (abonnement)
               </MenuItem>
             )}
           </TextField>
@@ -166,6 +167,8 @@ function AgentLlmRow({
                 Payant
               </MenuItem>
             </TextField>
+          ) : pref.provider === 'claude_cli' ? (
+            <Chip label="Abonnement" size="small" variant="outlined" />
           ) : (
             <Chip label="Payant" size="small" variant="outlined" />
           )}
@@ -248,7 +251,7 @@ export default function AgentLlmConfigPanel() {
 
   const persistPreferences = useCallback(
     async (nextPreferences: Record<string, AgentLlmPreference>) => {
-      if (!data?.has_gemini_key && !data?.has_anthropic_key) return
+      if (!data?.has_gemini_key && !data?.has_anthropic_key && !data?.has_claude_cli) return
 
       const requestId = ++saveRequestId.current
       setSaving(true)
@@ -273,7 +276,7 @@ export default function AgentLlmConfigPanel() {
         }
       }
     },
-    [data?.has_gemini_key, data?.has_anthropic_key, mutate],
+    [data?.has_gemini_key, data?.has_anthropic_key, data?.has_claude_cli, mutate],
   )
 
   const applyAgentChange = useCallback(
@@ -281,7 +284,7 @@ export default function AgentLlmConfigPanel() {
       setPreferences((prev) => {
         const current = prev[agentName]
         if (!current) return prev
-        const nextPref = normalizePreference({ ...current, ...patch }, agentName)
+        const nextPref = normalizePreference({ ...current, ...patch })
         const updated = { ...prev, [agentName]: nextPref }
         void persistPreferences(updated)
         return updated
@@ -292,14 +295,14 @@ export default function AgentLlmConfigPanel() {
 
   const handleProviderChange = (agentName: string, provider: LlmProvider) => {
     const tier: LlmTier = provider === 'anthropic' ? 'paid' : 'free'
-    const model = defaultModelForAgent(agentName, provider, tier)
+    const model = defaultModel(provider, tier)
     applyAgentChange(agentName, { provider, tier, model })
   }
 
   const handleTierChange = (agentName: string, tier: LlmTier) => {
     const current = preferences[agentName]
     if (!current || current.provider !== 'gemini') return
-    const model = defaultModelForAgent(agentName, 'gemini', tier)
+    const model = defaultModel('gemini', tier)
     applyAgentChange(agentName, { tier, model })
   }
 
@@ -320,7 +323,7 @@ export default function AgentLlmConfigPanel() {
         enregistrée automatiquement. Les agents utilisent uniquement vos propres clés API.
       </Typography>
 
-      {!data.has_gemini_key && !data.has_anthropic_key && (
+      {!data.has_gemini_key && !data.has_anthropic_key && !data.has_claude_cli && (
         <Alert severity="warning" sx={{ mb: 2 }}>
           Les agents ne peuvent pas fonctionner sans clé : enregistrez une clé Gemini ou Anthropic dans{' '}
           <Link href="/account/api-keys">Clés API</Link>.
@@ -383,6 +386,7 @@ export default function AgentLlmConfigPanel() {
                         linkedToLabel={linked ? getAgentLabel(sourceAgent) : undefined}
                         hasGeminiKey={data.has_gemini_key}
                         hasAnthropicKey={data.has_anthropic_key}
+                        hasClaudeCli={Boolean(data.has_claude_cli)}
                         onToggleDetails={() => toggleAgentDetails(agentName)}
                         onProviderChange={(provider) => handleProviderChange(sourceAgent, provider)}
                         onTierChange={(tier) => handleTierChange(sourceAgent, tier)}

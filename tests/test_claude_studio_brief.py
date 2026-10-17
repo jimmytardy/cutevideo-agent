@@ -63,3 +63,33 @@ def test_runner_refuses_to_start_without_owner_anthropic_key(tmp_path, monkeypat
     with pytest.raises(ClaudeRunError, match="Compte → Clés API"):
         asyncio.run(runner.run())
     assert (runner.run_dir / "result.json").exists()
+
+
+def test_build_brief_scenario_and_video_loop_defaults() -> None:
+    brief = build_brief(_ctx(channel_config=ChannelRuntimeConfig(), max_critic_iterations=None))
+    assert (brief.min_scenario_score, brief.max_scenario_iterations) == (90, 5)
+    assert (brief.min_score, brief.max_iterations) == (80, 5)
+
+
+def test_build_brief_scenario_loop_channel_override() -> None:
+    cfg = ChannelRuntimeConfig(min_scenario_score=95, max_scenario_iterations=9)
+    brief = build_brief(_ctx(channel_config=cfg))
+    assert brief.min_scenario_score == 95
+    assert brief.max_scenario_iterations == 6  # plafond du contrat
+
+
+def test_build_brief_ai_models_follow_channel_plan() -> None:
+    from agent.core.channel_config import AiFallbackConfig, AiImagePlan
+    from studio.launcher import usable_ai_models
+
+    on = ChannelRuntimeConfig(ai_fallback=AiFallbackConfig(plan=AiImagePlan.FLUX_2_DEV, max_ai_images_per_video=3))
+    brief = build_brief(_ctx(channel_config=on))
+    assert brief.max_ai_images == 3
+    assert brief.ai_models[0] == "flux_2_dev"
+
+    # Plan « off » resté `enabled` : aucune image IA, même avec une clé fal.
+    off = ChannelRuntimeConfig(ai_fallback=AiFallbackConfig(plan=AiImagePlan.OFF, enabled=True))
+    brief = build_brief(_ctx(channel_config=off))
+    assert brief.max_ai_images == 0
+    assert brief.ai_models == []
+    assert usable_ai_models(brief, MagicMock(fal="k", gcp_credentials_json=None)) == []

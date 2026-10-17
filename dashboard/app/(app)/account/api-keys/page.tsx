@@ -11,6 +11,7 @@ import Alert from '@mui/material/Alert'
 import Card from '@mui/material/Card'
 import CardContent from '@mui/material/CardContent'
 import Chip from '@mui/material/Chip'
+import CircularProgress from '@mui/material/CircularProgress'
 import List from '@mui/material/List'
 import ListItem from '@mui/material/ListItem'
 import ListItemText from '@mui/material/ListItemText'
@@ -20,6 +21,7 @@ import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline'
 import HighlightOffOutlinedIcon from '@mui/icons-material/HighlightOffOutlined'
 import { PageContainer, PageHeader, PageSection } from '@/components/layout'
 import { API_BASE, fetcher, saveApiKey } from '@/lib/api'
+import { useMe } from '@/lib/hooks'
 import {
   API_KEY_PROVIDERS,
   getApiKeyProvider,
@@ -35,6 +37,31 @@ type ApiKeyStatus = {
   metadata?: Record<string, unknown> | null
 }
 
+type KeyHealthStatus = 'ok' | 'invalid' | 'expired' | 'no_credit' | 'quota' | 'unavailable'
+
+type ApiKeyHealth = {
+  provider: string
+  status: KeyHealthStatus
+  detail: string
+}
+
+const HEALTH_LABELS: Record<KeyHealthStatus, { label: string; color: 'success' | 'error' | 'warning' | 'default' }> = {
+  ok: { label: 'Fonctionne', color: 'success' },
+  invalid: { label: 'Invalide', color: 'error' },
+  expired: { label: 'Expirée', color: 'error' },
+  no_credit: { label: 'Crédit épuisé', color: 'error' },
+  quota: { label: 'Quota atteint', color: 'warning' },
+  unavailable: { label: 'Non vérifiable', color: 'default' },
+}
+
+function KeyHealthChip({ health, checking }: { health?: ApiKeyHealth; checking: boolean }) {
+  if (!health) {
+    return checking ? <CircularProgress size={14} aria-label="Vérification en cours" /> : null
+  }
+  const { label, color } = HEALTH_LABELS[health.status] ?? HEALTH_LABELS.unavailable
+  return <Chip label={label} size="small" color={color} variant={health.status === 'ok' ? 'outlined' : 'filled'} />
+}
+
 function KeyConfiguredIcon({ configured }: { configured: boolean }) {
   return configured ? (
     <CheckCircleOutlineIcon fontSize="small" color="success" aria-label="Clé enregistrée" />
@@ -45,6 +72,18 @@ function KeyConfiguredIcon({ configured }: { configured: boolean }) {
 
 export default function ApiKeysPage() {
   const { data: keys, mutate } = useSWR<ApiKeyStatus[]>(`${API_BASE}/me/api-keys`, fetcher)
+  const { data: me } = useMe()
+  const providers = API_KEY_PROVIDERS.filter((p) => !p.adminOnly || me?.is_admin)
+  // Chaque vérification interroge les fournisseurs : pas de revalidation automatique au focus.
+  const {
+    data: health,
+    isValidating: checking,
+    mutate: recheck,
+  } = useSWR<ApiKeyHealth[]>(`${API_BASE}/me/api-keys/health`, fetcher, {
+    revalidateOnFocus: false,
+    revalidateOnReconnect: false,
+  })
+  const healthByProvider = new Map((Array.isArray(health) ? health : []).map((h) => [h.provider, h]))
   const [provider, setProvider] = useState<ApiKeyProviderId>('gemini')
   const [apiKey, setApiKey] = useState('')
   const [metadata, setMetadata] = useState<Record<string, string>>({})
@@ -82,6 +121,7 @@ export default function ApiKeysPage() {
     setApiKey('')
     setMessage('Clé enregistrée')
     mutate()
+    recheck()
   }
 
   return (
@@ -96,9 +136,14 @@ export default function ApiKeysPage() {
         <PageSection title="Clés enregistrées">
           <Card sx={{ mb: 3 }}>
             <CardContent>
-              <Typography variant="h6" gutterBottom>
-                Clés enregistrées
-              </Typography>
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mb: 1 }}>
+                <Typography variant="h6">Clés enregistrées</Typography>
+                {configuredKeys.length > 0 && (
+                  <Button size="small" onClick={() => recheck()} disabled={checking}>
+                    {checking ? 'Vérification…' : 'Revérifier'}
+                  </Button>
+                )}
+              </Box>
               {configuredKeys.length === 0 ? (
                 <Typography variant="body2" color="text.secondary">
                   Aucune clé enregistrée pour le moment.
@@ -123,7 +168,13 @@ export default function ApiKeysPage() {
                             >
                               {k.key_hint || '••••••••'}
                             </Typography>
+                            <KeyHealthChip health={healthByProvider.get(k.provider)} checking={checking} />
                           </Box>
+                        }
+                        secondary={
+                          healthByProvider.get(k.provider)?.status !== 'ok'
+                            ? healthByProvider.get(k.provider)?.detail
+                            : undefined
                         }
                       />
                     </ListItem>
@@ -155,7 +206,7 @@ export default function ApiKeysPage() {
               },
             }}
           >
-            {API_KEY_PROVIDERS.map((p) => (
+            {providers.map((p) => (
               <MenuItem key={p.id} value={p.id}>
                 <ListItemIcon sx={{ minWidth: 32 }}>
                   <KeyConfiguredIcon configured={configuredByProvider.get(p.id) ?? false} />

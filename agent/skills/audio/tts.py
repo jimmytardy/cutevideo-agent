@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from agent.core.config import settings
 from agent.skills.audio.gemini_tts import (
@@ -13,7 +13,6 @@ from agent.skills.video.ffmpeg_runtime import filter_thread_args, probe_duration
 
 logger = logging.getLogger(__name__)
 
-GeminiTtsApplyTo = Literal["off", "shorts", "long", "both"]
 
 
 async def normalize_wav(
@@ -47,14 +46,18 @@ def resolve_engine(
     *,
     gemini_api_key: str | None = None,
     azure_speech_key: str | None = None,
+    gcp_credentials_json: str | None = None,
 ) -> str:
-    """Moteur effectif : les clés sont celles de l'utilisateur (None = moteur indisponible)."""
+    """Moteur effectif : les clés sont celles de l'utilisateur (None = moteur indisponible).
+
+    Gemini est disponible avec une clé Gemini ou un compte de service GCP (Vertex AI).
+    """
     engine = requested or settings.tts_engine or "azure"
     if engine == "azure" and not (azure_speech_key or "").strip():
         logger.warning("Azure Speech non configuré — fallback edge-tts")
         return "edge-tts"
-    if engine == "gemini" and not (gemini_api_key or "").strip():
-        logger.warning("Gemini TTS demandé mais clé Gemini absente — fallback azure/edge-tts")
+    if engine == "gemini" and not (gemini_api_key or "").strip() and not (gcp_credentials_json or "").strip():
+        logger.warning("Gemini TTS demandé sans clé Gemini ni compte Google Cloud — fallback azure/edge-tts")
         return resolve_engine(
             "azure",
             gemini_api_key=gemini_api_key,
@@ -82,36 +85,57 @@ async def generate_tts(
     gemini_api_key: str | None = None,
     azure_speech_key: str | None = None,
     azure_speech_region: str | None = None,
+    gcp_credentials_json: str | None = None,
+    gcp_location: str | None = None,
     mastering: dict[str, Any] | None = None,
 ) -> tuple[float, str]:
-    """Génère un fichier audio WAV depuis un texte. Retourne (durée_s, moteur_effectif)."""
+    """Génère un fichier audio WAV depuis un texte. Retourne (durée_s, moteur_effectif).
+
+    Gemini : clé Gemini d'abord, puis Vertex AI (`gemini-vertex`) si la clé est absente ou refusée.
+    """
     resolved = resolve_engine(
         engine,
         gemini_api_key=gemini_api_key,
         azure_speech_key=azure_speech_key,
+        gcp_credentials_json=gcp_credentials_json,
     )
     effective_gemini = (gemini_api_key or "").strip()
     effective_azure = (azure_speech_key or "").strip()
     effective_region = (azure_speech_region or settings.azure_speech_region).strip()
 
     if resolved == "gemini":
-        from agent.skills.audio.gemini_tts import synthesize_gemini_tts
+        from agent.core.vertex import gemini_key_refused
+        from agent.skills.audio.gemini_tts import synthesize_gemini_tts, vertex_tts_target
 
-        if not effective_gemini:
+        vertex = vertex_tts_target(gcp_credentials_json, gcp_location)
+        common: dict[str, Any] = {
+            "voice": voice,
+            "language_code": gemini_language_code,
+            "mood": mood,
+            "editorial_tone": editorial_tone,
+            "tts_style": tts_style,
+            "mastering": mastering,
+        }
+        if effective_gemini:
+            try:
+                duration = await synthesize_gemini_tts(
+                    text,
+                    output_path,
+                    model=gemini_model,
+                    api_key=effective_gemini,
+                    # Vertex en réserve : un quota épuisé ne mérite pas d'attendre les relances.
+                    **({"transient_retries": 1} if vertex else {}),
+                    **common,
+                )
+                return duration, "gemini"
+            except Exception as exc:
+                if vertex is None or not gemini_key_refused(exc):
+                    raise
+                logger.warning("Clé Gemini refusée (%s) — nouvel essai via Vertex AI", str(exc)[:120])
+        if vertex is None:
             raise RuntimeError("Clé Gemini non configurée pour la synthèse TTS")
-        duration = await synthesize_gemini_tts(
-            text,
-            output_path,
-            voice=voice,
-            model=gemini_model,
-            language_code=gemini_language_code,
-            mood=mood,
-            editorial_tone=editorial_tone,
-            tts_style=tts_style,
-            api_key=effective_gemini,
-            mastering=mastering,
-        )
-        return duration, "gemini"
+        duration = await synthesize_gemini_tts(text, output_path, vertex=vertex, **common)
+        return duration, "gemini-vertex"
 
     if resolved == "azure":
         from agent.skills.audio.azure_tts import synthesize_ssml

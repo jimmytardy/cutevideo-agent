@@ -7,14 +7,18 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.core.api_keys import (
+    ADMIN_ONLY_PROVIDERS,
     ALLOWED_PROVIDERS,
     api_key_hint_from_encrypted,
+    decrypt_api_key,
     encrypt_api_key,
     get_user_api_key_row,
 )
-from agent.core.api_key_validation import ApiKeyValidationError, validate_api_key
+from agent.core.api_key_validation import ApiKeyValidationError, KeyHealth, check_api_key, validate_api_key
+from agent.core.claude_cli_llm import claude_cli_available
+from agent.core.concurrency import bounded_gather
 from agent.core.database import User, UserApiKey, get_db
-from agent.core.agent_llm_constraints import normalize_agent_preference, normalize_preferences_map
+from agent.core.agent_llm_constraints import normalize_preference, normalize_preferences_map
 from agent.core.agent_llm_recommendations import all_agent_llm_recommendations
 from agent.core.llm_resolver import (
     CONFIGURABLE_AGENTS,
@@ -50,6 +54,13 @@ class ApiKeyStatus(BaseModel):
     metadata: dict | None = None
 
 
+class ApiKeyHealth(BaseModel):
+    provider: str
+    # ok | invalid | expired | no_credit | quota | unavailable (agent/core/api_key_validation.py)
+    status: str
+    detail: str = ""
+
+
 class ApiKeyUpsert(BaseModel):
     api_key: str = Field(min_length=1)
     metadata: dict | None = None
@@ -68,6 +79,8 @@ class AgentLlmConfigResponse(BaseModel):
     recommendations: dict[str, str]
     has_gemini_key: bool
     has_anthropic_key: bool
+    # Abonnement Claude via le CLI : admins ayant enregistré leur token `claude setup-token`.
+    has_claude_cli: bool = False
 
 
 class AgentLlmUpdateRequest(BaseModel):
@@ -116,6 +129,32 @@ async def list_my_api_keys(
             metadata=configured[provider].metadata_ if provider in configured else None,
         )
         for provider in sorted(ALLOWED_PROVIDERS)
+        if user.is_admin or provider not in ADMIN_ONLY_PROVIDERS
+    ]
+
+
+@router.get("/api-keys/health", response_model=list[ApiKeyHealth])
+async def check_my_api_keys(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[ApiKeyHealth]:
+    """Teste chaque clé enregistrée auprès de son fournisseur (expirée, crédit épuisé, quota…)."""
+    result = await db.execute(
+        select(UserApiKey).where(UserApiKey.user_id == user.id, UserApiKey.is_active.is_(True))
+    )
+    rows = sorted(result.scalars().all(), key=lambda r: r.provider)
+
+    async def _check(row: UserApiKey) -> KeyHealth:
+        try:
+            key = decrypt_api_key(row.encrypted_key)
+        except ValueError:
+            return KeyHealth("invalid", "Clé illisible (clé de chiffrement modifiée) : ressaisissez-la.")
+        return await check_api_key(row.provider, key, row.metadata_)
+
+    healths = await bounded_gather(*(_check(row) for row in rows))
+    return [
+        ApiKeyHealth(provider=row.provider, status=health.status, detail=health.detail)
+        for row, health in zip(rows, healths, strict=True)
     ]
 
 
@@ -128,6 +167,8 @@ async def upsert_my_api_key(
 ) -> ApiKeyStatus:
     if provider not in ALLOWED_PROVIDERS:
         raise HTTPException(status_code=400, detail="Provider non supporté")
+    if provider in ADMIN_ONLY_PROVIDERS and not user.is_admin:
+        raise HTTPException(status_code=403, detail="Réservé aux administrateurs")
     try:
         await validate_api_key(provider, body.api_key, body.metadata)
     except ApiKeyValidationError as exc:
@@ -176,10 +217,13 @@ async def get_agent_llm_config(
     prefs = normalize_preferences_map(parse_agent_preferences(user.agent_llm_preferences))
     has_gemini = await get_user_api_key_row(db, user.id, "gemini") is not None
     has_anthropic = await get_user_api_key_row(db, user.id, "anthropic") is not None
+    has_subscription = bool(user.is_admin) and (
+        await get_user_api_key_row(db, user.id, "claude_subscription") is not None
+    )
     agents = sorted(CONFIGURABLE_AGENTS)
     display_agents = sorted(set(agents) | set(LLM_PREFERENCE_ALIAS.keys()))
     normalized_by_agent = {
-        agent: normalize_agent_preference(agent, prefs.get(agent, AgentLlmPreference()))
+        agent: normalize_preference(prefs.get(agent, AgentLlmPreference()))
         for agent in agents
     }
     return AgentLlmConfigResponse(
@@ -192,6 +236,7 @@ async def get_agent_llm_config(
         recommendations=all_agent_llm_recommendations(display_agents),
         has_gemini_key=has_gemini,
         has_anthropic_key=has_anthropic,
+        has_claude_cli=has_subscription and claude_cli_available(),
     )
 
 
@@ -202,18 +247,21 @@ async def update_agent_llm_config(
     db: AsyncSession = Depends(get_db),
 ) -> AgentLlmConfigResponse:
     # Chaque fournisseur choisi doit avoir la clé de l'utilisateur (aucune clé plateforme).
-    labels = {"gemini": "Gemini", "anthropic": "Anthropic"}
-    for provider in sorted({pref.provider for pref in body.preferences.values()} & set(labels)):
-        if await get_user_api_key_row(db, user.id, provider) is None:
+    required = {
+        "gemini": ("gemini", "une clé Gemini"),
+        "anthropic": ("anthropic", "une clé Anthropic"),
+        "claude_cli": ("claude_subscription", "le token d'abonnement Claude (admins)"),
+    }
+    for choice in sorted({pref.provider for pref in body.preferences.values()} & set(required)):
+        key_provider, label = required[choice]
+        allowed = user.is_admin or key_provider not in ADMIN_ONLY_PROVIDERS
+        if not allowed or await get_user_api_key_row(db, user.id, key_provider) is None:
             raise HTTPException(
                 status_code=400,
-                detail=f"Ajoutez d'abord une clé {labels[provider]} dans Compte → Clés API.",
+                detail=f"Ajoutez d'abord {label} dans Compte → Clés API.",
             )
     parsed = {
-        name: normalize_agent_preference(
-            name,
-            parse_agent_preferences({name: pref.model_dump()})[name],
-        )
+        name: normalize_preference(parse_agent_preferences({name: pref.model_dump()})[name])
         for name, pref in body.preferences.items()
         if name in CONFIGURABLE_AGENTS
     }

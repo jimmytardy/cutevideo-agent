@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -8,6 +9,7 @@ from pydantic import BaseModel
 
 from agent.core.database import User
 from agent.scheduler import jobs
+from agent.scheduler.config import InvalidJobConfigError
 from agent.scheduler.service import scheduler_service
 from api.deps import get_current_user, require_admin_user
 
@@ -26,6 +28,13 @@ class SchedulerRunResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class JobConfigUpdate(BaseModel):
+    enabled: bool | None = None
+    cron: str | None = None
+    timezone: str | None = None
+    params: dict[str, Any] | None = None
+
+
 class JobRunResponse(BaseModel):
     job_id: str
     status: str
@@ -34,7 +43,7 @@ class JobRunResponse(BaseModel):
 
 @router.get("/status")
 async def get_scheduler_status(_: User = Depends(require_admin_user)) -> dict:
-    return scheduler_service.get_status()
+    return await scheduler_service.get_status()
 
 
 @router.get("/jobs")
@@ -73,13 +82,27 @@ async def trigger_job(job_id: str, _: User = Depends(require_admin_user)) -> Job
     return JobRunResponse(job_id=job_id, status=result["status"])
 
 
+@router.put("/jobs/{job_id}")
+async def update_job_config(
+    job_id: str, body: JobConfigUpdate, _: User = Depends(require_admin_user)
+) -> dict[str, Any]:
+    if job_id not in jobs.JOB_REGISTRY:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job introuvable")
+    try:
+        config = await scheduler_service.update_job(job_id, **body.model_dump(exclude_unset=True))
+    except InvalidJobConfigError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return config.to_dict()
+
+
 @router.post("/start")
-async def start_scheduler(_: User = Depends(require_admin_user)) -> dict[str, str]:
-    await scheduler_service.start()
-    return {"status": "started"}
+async def start_scheduler(_: User = Depends(require_admin_user)) -> dict[str, Any]:
+    """Active le scheduler (persisté en base) ; il ne tourne que si ce processus y est autorisé."""
+    await scheduler_service.set_enabled(True)
+    return {"status": "started" if scheduler_service.running else "blocked", "running": scheduler_service.running}
 
 
 @router.post("/stop")
-async def stop_scheduler(_: User = Depends(require_admin_user)) -> dict[str, str]:
-    await scheduler_service.stop()
-    return {"status": "stopped"}
+async def stop_scheduler(_: User = Depends(require_admin_user)) -> dict[str, Any]:
+    await scheduler_service.set_enabled(False)
+    return {"status": "stopped", "running": False}

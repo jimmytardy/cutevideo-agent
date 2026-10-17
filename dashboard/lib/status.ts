@@ -1,4 +1,4 @@
-export type StatusChipColor = 'default' | 'warning' | 'info' | 'success' | 'error'
+type StatusChipColor = 'default' | 'warning' | 'info' | 'success' | 'error'
 
 const PROJECT_STATUS_LABELS: Record<string, string> = {
   pending: 'En attente',
@@ -10,6 +10,7 @@ const PROJECT_STATUS_LABELS: Record<string, string> = {
   published: 'Publié',
   failed: 'Échoué',
   stopped: 'Arrêté',
+  paused: 'En pause',
 }
 
 const PROJECT_STATUS_COLORS: Record<string, StatusChipColor> = {
@@ -22,6 +23,7 @@ const PROJECT_STATUS_COLORS: Record<string, StatusChipColor> = {
   published: 'success',
   failed: 'error',
   stopped: 'warning',
+  paused: 'warning',
 }
 
 export function projectStatusLabel(status: string): string {
@@ -36,8 +38,10 @@ export function projectStatusColor(status: string): StatusChipColor {
 const RUN_STATUS_LABELS: Record<string, string> = {
   running: 'En cours',
   success: 'Terminé',
+  reused: 'Réutilisé',
   failed: 'Échec',
   stopped: 'Arrêté',
+  interrupted: 'Interrompu',
   pending: 'En attente',
   skipped: 'Ignoré',
 }
@@ -45,7 +49,9 @@ const RUN_STATUS_LABELS: Record<string, string> = {
 const RUN_STATUS_COLORS: Record<string, StatusChipColor> = {
   running: 'warning',
   success: 'success',
+  reused: 'success',
   failed: 'error',
+  interrupted: 'warning',
 }
 
 export function runStatusLabel(status: string | null | undefined): string {

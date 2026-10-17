@@ -1,6 +1,7 @@
 {
   "studio": {
-    "animations": "scripts"
+    "animations": "scripts",
+    "visual_style": "animation"
   },
   "pipeline": {
     "min_free_disk_bytes": 10737418240,
@@ -10,7 +11,9 @@
     "lease_renew_interval_seconds": 30,
     "reconcile_interval_seconds": 600,
     "max_critic_iterations": 5,
-    "min_critic_score": 90
+    "min_critic_score": 80,
+    "min_scenario_score": 90,
+    "max_scenario_iterations": 5
   },
   "tts": {
     "engine": "azure",
@@ -23,6 +26,7 @@
     "gemini": {
       "apply_to": "off",
       "model": "gemini-2.5-flash-preview-tts",
+      "vertex_model": "gemini-2.5-flash-tts",
       "voice": "Leda",
       "language_code": "fr"
     }
@@ -37,30 +41,10 @@
     "language": "fr"
   },
   "media_sources": {
-    "niche_fallback_rates": {
-      "histoire": 0.05,
-      "france": 0.05,
-      "science": 0.12,
-      "nature": 0.1,
-      "animaux": 0.15,
-      "art": 0.2,
-      "entertainment": 0.1,
-      "humour": 0.1,
-      "default": 0.15,
-      "custom_high_niche": 0.45
-    },
     "ai_fallback": {
       "enabled": true,
       "default_plan": "flux_pro",
-      "default_fallback_chain": [
-        "flux_pro",
-        "imagen3"
-      ],
-      "max_images_per_segment": 2,
       "max_ai_images_per_video": 10,
-      "dev_plan": "flux_2_dev",
-      "dev_validation_attempts": 3,
-      "paid_validation_attempts": 3,
       "plan_pricing_eur": {
         "flux_schnell": 0.003,
         "flux_2_dev": 0.024,
@@ -383,9 +367,6 @@
         "thumbnail_style_hint": "Q&A energy, question mark visual"
       }
     ]
-  },
-  "quality": {
-    "max_iterations": 3
   },
   "cost": {
     "max_per_video_usd": 8.0

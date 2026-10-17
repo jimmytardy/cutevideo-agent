@@ -380,6 +380,18 @@ export async function deleteProject(projectId: string): Promise<void> {
   await apiJson<unknown>(`${API_BASE}/projects/${projectId}`, { method: 'DELETE' })
 }
 
+interface PurgeReport {
+  videos_purged: number
+  dirs_removed: number
+  bytes_freed: number
+  errors: string[]
+}
+
+/** Supprime les fichiers du projet (travail + vidéos non publiées), garde les vidéos publiées. */
+export async function purgeProjectFiles(projectId: string): Promise<PurgeReport> {
+  return apiJson<PurgeReport>(`${API_BASE}/projects/${projectId}/files`, { method: 'DELETE' })
+}
+
 export async function createOnboardingDraft(
   themePrompt: string,
   brandKit: ChannelBrandKit,
@@ -453,7 +465,7 @@ export async function completeOnboarding(channelId: string): Promise<Channel> {
   return apiJson<Channel>(`${API_BASE}/channels/${channelId}/onboarding/complete`, { method: 'POST' })
 }
 
-export interface ChannelUpdatePayload {
+interface ChannelUpdatePayload {
   theme_category?: string
   theme_prompt?: string
   niche_prompt?: string
@@ -467,20 +479,16 @@ export interface ChannelCostEstimate {
     plan_label: string
     provider_family: string
     cost_per_image_eur: number
+    videos_per_week: number
+    max_ai_images_per_video: number
     images_per_week: number
     cost_eur_per_week: number
     cost_eur_per_month: number
-    breakdown: {
-      theme_category: string
-      fallback_rate: number
-      videos_per_week: number
-      segments_per_week: number
-    }
   }
   total_eur_per_week: number
 }
 
-export interface ChannelCostPreviewRequest {
+interface ChannelCostPreviewRequest {
   ai_fallback: Record<string, unknown>
 }
 
@@ -549,6 +557,21 @@ export async function setSchedulerRunning(action: 'start' | 'stop'): Promise<voi
   await apiJson(`${API_BASE}/scheduler/${action}`, { method: 'POST' })
 }
 
+interface SchedulerJobConfigUpdate {
+  enabled?: boolean
+  cron?: string
+  timezone?: string
+  params?: Record<string, number>
+}
+
+export async function updateSchedulerJob(jobId: string, update: SchedulerJobConfigUpdate): Promise<void> {
+  await apiJson(`${API_BASE}/scheduler/jobs/${encodeURIComponent(jobId)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(update),
+  })
+}
+
 export async function saveAgentConfig(config: unknown): Promise<void> {
   await apiJson(`${API_BASE}/config/agent`, {
     method: 'PUT',
@@ -563,7 +586,7 @@ export interface SimilarTopic {
   created_at: string | null
 }
 
-export interface SimilarityCheck {
+interface SimilarityCheck {
   is_duplicate: boolean
   similar_topics: SimilarTopic[]
 }
@@ -577,10 +600,19 @@ export async function checkTopicSimilarity(
 }
 
 // ── Claude Studio ────────────────────────────────────────────────────────
-export const STUDIO_STEPS = ['scenario_agent', 'narrator_agent', 'editor_agent', 'thumbnail_agent', 'critic_agent']
+// Ordre chronologique : boucle scénario (itération 1), voix, boucle vidéo, puis la miniature une fois à la fin.
+export const STUDIO_STEPS = [
+  'scenario_agent',
+  'scenario_critic_agent',
+  'narrator_agent',
+  'editor_agent',
+  'critic_agent',
+  'thumbnail_agent',
+]
 
 const STUDIO_STEP_LABELS: Record<string, string> = {
   scenario_agent: 'Scénariste',
+  scenario_critic_agent: 'Analyse scénario',
   narrator_agent: 'Voix',
   editor_agent: 'Monteur',
   thumbnail_agent: 'Miniaturiste',
@@ -597,7 +629,7 @@ export interface StudioBeat {
   on_screen_text?: string
 }
 
-export interface StudioCritiqueFeedback {
+interface StudioCritiqueFeedback {
   summary?: string
   strengths?: string[]
   issues?: string[]
@@ -606,16 +638,76 @@ export interface StudioCritiqueFeedback {
 export interface StudioRequestedChange {
   role: string
   instruction: string
+  /** Rôle `voix` : lignes de narration.txt resynthétisées. */
+  lines?: number[]
+}
+
+/** Passe de la boucle scénario (`scenario_critique_N.json`). */
+export interface StudioScenarioCritiqueFile extends StudioCritiqueFeedback {
+  iteration: number
+  score?: number
+  decision?: string
+  scores?: Record<string, number>
+  changes?: string[]
+  unverified_claims?: string[]
 }
 
 export interface StudioInfo {
   status: string
   iterations: number
   scores?: number[]
+  scenario_critiques?: StudioScenarioCritiqueFile[]
   notes?: string
   cost_usd?: number | null
   num_turns?: number | null
   credits?: Array<{ media: string; attribution?: string; license?: string }>
+}
+
+export interface StudioScenarioFile {
+  title?: string
+  hook?: string
+  beats?: StudioBeat[]
+  cta?: string
+  mood?: string
+  music_mood?: string
+  visual_mode?: string
+  theme?: string
+  accent?: string
+  publish?: { title?: string; description?: string; hashtags?: string[] }
+}
+
+export interface StudioMediaFile {
+  path: string
+  size: number
+  mtime: number
+}
+
+export interface StudioCritiqueFile extends StudioCritiqueFeedback {
+  iteration?: number
+  video?: string
+  score?: number
+  decision?: string
+  scores?: Record<string, number>
+  changes?: StudioRequestedChange[]
+  analysis?: { source?: string; flags?: string[] } | null
+}
+
+export interface StudioArtifacts {
+  available: boolean
+  scenario: StudioScenarioFile | null
+  scenario_critiques?: StudioScenarioCritiqueFile[]
+  voice: (StudioMediaFile & { duration_s?: number | null; engine?: string | null; voice?: string | null }) | null
+  thumbnail: { text?: string } | null
+  iterations: Record<
+    string,
+    { render: StudioMediaFile | null; thumbnails: StudioMediaFile[]; critique: StudioCritiqueFile | null }
+  >
+}
+
+/** Média du run dir Studio (voice.wav, renders/, thumbnails/) ; `mtime` invalide le cache quand le fichier est refait. */
+export function studioFileUrl(projectId: string, file: StudioMediaFile): string {
+  const query = `path=${encodeURIComponent(file.path)}&v=${file.mtime}`
+  return authenticatedMediaUrl(`${API_BASE}/projects/${projectId}/studio/file?${query}`)
 }
 
 // ── Compte ───────────────────────────────────────────────────────────────

@@ -20,7 +20,9 @@ from typing import TYPE_CHECKING, Any
 from collections.abc import Awaitable, Callable
 
 from agent.core.env import env_float, env_int, env_optional_float
-from studio.assets import max_ai_images
+from agent.skills.media_sources.ai.registry import provider_family
+from studio.agent_stream import stream_lines
+from studio.assets import DEFAULT_AI_MODEL, max_ai_images
 from studio.contracts import Brief
 from studio.user_keys import INHERITED_SECRET_VARS, studio_env
 
@@ -31,12 +33,15 @@ logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WORKSPACE_TEMPLATE = Path(__file__).resolve().parent / "workspace"
-ROLES = ("scenariste", "voix", "monteur", "miniaturiste", "critique")
+ROLES = ("scenariste", "critique-scenario", "voix", "monteur", "miniaturiste", "critique")
 SUBAGENT_TOOLS = ("Agent", "Task")
 # Passées en ligne de commande : les permissions d'un .claude/settings.json sont
 # ignorées tant que le dossier n'a pas été marqué « de confiance » interactivement.
-ALLOWED_TOOLS = ("Bash(python -m studio.tools:*)", "Read", "Write", "Edit", "Glob", *SUBAGENT_TOOLS)
-DISALLOWED_TOOLS = ("WebFetch", "WebSearch")
+# Recherche web : autorisée pour la session, mais seul le scénariste la reçoit (`tools:` de son frontmatter) pour
+# vérifier ses faits. Le Bash reste limité aux outils Studio et l'environnement est purgé de ses secrets.
+WEB_TOOLS = ("WebSearch", "WebFetch")
+ALLOWED_TOOLS = ("Bash(python -m studio.tools:*)", "Read", "Write", "Edit", "Glob", *WEB_TOOLS, *SUBAGENT_TOOLS)
+DISALLOWED_TOOLS: tuple[str, ...] = ()
 # Ligne stream-json max (les tool_result peuvent contenir de gros JSON).
 _STREAM_LIMIT = 16 * 1024 * 1024
 
@@ -57,16 +62,23 @@ def prepare_run_dir(run_dir: Path, brief: Brief) -> Path:
     shutil.copy2(WORKSPACE_TEMPLATE / "CLAUDE.md", run_dir / "CLAUDE.md")
     shutil.copytree(WORKSPACE_TEMPLATE / ".claude", run_dir / ".claude", dirs_exist_ok=True)
     shutil.copytree(WORKSPACE_TEMPLATE / "anim", run_dir / "anim", dirs_exist_ok=True)
+    shutil.copytree(WORKSPACE_TEMPLATE / "docs", run_dir / "docs", dirs_exist_ok=True)
     (run_dir / "brief.json").write_text(
         brief.model_dump_json(indent=2, exclude_none=True), encoding="utf-8"
     )
     return run_dir
 
 
+def _session_timeout() -> float | None:
+    """Durée max de la session Claude (`CLAUDE_STUDIO_TIMEOUT_S`, en s) ; 0 ou moins = pas de limite."""
+    value = env_float("CLAUDE_STUDIO_TIMEOUT_S", 3600.0)
+    return value if value > 0 else None
+
+
 @dataclass
 class LaunchConfig:
     model: str = field(default_factory=lambda: os.getenv("CLAUDE_STUDIO_MODEL", "claude-opus-5-5"))
-    timeout_s: float = field(default_factory=lambda: env_float("CLAUDE_STUDIO_TIMEOUT_S", 3600.0))
+    timeout_s: float | None = field(default_factory=_session_timeout)
     max_turns: int = field(default_factory=lambda: env_int("CLAUDE_STUDIO_MAX_TURNS", 400, minimum=1))
     max_budget_usd: float | None = field(
         default_factory=lambda: env_optional_float("CLAUDE_STUDIO_MAX_BUDGET_USD")
@@ -75,10 +87,18 @@ class LaunchConfig:
 
 
 def permission_args() -> list[str]:
-    return ["--allowedTools", *ALLOWED_TOOLS, "--disallowedTools", *DISALLOWED_TOOLS]
+    args = ["--allowedTools", *ALLOWED_TOOLS]
+    return [*args, "--disallowedTools", *DISALLOWED_TOOLS] if DISALLOWED_TOOLS else args
 
 
-def build_command(cfg: LaunchConfig, prompt: str = "/make-video") -> list[str]:
+def build_command(
+    cfg: LaunchConfig,
+    prompt: str = "/make-video",
+    *,
+    session_id: str | None = None,
+    resume: bool = False,
+) -> list[str]:
+    """Commande `claude -p`. `session_id` : session conservée (création) ou reprise (`resume=True`)."""
     cmd = [
         cfg.claude_bin, "-p", prompt,
         "--output-format", "stream-json", "--verbose",
@@ -88,8 +108,12 @@ def build_command(cfg: LaunchConfig, prompt: str = "/make-video") -> list[str]:
         "--permission-mode", "dontAsk",
         # Ni hooks ni plugins utilisateur : seuls les réglages du run dir.
         "--setting-sources", "project",
-        "--no-session-persistence",
     ]
+    if session_id:
+        # Transcription gardée dans CLAUDE_CONFIG_DIR : un worker redémarré reprend la session.
+        cmd += ["--resume" if resume else "--session-id", session_id]
+    else:
+        cmd.append("--no-session-persistence")
     if cfg.max_budget_usd:
         cmd += ["--max-budget-usd", str(cfg.max_budget_usd)]
     return cmd
@@ -100,6 +124,15 @@ def _read_brief(run_dir: Path) -> Brief | None:
         return Brief.model_validate_json((run_dir / "brief.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
+
+
+def usable_ai_models(brief: Brief | None, keys: UserKeys | None) -> list[str]:
+    """Modèles du brief (sinon `flux_2_dev`) dont le propriétaire a la clé : fal pour Flux,
+    compte de service GCP pour Imagen 3."""
+    if brief is None or brief.max_ai_images == 0 or keys is None:
+        return []
+    have = {"flux": bool(keys.fal), "google": bool(keys.gcp_credentials_json)}
+    return [m for m in brief.ai_models or [DEFAULT_AI_MODEL] if have.get(provider_family(m))]
 
 
 def build_env(
@@ -123,10 +156,12 @@ def build_env(
     # (`animate*`, `ai-image`) ne font confiance qu'à ces variables.
     brief = _read_brief(run_dir)
     env["STUDIO_ANIMATIONS"] = brief.animations if brief else "off"
+    env["STUDIO_VISUAL_STYLE"] = brief.visual_style if brief else "animation"
     if brief is None:
         env["STUDIO_MAX_AI_IMAGES"] = "0"
     elif brief.max_ai_images is not None:
         env["STUDIO_MAX_AI_IMAGES"] = str(min(brief.max_ai_images, max_ai_images()))
+    env["STUDIO_AI_MODELS"] = ",".join(usable_ai_models(brief, keys))
     # Rendus et transcriptions dépassent les 2 min par défaut du Bash de Claude Code.
     env.setdefault("BASH_DEFAULT_TIMEOUT_MS", "1200000")
     env.setdefault("BASH_MAX_TIMEOUT_MS", "1800000")
@@ -136,13 +171,20 @@ def build_env(
 class StreamParser:
     """Transforme le stream-json de Claude Code en événements de haut niveau.
 
-    Événements : `agent_start` / `agent_end` (sous-agents des 5 rôles), `tool`
-    (appel d'outil, avec le rôle courant), `result` (fin de session).
+    Événements : `agent_start` / `agent_end` (sous-agents des rôles de `ROLES`), `tool`
+    (appel d'outil, avec le rôle courant), `agent_stream` (lignes de trace d'un
+    sous-agent, cf. `studio.agent_stream`), `result` (fin de session).
     """
 
-    def __init__(self) -> None:
+    def __init__(self, run_dir: str = "") -> None:
+        self.run_dir = run_dir
         self.agents: dict[str, str] = {}  # tool_use_id → rôle
         self.result: dict[str, Any] | None = None
+        # Dernier état des limites d'usage (`rate_limit_event` : status, resetsAt, rateLimitType).
+        self.rate_limit: dict[str, Any] | None = None
+        # Texte du message d'erreur synthétique de Claude Code sur une limite (`error: "rate_limit"`),
+        # ex. « You've hit your session limit · resets 3:45pm » : le `result` final peut être vide.
+        self.limit_message: str | None = None
 
     def feed(self, line: str) -> list[tuple[str, dict[str, Any]]]:
         line = line.strip()
@@ -152,6 +194,23 @@ class StreamParser:
             msg = json.loads(line)
         except json.JSONDecodeError:
             return []
+        if not isinstance(msg, dict):
+            return []
+        events = self._events(msg)
+        if msg.get("type") == "assistant" and msg.get("error") == "rate_limit":
+            content = (msg.get("message") or {}).get("content")
+            texts = [b.get("text", "") for b in content if isinstance(b, dict)] if isinstance(content, list) else []
+            self.limit_message = " ".join(t for t in texts if t) or "rate_limit"
+        agent_id = msg.get("parent_tool_use_id") or (
+            msg.get("tool_use_id") if msg.get("subtype") == "task_progress" else None
+        )
+        if agent_id in self.agents:
+            lines = stream_lines(msg, run_dir=self.run_dir, result_text=_tool_result_text)
+            if lines:
+                events.append(("agent_stream", {"id": agent_id, "role": self.agents[agent_id], "lines": lines}))
+        return events
+
+    def _events(self, msg: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
         mtype = msg.get("type")
         parent = msg.get("parent_tool_use_id") or ""
         message = msg.get("message")
@@ -170,6 +229,8 @@ class StreamParser:
         if mtype == "result":
             self.result = msg
             return [("result", msg)]
+        if mtype == "rate_limit_event" and isinstance(msg.get("rate_limit_info"), dict):
+            self.rate_limit = msg["rate_limit_info"]
         return []
 
     def _on_tool_use(self, block: dict[str, Any], parent: str) -> tuple[str, dict[str, Any]]:
@@ -218,7 +279,26 @@ def _tool_result_text(content: Any) -> str:
 
 
 class ClaudeRunError(RuntimeError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        result: dict[str, Any] | None = None,
+        rate_limit: dict[str, Any] | None = None,
+        limit_message: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.result = result
+        self.rate_limit = rate_limit
+        self.limit_message = limit_message
+
+    @property
+    def no_turn_played(self) -> bool:
+        """Le CLI a répondu sans jouer un tour (ex. `--resume` d'une session introuvable : `num_turns: 0`).
+
+        Une sortie sans résultat (crash, processus tué) n'en est pas une : relancer une session complète
+        doublerait le coût d'une création déjà avancée."""
+        return self.result is not None and not self.result.get("num_turns")
 
 
 async def run_claude(
@@ -229,6 +309,8 @@ async def run_claude(
     prompt: str = "/make-video",
     keys: UserKeys | None = None,
     config_dir: Path | None = None,
+    session_id: str | None = None,
+    resume: bool = False,
 ) -> dict[str, Any]:
     """Exécute la session avec les clés `keys` et renvoie l'événement `result` final de Claude Code."""
     from agent.core.subprocess_registry import register, terminate_proc, unregister
@@ -238,11 +320,11 @@ async def run_claude(
         raise ClaudeRunError(f"CLI Claude introuvable : {cfg.claude_bin} (npm i -g @anthropic-ai/claude-code)")
     log_path = run_dir / "claude_stream.jsonl"
     stderr_path = run_dir / "claude_stderr.log"
-    parser = StreamParser()
+    parser = StreamParser(str(run_dir))
 
     with stderr_path.open("wb") as stderr_fh:
         proc = await asyncio.create_subprocess_exec(
-            *build_command(cfg, prompt),
+            *build_command(cfg, prompt, session_id=session_id, resume=resume),
             cwd=str(run_dir),
             env=build_env(run_dir, keys, config_dir=config_dir),
             stdin=asyncio.subprocess.DEVNULL,
@@ -282,10 +364,17 @@ async def run_claude(
 
     if parser.result is None:
         tail = stderr_path.read_text(encoding="utf-8", errors="replace")[-800:]
-        raise ClaudeRunError(f"Claude s'est arrêté sans résultat (code {proc.returncode}) : {tail}")
-    if parser.result.get("is_error"):
         raise ClaudeRunError(
-            f"session Claude en erreur ({parser.result.get('subtype')}) : "
-            f"{str(parser.result.get('result') or '')[:500]}"
+            f"Claude s'est arrêté sans résultat (code {proc.returncode}) : {tail}",
+            rate_limit=parser.rate_limit,
+            limit_message=parser.limit_message,
+        )
+    if parser.result.get("is_error"):
+        detail = parser.result.get("result") or "; ".join(map(str, parser.result.get("errors") or []))
+        raise ClaudeRunError(
+            f"session Claude en erreur ({parser.result.get('subtype')}) : {str(detail)[:500]}",
+            result=parser.result,
+            rate_limit=parser.rate_limit,
+            limit_message=parser.limit_message,
         )
     return parser.result

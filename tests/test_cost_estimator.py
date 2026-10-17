@@ -15,38 +15,34 @@ class _FakeChannel:
         "media_sources": {
             "ai_fallback": {
                 "plan": "flux_schnell",
-                "max_images_per_segment": 1,
                 "max_ai_images_per_video": 4,
-                "fallback_rate_override": 0.45,
             }
         },
     }
     brand_kit = None
 
 
-def test_estimate_shorts_niche_flux_schnell() -> None:
-    channel = _FakeChannel()
-    cfg = resolve_channel_config(channel)  # type: ignore[arg-type]
-    estimate = estimate_ai_images_weekly(channel, cfg)  # type: ignore[arg-type]
+def test_estimate_is_upper_bound_of_per_video_cap() -> None:
+    cfg = resolve_channel_config(_FakeChannel())  # type: ignore[arg-type]
+    estimate = estimate_ai_images_weekly(cfg)
     assert estimate.plan == "flux_schnell"
     assert estimate.provider_family == "flux"
-    assert estimate.images_per_week > 0
-    assert estimate.cost_eur_per_week < 1.0
+    assert estimate.videos_per_week == 21
+    assert estimate.images_per_week == 21 * 4
+    assert estimate.cost_eur_per_week == round(84 * 0.003, 2)
 
 
 def test_estimate_off_plan_zero_cost() -> None:
-    channel = _FakeChannel()
-    cfg = resolve_channel_config(channel)  # type: ignore[arg-type]
+    cfg = resolve_channel_config(_FakeChannel())  # type: ignore[arg-type]
     override = AiFallbackConfig(plan=AiImagePlan.OFF, enabled=False)
-    estimate = estimate_ai_images_weekly(channel, cfg, ai_override=override)  # type: ignore[arg-type]
+    estimate = estimate_ai_images_weekly(cfg, ai_override=override)
     assert estimate.images_per_week == 0
     assert estimate.cost_eur_per_week == 0.0
 
 
 def test_imagen3_plan_family() -> None:
-    channel = _FakeChannel()
-    cfg = resolve_channel_config(channel)  # type: ignore[arg-type]
+    cfg = resolve_channel_config(_FakeChannel())  # type: ignore[arg-type]
     override = AiFallbackConfig(plan=AiImagePlan.IMAGEN3)
-    estimate = estimate_ai_images_weekly(channel, cfg, ai_override=override)  # type: ignore[arg-type]
+    estimate = estimate_ai_images_weekly(cfg, ai_override=override)
     assert estimate.provider_family == "google"
     assert estimate.cost_per_image_eur == 0.037

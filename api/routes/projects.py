@@ -17,6 +17,7 @@ from agent.skills.pipeline_progress import AgentProgressData, compute_pipeline_p
 from agent.core.pipeline_launcher import dequeue_pipeline, enqueue_pipeline, request_pipeline_cancel
 from agent.core.pipeline_queue import PipelineAlreadyQueuedError, get_queue_status, is_queued, remove_from_queue
 from agent.core.pipeline_reset import delete_project_completely
+from agent.scheduler.cleanup import ACTIVE_PROJECT_STATUSES, purge_project_files
 from api.authorization import channel_owner_clause, get_user_channel, get_user_project
 from api.deps import get_current_user
 from api.models import (
@@ -313,19 +314,17 @@ async def get_project_cost(
 ) -> ProjectCostResponse:
     from agent.core.channel_config import resolve_channel_config
     from agent.core.project_cost import project_cost_breakdown
-    from agent.core.quality_guardrails import resolve_effective_quality_iterations
-    from agent.core.subscription import get_user_subscription_limits
+    from agent.core.subscription import get_user_subscription_limits, resolve_effective_max_critic_iterations
 
     project = await get_user_project(db, project_id, current_user)
     channel = await get_user_channel(db, project.channel_id, current_user)
     limits = await get_user_subscription_limits(db, current_user.id)
     cfg = resolve_channel_config(channel, subscription_limits=limits)
-    max_iterations = resolve_effective_quality_iterations(
+    max_iterations = resolve_effective_max_critic_iterations(
         project_config=project.config or {},
-        channel_quality_max=cfg.quality_max_iterations,
-        channel_critic_max=cfg.max_critic_iterations,
+        channel_max=cfg.max_critic_iterations,
         limits=limits,
-    )
+    ) or cfg.max_critic_iterations
     breakdown = await project_cost_breakdown(
         project_id,
         cap_usd=cfg.cost_max_per_video_usd,
@@ -364,6 +363,12 @@ async def stop_pipeline(
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Projet absent de la file")
         return {"message": "Projet retiré de la file d'attente", "project_id": str(project_id)}
 
+    if project.status == "paused":
+        # En pause (limite d'usage Claude) : rien ne tourne, on annule seulement la reprise prévue.
+        project.status = "stopped"
+        project.error_message = "Arrêté manuellement"
+        await db.commit()
+        return {"message": "Pipeline arrêté", "project_id": str(project_id)}
     if project.status != "running":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Pipeline non actif")
 
@@ -383,12 +388,31 @@ async def restart_pipeline(
 ) -> dict:
     project = await get_user_project(db, project_id, current_user)
     await _ensure_enqueue_allowed(project)
+    # Les fichiers de la création précédente partent dès le clic (le run les efface aussi au démarrage).
+    await purge_project_files(project_id)
 
     try:
         queue_status = await enqueue_pipeline(project_id)
     except PipelineAlreadyQueuedError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     return _queue_enqueue_response(project_id, queue_status)
+
+
+@router.delete("/{project_id}/files")
+async def delete_project_files(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Supprime les fichiers du projet (travail + vidéos non publiées) ; les publiées sont gardées."""
+    project = await get_user_project(db, project_id, current_user)
+    if project.status in ACTIVE_PROJECT_STATUSES or await is_queued(project_id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Impossible de supprimer les fichiers d'un projet en cours ou en file d'attente",
+        )
+    report = await purge_project_files(project_id)
+    return report.to_dict()
 
 
 @router.patch("/{project_id}/config", response_model=ProjectResponse)

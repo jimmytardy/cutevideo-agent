@@ -78,10 +78,16 @@ def test_critic_loop_and_steps_are_recorded(facts: dict) -> None:
     assert facts["critiques"] == [[1, 70, "iterate"], [2, 86, "approve"]]
     assert facts["scenarios"] == 1
     steps = {(name, iteration) for name, status, iteration in facts["runs"] if status == "success"}
-    assert {("scenario_agent", 1), ("narrator_agent", 1), ("editor_agent", 1), ("thumbnail_agent", 1),
-            ("critic_agent", 1), ("editor_agent", 2), ("critic_agent", 2)} <= steps
-    assert all(status == "success" for _, status, _ in facts["runs"])
+    assert {("scenario_agent", 1), ("narrator_agent", 1), ("editor_agent", 1), ("critic_agent", 1),
+            ("editor_agent", 2), ("critic_agent", 2), ("thumbnail_agent", 2)} <= steps
+    # Voix et scénario non cités par la critique 1 : réutilisés (dupliqués) dans l'itération 2.
+    reused = {(name, iteration) for name, status, iteration in facts["runs"] if status == "reused"}
+    assert reused == {("scenario_agent", 2), ("narrator_agent", 2)}
+    assert all(status in ("success", "reused") for _, status, _ in facts["runs"])
+    # Une seule miniature, rattachée à la dernière itération.
+    assert [it for name, _, it in facts["runs"] if name == "thumbnail_agent"] == [2]
     assert facts["progress"]["2"]["editor_agent"] == 100
+    assert facts["progress"]["2"]["narrator_agent"] == 100
 
 
 def test_publication_metadata_thumbnail_and_credits(facts: dict) -> None:

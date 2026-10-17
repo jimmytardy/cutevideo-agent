@@ -1,11 +1,12 @@
-"""Médias d'un projet : vidéos (liste, stream), aperçu final, miniatures."""
+"""Médias d'un projet : vidéos (liste, stream), aperçu final, miniatures, fichiers du run Studio."""
 
 from __future__ import annotations
 
 import uuid
 from pathlib import Path
+from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -131,6 +132,39 @@ async def stream_project_thumbnail(
     if not file_path.exists() or not file_path.is_file():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Fichier introuvable")
     return FileResponse(str(file_path), media_type=_media_type_for_path(file_path))
+
+
+@router.get("/{project_id}/studio/artifacts", response_model=None)
+async def get_studio_artifacts(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Scénario, voix, rendus, miniatures et critiques du run Claude Studio (tant qu'il n'est pas purgé)."""
+    from studio.artifacts import list_artifacts, project_run_dir
+
+    await get_user_project(db, project_id, current_user)
+    return list_artifacts(project_run_dir(str(project_id)))
+
+
+@router.get("/{project_id}/studio/file", response_model=None)
+async def stream_studio_file(
+    project_id: uuid.UUID,
+    path: str = Query(..., max_length=200),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> FileResponse:
+    from studio.artifacts import project_run_dir, resolve_artifact_file
+    from studio.contracts import ContractError
+
+    await get_user_project(db, project_id, current_user)
+    try:
+        file_path, media_type = resolve_artifact_file(project_run_dir(str(project_id)), path)
+    except ContractError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Fichier non autorisé") from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Fichier introuvable") from exc
+    return FileResponse(str(file_path), media_type=media_type, headers={"Cache-Control": "no-cache"})
 
 
 _MEDIA_TYPE_BY_EXT = {

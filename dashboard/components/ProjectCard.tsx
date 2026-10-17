@@ -110,7 +110,8 @@ export default function ProjectCard({ project, onRefresh }: ProjectCardProps) {
             size="small"
             startIcon={<PlayArrowIcon />}
             onClick={handleRun}
-            disabled={project.status === 'running'}
+            // En cours, en file ou en pause (reprise automatique prévue) : relancer repartirait de zéro.
+            disabled={['running', 'queued', 'paused'].includes(project.status)}
             variant="contained"
           >
             Lancer

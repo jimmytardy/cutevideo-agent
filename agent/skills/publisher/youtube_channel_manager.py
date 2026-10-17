@@ -63,6 +63,7 @@ async def generate_and_upload_banner(channel: Channel) -> bool:
 
         # 2. Fallback IA
         if not banner_path:
+            from agent.core.api_keys import fetch_api_key
             from agent.skills.media_sources.ai.base import ImageGenerationRequest
             from agent.skills.media_sources.ai.registry import generate_with_plan
 
@@ -76,10 +77,10 @@ async def generate_and_upload_banner(channel: Channel) -> bool:
             request = ImageGenerationRequest(
                 prompt=prompt,
                 output_dir=Path(tmpdir),
-                theme_category=theme,
                 aspect_ratio="16:9",
                 image_width=2560,
                 image_height=1440,
+                fal_api_key=(await fetch_api_key(channel.user_id, "fal", purpose="banner")).key,
             )
             result = await generate_with_plan("flux_pro", request) or await generate_with_plan("flux_schnell", request)
             if not result:

@@ -2,7 +2,8 @@
 
 Deux voies, dans cet ordre :
 
-1. **Gemini** (clé Gemini de l'utilisateur, `STUDIO_GEMINI_API_KEY` posée par le launcher) : la vidéo
+1. **Gemini** (clé Gemini de l'utilisateur, `STUDIO_GEMINI_API_KEY` posée par le launcher, sinon Vertex AI avec
+   son compte de service GCP, `STUDIO_GCP_CREDENTIALS_JSON` / `STUDIO_GCP_LOCATION`) : la vidéo
    complète, son compris, est envoyée au modèle qui renvoie un avis JSON structuré selon la grille virale (`GRID`).
 2. **Claude** (repli automatique, et toujours calculé) : ce que Claude peut percevoir lui-même avec Read —
    planches de frames denses (hook, chronologie, avant/après chaque coupe), transcription Whisper avec débit et
@@ -372,19 +373,21 @@ def _gemini_prompt(context: str) -> str:
     )
 
 
-async def _gemini_review(video: Path, context: str) -> dict[str, Any]:
-    from studio.user_keys import GEMINI_API_KEY, user_key
+async def _gemini_review(video: Path, context: str) -> tuple[dict[str, Any], str]:
+    """Revue Gemini : clé Gemini, puis Vertex AI si elle est absente ou refusée. Renvoie (avis, source)."""
+    from studio.user_keys import GCP_CREDENTIALS_JSON, GCP_LOCATION, GEMINI_API_KEY, user_key
 
-    key = user_key(GEMINI_API_KEY)
-    if not key:
-        raise RuntimeError("aucune clé Gemini dans le compte (Compte → Clés API)")
+    key, gcp = user_key(GEMINI_API_KEY), user_key(GCP_CREDENTIALS_JSON)
+    if not key and not gcp:
+        raise RuntimeError("aucune clé Gemini ni compte Google Cloud dans le compte (Compte → Clés API)")
     if video.stat().st_size > GEMINI_MAX_BYTES:
         raise RuntimeError("vidéo trop lourde pour un envoi en ligne")
     from google import genai
     from google.genai import types
 
-    def _call() -> str:
-        client = genai.Client(api_key=key)
+    from agent.core.vertex import gemini_key_refused, vertex_genai_client
+
+    def _call(client: Any) -> str:
         resp = client.models.generate_content(
             model=GEMINI_MODEL,
             contents=[types.Content(role="user", parts=[
@@ -395,8 +398,17 @@ async def _gemini_review(video: Path, context: str) -> dict[str, Any]:
         )
         return resp.text or ""
 
-    text = await asyncio.wait_for(asyncio.to_thread(_call), timeout=180)
-    return json.loads(text)
+    if key:
+        try:
+            text = await asyncio.wait_for(asyncio.to_thread(_call, genai.Client(api_key=key)), timeout=180)
+            return json.loads(text), "gemini"
+        except Exception as exc:
+            if not gcp or not gemini_key_refused(exc):
+                raise
+            logger.warning("Clé Gemini refusée (%s) — revue via Vertex AI", str(exc)[:120])
+    client = vertex_genai_client(gcp, user_key(GCP_LOCATION))
+    text = await asyncio.wait_for(asyncio.to_thread(_call, client), timeout=180)
+    return json.loads(text), "gemini-vertex"
 
 
 # ── point d'entrée ────────────────────────────────────────────────────────
@@ -404,17 +416,17 @@ async def _gemini_review(video: Path, context: str) -> dict[str, Any]:
 
 async def _gemini_section(engine: str, video: Path, context: str) -> dict[str, Any]:
     """Revue Gemini si possible ; `source` indique qui a produit le diagnostic."""
-    review, error = None, None
+    review, error, source = None, None, "claude"
     if engine in ("auto", "gemini"):
         try:
-            review = await _gemini_review(video, context)
+            review, source = await _gemini_review(video, context)
         except Exception as exc:  # repli Claude
             error = f"{type(exc).__name__}: {str(exc)[:200]}"
             logger.warning("Analyse Gemini indisponible : %s", error)
             if engine == "gemini":
                 raise
     section: dict[str, Any] = {"gemini": review} if review is not None else {}
-    section["source"] = "gemini" if review is not None else "claude"
+    section["source"] = source
     if error:
         section["gemini_error"] = error
     return section

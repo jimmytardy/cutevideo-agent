@@ -8,16 +8,17 @@ export type ApiKeyProviderId =
   | 'zernio'
   | 'youtube'
   | 'instagram'
+  | 'claude_subscription'
 
 /** Champ complémentaire enregistré avec la clé (`metadata` de `PUT /me/api-keys/{provider}`). */
-export type ApiKeyMetadataField = {
+type ApiKeyMetadataField = {
   key: string
   label: string
   placeholder?: string
   required?: boolean
 }
 
-export type ApiKeyProviderInfo = {
+type ApiKeyProviderInfo = {
   id: ApiKeyProviderId
   label: string
   shortDescription: string
@@ -27,6 +28,8 @@ export type ApiKeyProviderInfo = {
   docUrl: string
   docLabel: string
   metadataFields?: ApiKeyMetadataField[]
+  /** Réservé aux administrateurs (l'API refuse l'enregistrement aux autres). */
+  adminOnly?: boolean
 }
 
 export const API_KEY_PROVIDERS: ApiKeyProviderInfo[] = [
@@ -78,10 +81,11 @@ export const API_KEY_PROVIDERS: ApiKeyProviderInfo[] = [
   },
   {
     id: 'gcp',
-    label: 'Google Imagen 3 (Vertex AI)',
-    shortDescription: 'Images IA via Imagen 3 sur Google Cloud (compte de service Vertex AI).',
+    label: 'Google Cloud (Vertex AI)',
+    shortDescription:
+      'Images Imagen 3, et repli de Gemini (voix, analyse vidéo, agents) via Vertex AI quand la clé Gemini est absente ou refusée.',
     keyFieldLabel: 'JSON du compte de service',
-    tutorialTitle: 'Configurer Google Imagen 3 sur Vertex AI',
+    tutorialTitle: 'Configurer un compte de service Google Cloud (Vertex AI)',
     steps: [
       'Dans la console Google Cloud, créez ou sélectionnez un projet et activez l’API Vertex AI.',
       'Créez un compte de service (IAM → Comptes de service → Créer) avec le rôle « Vertex AI User ».',
@@ -167,6 +171,25 @@ export const API_KEY_PROVIDERS: ApiKeyProviderInfo[] = [
     docUrl: 'https://developers.facebook.com/docs/instagram-platform/content-publishing',
     docLabel: 'Meta — publication de contenu Instagram',
     metadataFields: [{ key: 'page_id', label: 'ID du compte Instagram', placeholder: '17841…', required: true }],
+  },
+  {
+    id: 'claude_subscription',
+    label: 'Abonnement Claude (admin)',
+    shortDescription:
+      'Utilise votre abonnement Claude Pro/Max pour Claude Studio et les agents, à la place de la clé API (prioritaire sur elle). Réservé aux administrateurs, pour leur propre usage.',
+    keyFieldLabel: 'Token d’abonnement (sk-ant-oat…)',
+    tutorialTitle: 'Obtenir un token avec claude setup-token',
+    steps: [
+      'Installez Claude Code sur votre ordinateur (npm install -g @anthropic-ai/claude-code) si ce n’est pas déjà fait.',
+      'Dans un terminal, lancez : claude setup-token',
+      'Connectez-vous avec le compte Claude de votre abonnement dans la page qui s’ouvre, puis revenez au terminal.',
+      'Copiez le token affiché en entier (il commence par sk-ant-oat01- et fait une centaine de caractères ; il peut être coupé sur deux lignes).',
+      'Collez-le ci-dessus et enregistrez : il est vérifié par un court appel au CLI, puis chiffré en base. Il est valable un an.',
+      'Usage strictement personnel : les conditions d’Anthropic interdisent de partager ou de faire utiliser un abonnement par d’autres personnes.',
+    ],
+    docUrl: 'https://code.claude.com/docs/en/authentication',
+    docLabel: 'Claude Code — authentification',
+    adminOnly: true,
   },
 ]
 

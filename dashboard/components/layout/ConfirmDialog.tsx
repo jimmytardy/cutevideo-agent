@@ -23,7 +23,7 @@ interface ConfirmDialogProps extends ConfirmOptions {
   loading?: boolean
 }
 
-export function ConfirmDialog({
+function ConfirmDialog({
   open,
   title,
   message,

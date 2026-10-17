@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from studio.contracts import ContractError, Critique, Scenario, Timeline, load_contract
+from studio.contracts import ContractError, Critique, Scenario, ScenarioCritique, Timeline, load_contract
 
 
 def _clip(media: str, start: float, end: float) -> dict:
@@ -44,6 +44,13 @@ def test_critique_iterate_requires_changes() -> None:
     assert critique.changes[0].role == "monteur"
 
 
+def test_critique_cannot_target_thumbnail() -> None:
+    # La miniature est faite après la boucle, hors critique.
+    with pytest.raises(ValueError):
+        Critique(iteration=1, video="renders/v1.mp4", score=60, decision="iterate",
+                 changes=[{"role": "miniaturiste", "instruction": "texte plus gros"}])
+
+
 def test_scenario_narration_joins_beats() -> None:
     scenario = Scenario(
         title="t",
@@ -64,3 +71,29 @@ def test_load_contract_reports_invalid_json(tmp_path: Path) -> None:
         load_contract(path, Timeline)
     with pytest.raises(ContractError, match="introuvable"):
         load_contract(tmp_path / "absent.json", Timeline)
+
+
+def test_video_critique_refuses_scenariste() -> None:
+    with pytest.raises(ValueError, match="scénario est déjà validé"):
+        Critique(iteration=1, video="renders/v1.mp4", score=60, decision="iterate",
+                 changes=[{"role": "scenariste", "instruction": "réécrire le hook"}])
+
+
+def test_video_critique_voice_change_carries_lines() -> None:
+    critique = Critique(iteration=1, video="renders/v1.mp4", score=70, decision="iterate",
+                        changes=[{"role": "voix", "lines": [2, 5], "instruction": "ralentir"}])
+    assert critique.changes[0].lines == [2, 5]
+
+
+def test_scenario_critique_iterate_requires_changes_or_claims() -> None:
+    with pytest.raises(ValueError):
+        ScenarioCritique(iteration=1, score=70, decision="iterate")
+    critique = ScenarioCritique(iteration=1, score=85, decision="iterate", unverified_claims=["« 1 m » : à vérifier"])
+    assert critique.unverified_claims
+
+
+def test_scenario_sources_optional() -> None:
+    base = {"title": "t", "hook": "h", "beats": [{"text": "h"}], "publish": {"title": "t"}}
+    assert Scenario.model_validate(base).sources == []
+    sourced = Scenario.model_validate({**base, "sources": [{"claim": "fait", "url": "https://example.org"}]})
+    assert sourced.sources[0].checked is True

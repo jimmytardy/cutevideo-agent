@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import useSWR from 'swr'
+import useSWR, { useSWRConfig } from 'swr'
 import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
 import Chip from '@mui/material/Chip'
@@ -13,6 +13,7 @@ import Stack from '@mui/material/Stack'
 import StopIcon from '@mui/icons-material/Stop'
 import ReplayIcon from '@mui/icons-material/Replay'
 import DeleteIcon from '@mui/icons-material/Delete'
+import FolderDeleteIcon from '@mui/icons-material/FolderDelete'
 import { PageContainer, PageHeader, PageSection, LoadingState, useConfirmDialog } from '@/components/layout'
 import { projectStatusLabel, projectStatusColor } from '@/lib/status'
 import StudioPipeline from '@/components/StudioPipeline'
@@ -23,6 +24,7 @@ import {
   restartPipeline,
   dequeueProject,
   deleteProject,
+  purgeProjectFiles,
   projectThumbnailStreamUrl,
   type Project,
   type AgentRun,
@@ -39,18 +41,21 @@ interface Props {
 }
 
 const ACTIVE = ['running', 'queued']
+// En pause (limite d'usage Claude) : la reprise peut prendre des heures, on rafraîchit plus lentement.
+const PAUSED_REFRESH_MS = 30_000
 
 export default function ProjectDetailPage({ params }: Props) {
   const { id } = params
   const router = useRouter()
   const { confirm, dialog } = useConfirmDialog()
+  const { mutate } = useSWRConfig()
   const [actionError, setActionError] = useState<string | null>(null)
   const [actionLoading, setActionLoading] = useState(false)
 
   const { data: project, isLoading, error, mutate: mutateProject } = useSWR<Project>(
     `/api/v1/projects/${id}`,
     fetcher,
-    { refreshInterval: (data) => (ACTIVE.includes(data?.status ?? '') ? 3000 : 0) },
+    { refreshInterval: (data) => (ACTIVE.includes(data?.status ?? '') ? 3000 : data?.status === 'paused' ? PAUSED_REFRESH_MS : 0) },
   )
   const active = ACTIVE.includes(project?.status ?? '')
   const refresh = { refreshInterval: active ? 4000 : 0 }
@@ -65,7 +70,8 @@ export default function ProjectDetailPage({ params }: Props) {
 
   const isRunning = project.status === 'running'
   const isQueued = project.status === 'queued'
-  const canRestart = ['failed', 'stopped', 'approved', 'pending'].includes(project.status)
+  const isPaused = project.status === 'paused'
+  const canRestart = ['failed', 'stopped', 'approved', 'pending', 'paused'].includes(project.status)
   const studio = (project.config?.claude_studio ?? null) as StudioInfo | null
   const beats = (scenario?.segments ?? []) as unknown as StudioBeat[]
 
@@ -93,6 +99,22 @@ export default function ProjectDetailPage({ params }: Props) {
     await runAction(async () => {
       await deleteProject(id)
       router.push('/projects')
+    })
+  }
+
+  const handlePurgeFiles = async () => {
+    const ok = await confirm({
+      title: 'Supprimer les fichiers',
+      message:
+        'Supprimer les fichiers de travail (médias, voix, rendus, miniatures) et les vidéos non publiées ? ' +
+        'Les vidéos publiées ou programmées sont conservées, le scénario et les critiques restent consultables.',
+      confirmLabel: 'Supprimer les fichiers',
+      confirmColor: 'error',
+    })
+    if (!ok) return
+    await runAction(async () => {
+      await purgeProjectFiles(id)
+      await mutate((key) => typeof key === 'string' && (key === `/api/v1/projects/${id}` || key.startsWith(`/api/v1/projects/${id}/`)))
     })
   }
 
@@ -127,7 +149,7 @@ export default function ProjectDetailPage({ params }: Props) {
                 Retirer de la file
               </Button>
             )}
-            {isRunning && (
+            {(isRunning || isPaused) && (
               <Button variant="contained" color="error" size="small" disabled={actionLoading}
                 startIcon={actionLoading ? spinner : <StopIcon />} onClick={() => runAction(() => stopPipeline(id))}>
                 Arrêter
@@ -137,6 +159,12 @@ export default function ProjectDetailPage({ params }: Props) {
               <Button variant="outlined" size="small" disabled={actionLoading}
                 startIcon={actionLoading ? spinner : <ReplayIcon />} onClick={() => runAction(() => restartPipeline(id))}>
                 {project.status === 'pending' ? 'Lancer' : 'Relancer'}
+              </Button>
+            )}
+            {!isRunning && !isQueued && !isPaused && project.status !== 'pending' && (
+              <Button variant="outlined" color="error" size="small" disabled={actionLoading}
+                startIcon={actionLoading ? spinner : <FolderDeleteIcon />} onClick={handlePurgeFiles}>
+                Supprimer les fichiers
               </Button>
             )}
             {!isRunning && !isQueued && (
@@ -153,6 +181,12 @@ export default function ProjectDetailPage({ params }: Props) {
         <Alert severity="info" sx={{ mb: 2 }}>
           Position <strong>#{project.queue_position}</strong>
           {project.queue_length != null && <> sur <strong>{project.queue_length}</strong> projet(s) en file</>}
+        </Alert>
+      )}
+      {(isRunning || isPaused) && project.error_message && (
+        // Reprise automatique : redémarrage du worker ou limite d'usage Claude (agent/core/studio_resume.py).
+        <Alert severity={isPaused ? 'warning' : 'info'} sx={{ mb: 2 }}>
+          {project.error_message}
         </Alert>
       )}
       {actionError && (
@@ -175,7 +209,14 @@ export default function ProjectDetailPage({ params }: Props) {
 
       <Stack spacing={3}>
         <PageSection title="Claude Studio">
-          <StudioPipeline agentRuns={agentRuns ?? []} criticReports={criticReports ?? []} />
+          <StudioPipeline
+            projectId={id}
+            agentRuns={agentRuns ?? []}
+            criticReports={criticReports ?? []}
+            scenario={scenario}
+            scenarioCritiques={studio?.scenario_critiques}
+            refreshInterval={refresh.refreshInterval}
+          />
           {studio && (
             <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 2 }}>
               {studio.iterations} itération(s)

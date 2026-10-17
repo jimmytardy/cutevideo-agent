@@ -46,8 +46,10 @@ async def lifespan(app: FastAPI):
             logger.info("Démarrage API : %d entrée(s) orpheline(s) purgée(s) de la file", pruned)
     except Exception as exc:
         logger.warning("Purge file d'attente au démarrage échouée : %s", exc)
-    if settings.scheduler_enabled:
-        await scheduler_service.start()
+    try:
+        await scheduler_service.start_from_config()
+    except Exception as exc:
+        logger.error("Démarrage du scheduler échoué : %s", exc)
     logger.info("API démarrée — Redis connecté")
     yield
     await scheduler_service.stop()

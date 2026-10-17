@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from agent.core.channel_config import AiFallbackConfig
 from agent.core.api_keys import GcpCredentials
 from agent.skills.media_sources.ai.base import ImageGenerationRequest
 from agent.skills.media_sources.ai.registry import generate_with_plan
@@ -21,66 +20,28 @@ async def generate_image(
     prompt: str,
     output_dir: Path,
     *,
-    ai_cfg: AiFallbackConfig,
-    theme_category: str = "",
-    editorial_tone: str = "",
+    plan: str,
     aspect_ratio: str = "16:9",
-    plan_override: str | None = None,
-    use_prompt_as_is: bool = False,
-    visual_type: str = "",
-    style_block: str = "",
     fal_api_key: str | None = None,
     gcp_credentials: GcpCredentials | None = None,
-    seed: int | None = None,
 ) -> dict | None:
-    """Génère une image IA en secours via Flux ou Google Imagen 3."""
-    if not ai_cfg.enabled or ai_cfg.plan.value == "off":
-        return None
-
+    """Génère une image avec le modèle `plan` (Flux ou Imagen 3), prompt envoyé tel quel."""
     width, height = _dimensions_for_aspect(aspect_ratio)
     request = ImageGenerationRequest(
         prompt=prompt,
         output_dir=output_dir,
-        theme_category=theme_category,
-        editorial_tone=editorial_tone,
         aspect_ratio=aspect_ratio,
         image_width=width,
         image_height=height,
-        visual_type=visual_type,
-        style_block=style_block,
-        use_prompt_as_is=use_prompt_as_is,
         fal_api_key=fal_api_key,
         gcp_credentials=gcp_credentials,
-        seed=seed,
     )
-
-    if plan_override:
-        result = await generate_with_plan(plan_override, request)
-        if result:
-            return {
-                "source": "ai_image",
-                "url": None,
-                "local_generated": str(result.local_path),
-                "license": result.license,
-                "attribution": result.attribution,
-                "title": result.title,
-                "provider_plan": result.provider_plan,
-            }
+    result = await generate_with_plan(plan, request)
+    if not result:
+        logger.warning("Génération IA %s échouée pour : %s", plan, prompt[:80])
         return None
-
-    chain = ai_cfg.resolved_provider_chain()
-    for plan_id in chain[:2]:
-        result = await generate_with_plan(plan_id, request)
-        if result:
-            return {
-                "source": "ai_image",
-                "url": None,
-                "local_generated": str(result.local_path),
-                "license": result.license,
-                "attribution": result.attribution,
-                "title": result.title,
-                "provider_plan": result.provider_plan,
-            }
-
-    logger.warning("Tous les providers IA ont échoué pour : %s", prompt[:80])
-    return None
+    return {
+        "local_generated": str(result.local_path),
+        "attribution": result.attribution,
+        "provider_plan": result.provider_plan,
+    }

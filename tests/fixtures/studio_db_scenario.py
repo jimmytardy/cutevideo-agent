@@ -34,7 +34,7 @@ async def fake_delete(key: str) -> None:
 
 
 async def main() -> dict:
-    from sqlalchemy import func, select
+    from sqlalchemy import delete, func, select
 
     from agent.core.api_keys import encrypt_api_key
     from agent.core.claude_studio import OUTPUT_ROOT
@@ -125,6 +125,7 @@ async def main() -> dict:
                 select(func.count()).select_from(Video).where(Video.project_id == pid))).scalar()
             await session.delete(await session.get(Project, pid))
             await session.delete(await session.get(Channel, channel.id))
+            await session.execute(delete(UserApiKey).where(UserApiKey.user_id == user.id))
             await session.delete(await session.get(User, user.id))
             await session.commit()
     facts["dirs_after_delete"] = [

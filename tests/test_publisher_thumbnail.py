@@ -48,6 +48,7 @@ async def test_resolve_thumbnail_uses_agent_primary(tmp_path: Path) -> None:
             title="Titre test",
             theme="histoire",
             channel_config=ChannelRuntimeConfig(),
+            user_id=None,
             output_dir=tmp_path,
         )
 

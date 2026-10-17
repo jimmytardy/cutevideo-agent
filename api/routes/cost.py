@@ -23,11 +23,7 @@ router = APIRouter(prefix="/api/v1/channels", tags=["cost"])
 class AiFallbackPreview(BaseModel):
     enabled: bool | None = None
     plan: str | None = None
-    fallback_chain: list[str] | None = None
-    max_images_per_segment: int | None = None
     max_ai_images_per_video: int | None = None
-    max_ai_images_per_week: int | None = None
-    fallback_rate_override: float | None = None
 
 
 class CostEstimatePreviewRequest(BaseModel):

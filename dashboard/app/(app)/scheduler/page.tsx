@@ -15,17 +15,28 @@ import TableRow from '@mui/material/TableRow'
 import TableCell from '@mui/material/TableCell'
 import Typography from '@mui/material/Typography'
 import Alert from '@mui/material/Alert'
+import Switch from '@mui/material/Switch'
+import Stack from '@mui/material/Stack'
+import TextField from '@mui/material/TextField'
+import Dialog from '@mui/material/Dialog'
+import DialogTitle from '@mui/material/DialogTitle'
+import DialogContent from '@mui/material/DialogContent'
+import DialogActions from '@mui/material/DialogActions'
+import FormControlLabel from '@mui/material/FormControlLabel'
 import AdminGuard from '@/components/AdminGuard'
 import { PageContainer, PageHeader, PageSection, LoadingState } from '@/components/layout'
-import { fetcher, setSchedulerRunning, triggerSchedulerJob } from '@/lib/api'
+import { fetcher, setSchedulerRunning, triggerSchedulerJob, updateSchedulerJob } from '@/lib/api'
 import { formatDateTime } from '@/lib/format'
 import { runStatusColor } from '@/lib/status'
 
 interface JobInfo {
   id: string
   name: string
-  schedule: string
   description?: string
+  enabled: boolean
+  cron: string
+  timezone: string
+  params: Record<string, number>
   next_run_at: string | null
   last_run: {
     status: string
@@ -44,10 +55,93 @@ interface SchedulerRun {
   error: string | null
 }
 
-
 interface SchedulerStatus {
   running: boolean
+  enabled: boolean
+  process_allowed: boolean
   jobs_count: number
+}
+
+const PARAM_LABELS: Record<string, string> = {
+  work_files_days: 'Fichiers de travail et vidéos non publiées (jours)',
+  media_days: 'Toutes les vidéos, publiées comprises (jours)',
+}
+
+interface JobDraft {
+  job: JobInfo
+  enabled: boolean
+  cron: string
+  timezone: string
+  params: Record<string, string>
+}
+
+function JobConfigDialog({
+  draft,
+  onChange,
+  onClose,
+  onSave,
+  saving,
+  error,
+}: {
+  draft: JobDraft
+  onChange: (draft: JobDraft) => void
+  onClose: () => void
+  onSave: () => void
+  saving: boolean
+  error: string | null
+}) {
+  return (
+    <Dialog open onClose={onClose} fullWidth maxWidth="sm">
+      <DialogTitle>Planification — {draft.job.name}</DialogTitle>
+      <DialogContent>
+        <Stack spacing={2} sx={{ mt: 1 }}>
+          <FormControlLabel
+            control={
+              <Switch checked={draft.enabled} onChange={(e) => onChange({ ...draft, enabled: e.target.checked })} />
+            }
+            label={draft.enabled ? 'Job activé' : 'Job désactivé'}
+          />
+          <TextField
+            label="Cron"
+            value={draft.cron}
+            onChange={(e) => onChange({ ...draft, cron: e.target.value })}
+            helperText="5 champs : minute heure jour mois jour_semaine (ex. 0 6 * * *, */15 * * * *, 0 7-23 * * *)"
+            size="small"
+          />
+          <TextField
+            label="Fuseau horaire"
+            value={draft.timezone}
+            onChange={(e) => onChange({ ...draft, timezone: e.target.value })}
+            helperText="Ex. Europe/Paris, UTC"
+            size="small"
+          />
+          {Object.keys(draft.params).map((key) => (
+            <TextField
+              key={key}
+              label={PARAM_LABELS[key] ?? key}
+              type="number"
+              value={draft.params[key]}
+              onChange={(e) =>
+                onChange({
+                  ...draft,
+                  params: { ...draft.params, [key]: e.target.value },
+                })
+              }
+              inputProps={{ min: 0 }}
+              size="small"
+            />
+          ))}
+          {error && <Alert severity="error">{error}</Alert>}
+        </Stack>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose}>Annuler</Button>
+        <Button variant="contained" onClick={onSave} disabled={saving}>
+          {saving ? 'Enregistrement…' : 'Enregistrer'}
+        </Button>
+      </DialogActions>
+    </Dialog>
+  )
 }
 
 export default function SchedulerPage() {
@@ -57,14 +151,57 @@ export default function SchedulerPage() {
   const { data: jobs, mutate: mutateJobs } = useSWR<JobInfo[]>('/api/v1/scheduler/jobs', fetcher, {
     refreshInterval: 5000,
   })
-  const { data: runs, mutate: mutateRuns } = useSWR<SchedulerRun[]>(
-    '/api/v1/scheduler/runs?limit=20',
-    fetcher,
-    { refreshInterval: 5000 },
-  )
+  const { data: runs, mutate: mutateRuns } = useSWR<SchedulerRun[]>('/api/v1/scheduler/runs?limit=20', fetcher, {
+    refreshInterval: 5000,
+  })
 
   const [launching, setLaunching] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
+  const [draft, setDraft] = useState<JobDraft | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+
+  const openConfig = (job: JobInfo) => {
+    setSaveError(null)
+    setDraft({
+      job,
+      enabled: job.enabled,
+      cron: job.cron,
+      timezone: job.timezone,
+      params: Object.fromEntries(Object.entries(job.params ?? {}).map(([k, v]) => [k, String(v)])),
+    })
+  }
+
+  const saveConfig = async () => {
+    if (!draft) return
+    const params = Object.fromEntries(Object.entries(draft.params).map(([k, v]) => [k, Number(v)]))
+    setSaving(true)
+    setSaveError(null)
+    try {
+      await updateSchedulerJob(draft.job.id, {
+        enabled: draft.enabled,
+        cron: draft.cron,
+        timezone: draft.timezone,
+        ...(Object.keys(params).length ? { params } : {}),
+      })
+      setDraft(null)
+      setToast(`Planification de « ${draft.job.name} » enregistrée.`)
+      await mutateJobs()
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const toggleJob = async (job: JobInfo, enabled: boolean) => {
+    try {
+      await updateSchedulerJob(job.id, { enabled })
+    } catch (e) {
+      setToast(`Échec : ${e instanceof Error ? e.message : String(e)}`)
+    }
+    await mutateJobs()
+  }
 
   const jobName = (jobId: string) => jobs?.find((j) => j.id === jobId)?.name ?? jobId
 
@@ -90,7 +227,7 @@ export default function SchedulerPage() {
     } catch (e) {
       setToast(`Échec : ${e instanceof Error ? e.message : String(e)}`)
     }
-    await mutateStatus()
+    await Promise.all([mutateStatus(), mutateJobs()])
   }
 
   return (
@@ -106,12 +243,15 @@ export default function SchedulerPage() {
             severity={status.running ? 'success' : 'warning'}
             sx={{ mb: 3 }}
             action={
-              <Button size="small" onClick={() => toggleScheduler(status.running ? 'stop' : 'start')}>
-                {status.running ? 'Arrêter' : 'Démarrer'}
+              <Button size="small" onClick={() => toggleScheduler(status.enabled ? 'stop' : 'start')}>
+                {status.enabled ? 'Désactiver' : 'Activer'}
               </Button>
             }
           >
             Scheduler {status.running ? 'actif' : 'arrêté'} — {status.jobs_count} jobs configurés
+            {!status.process_allowed &&
+              " · bloqué sur ce serveur par SCHEDULER_ENABLED=false (le réglage est enregistré mais ne s'applique pas ici)"}
+            {status.process_allowed && !status.enabled && ' · désactivé (réglage enregistré en base)'}
           </Alert>
         )}
 
@@ -123,6 +263,7 @@ export default function SchedulerPage() {
                 <Table size="small">
                   <TableHead>
                     <TableRow>
+                      <TableCell>Actif</TableCell>
                       <TableCell>Job</TableCell>
                       <TableCell>Planification</TableCell>
                       <TableCell>Prochain run</TableCell>
@@ -133,6 +274,14 @@ export default function SchedulerPage() {
                   <TableBody>
                     {jobs.map((job) => (
                       <TableRow key={job.id} hover>
+                        <TableCell>
+                          <Switch
+                            size="small"
+                            checked={job.enabled}
+                            onChange={(e) => toggleJob(job, e.target.checked)}
+                            inputProps={{ 'aria-label': `Activer ${job.name}` }}
+                          />
+                        </TableCell>
                         <TableCell sx={{ maxWidth: 360 }}>
                           <Typography variant="body2" fontWeight={600}>
                             {job.name}
@@ -143,10 +292,16 @@ export default function SchedulerPage() {
                             </Typography>
                           )}
                         </TableCell>
-                        <TableCell>{job.schedule}</TableCell>
                         <TableCell>
-                          {formatDateTime(job.next_run_at)}
+                          <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+                            {job.cron}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            {job.timezone}
+                            {Object.entries(job.params ?? {}).map(([k, v]) => ` · ${k} = ${v}`)}
+                          </Typography>
                         </TableCell>
+                        <TableCell>{formatDateTime(job.next_run_at)}</TableCell>
                         <TableCell>
                           {job.last_run ? (
                             <Chip
@@ -159,17 +314,22 @@ export default function SchedulerPage() {
                           )}
                         </TableCell>
                         <TableCell>
-                          <Button
-                            size="small"
-                            variant="outlined"
-                            disabled={launching === job.id}
-                            startIcon={
-                              launching === job.id ? <CircularProgress size={14} color="inherit" /> : undefined
-                            }
-                            onClick={() => triggerJob(job)}
-                          >
-                            {launching === job.id ? 'Lancement…' : 'Lancer maintenant'}
-                          </Button>
+                          <Stack direction="row" spacing={1}>
+                            <Button size="small" onClick={() => openConfig(job)}>
+                              Configurer
+                            </Button>
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              disabled={launching === job.id}
+                              startIcon={
+                                launching === job.id ? <CircularProgress size={14} color="inherit" /> : undefined
+                              }
+                              onClick={() => triggerJob(job)}
+                            >
+                              {launching === job.id ? 'Lancement…' : 'Lancer maintenant'}
+                            </Button>
+                          </Stack>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -210,6 +370,17 @@ export default function SchedulerPage() {
             </Card>
           )}
         </PageSection>
+
+        {draft && (
+          <JobConfigDialog
+            draft={draft}
+            onChange={setDraft}
+            onClose={() => setDraft(null)}
+            onSave={saveConfig}
+            saving={saving}
+            error={saveError}
+          />
+        )}
 
         <Snackbar
           open={Boolean(toast)}

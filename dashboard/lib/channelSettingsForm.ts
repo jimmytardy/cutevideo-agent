@@ -13,6 +13,8 @@ export interface ChannelSettingsForm {
   production_mode: string
   /** '' = hérite du défaut plateforme (data/agent_config.json → studio.animations). */
   animations: string
+  /** '' = hérite du défaut plateforme (data/agent_config.json → studio.visual_style). */
+  visual_style: string
   short_duration_s: NumericInput
   long_quota: NumericInput
   short_quota: NumericInput
@@ -20,11 +22,7 @@ export interface ChannelSettingsForm {
   tts_short_engine: string
   tts_short_voice: string
   ai_plan: string
-  ai_fallback_chain: string
-  max_images_per_segment: NumericInput
   max_ai_images_per_video: NumericInput
-  max_ai_images_per_week: NumericInput
-  fallback_rate_override: NumericInput
 }
 
 export type UpdateChannelForm = (patch: Partial<ChannelSettingsForm>) => void
@@ -34,7 +32,7 @@ type Json = Record<string, unknown>
 const DEFAULT_VOICE = 'fr-FR-Vivienne:DragonHDLatestNeural'
 
 /** Clés de Channel.config qui ne sont plus lues par le backend : retirées à l'enregistrement. */
-const LEGACY_CONFIG_KEYS = ['runway', 'media_validation', 'subtitles', 'engagement', 'media_library']
+const LEGACY_CONFIG_KEYS = ['runway', 'media_validation', 'subtitles', 'engagement', 'media_library', 'quality']
 
 function section(config: Json, key: string): Json {
   return (config[key] as Json) || {}
@@ -51,12 +49,6 @@ function resolveShortTts(tts: Json): { engine: string; voice: string } {
     engine: String(shortRaw?.engine || tts.engine || 'azure'),
     voice: String(shortRaw?.voice || tts.voice || DEFAULT_VOICE),
   }
-}
-
-function optionalNumber(value: unknown): number | null {
-  if (value === '' || value === null || value === undefined) return null
-  const n = Number(value)
-  return Number.isNaN(n) ? null : n
 }
 
 export function channelToFormState(channel: Channel): ChannelSettingsForm {
@@ -76,6 +68,7 @@ export function channelToFormState(channel: Channel): ChannelSettingsForm {
     tone: String(section(cfg, 'editorial').tone || ''),
     production_mode: String(prod.mode || 'mixed'),
     animations: String(section(cfg, 'studio').animations || ''),
+    visual_style: String(section(cfg, 'studio').visual_style || ''),
     short_duration_s: Number(prod.short_duration_s || 60),
     long_quota: quotas.long ?? 1,
     short_quota: quotas.short ?? 3,
@@ -83,11 +76,7 @@ export function channelToFormState(channel: Channel): ChannelSettingsForm {
     tts_short_engine: shortTts.engine,
     tts_short_voice: shortTts.voice,
     ai_plan: String(ai.plan || 'flux_pro'),
-    ai_fallback_chain: ((ai.fallback_chain as string[]) || ['imagen3'])[0] || '',
-    max_images_per_segment: Number(ai.max_images_per_segment ?? 2),
     max_ai_images_per_video: Number(ai.max_ai_images_per_video ?? 10),
-    max_ai_images_per_week: (ai.max_ai_images_per_week as number | null) ?? '',
-    fallback_rate_override: (ai.fallback_rate_override as number | null) ?? '',
   }
 }
 
@@ -99,10 +88,7 @@ function normalizeForCompare(form: ChannelSettingsForm): Json {
     long_quota: Number(form.long_quota),
     short_quota: Number(form.short_quota),
     enabled_platforms: [...form.enabled_platforms].sort(),
-    max_images_per_segment: Number(form.max_images_per_segment),
     max_ai_images_per_video: Number(form.max_ai_images_per_video),
-    max_ai_images_per_week: optionalNumber(form.max_ai_images_per_week),
-    fallback_rate_override: optionalNumber(form.fallback_rate_override),
   }
 }
 
@@ -115,11 +101,7 @@ export function aiFallbackPayload(form: ChannelSettingsForm): Json {
   return {
     plan: form.ai_plan,
     enabled: form.ai_plan !== 'off',
-    fallback_chain: form.ai_fallback_chain ? [form.ai_fallback_chain] : [],
-    max_images_per_segment: Number(form.max_images_per_segment),
     max_ai_images_per_video: Number(form.max_ai_images_per_video),
-    max_ai_images_per_week: optionalNumber(form.max_ai_images_per_week),
-    fallback_rate_override: optionalNumber(form.fallback_rate_override),
   }
 }
 
@@ -136,7 +118,7 @@ export function buildChannelUpdatePayload(
   const config = { ...((channel.config || {}) as Json) }
   for (const key of LEGACY_CONFIG_KEYS) delete config[key]
 
-  const { animations: _previousAnimations, ...studio } = section(config, 'studio')
+  const { animations: _previousAnimations, visual_style: _previousVisualStyle, ...studio } = section(config, 'studio')
   const { min_short_duration_s: _min, max_short_duration_s: _max, ...production } = section(config, 'production')
   const { long: _long, style: _style, ...tts } = section(config, 'tts')
 
@@ -147,7 +129,11 @@ export function buildChannelUpdatePayload(
     creative_brief: form.creative_brief || null,
     config: {
       ...config,
-      studio: form.animations ? { ...studio, animations: form.animations } : studio,
+      studio: {
+        ...studio,
+        ...(form.animations ? { animations: form.animations } : {}),
+        ...(form.visual_style ? { visual_style: form.visual_style } : {}),
+      },
       editorial: { ...section(config, 'editorial'), tone: form.tone },
       production: {
         ...production,

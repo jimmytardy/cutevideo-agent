@@ -27,3 +27,17 @@ async def raise_if_pipeline_cancelled() -> None:
         return
     if await queue.is_pipeline_cancel_requested(str(project_id)):
         raise asyncio.CancelledError()
+
+
+# Arrêt du worker (SIGTERM, rechargement à chaud) : la création en cours est interrompue pour être
+# reprise par le worker suivant, à distinguer d'une annulation demandée par l'utilisateur.
+_worker_shutdown = False
+
+
+def mark_worker_shutdown() -> None:
+    global _worker_shutdown
+    _worker_shutdown = True
+
+
+def is_worker_shutdown() -> bool:
+    return _worker_shutdown

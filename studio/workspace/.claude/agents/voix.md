@@ -27,5 +27,12 @@ Tu es directeur·rice de la voix off. Lis `scenario.json` et `brief.json`.
    `narration.txt` et régénère (2 essais max).
 4. Écris `voice.json` : `{"duration_s": …, "engine": "…", "voice": "…"}` d'après la sortie de `tts`.
 
+## Retouche (le prompt cite des lignes de la critique vidéo)
+Ne touche **que** les lignes citées (`lines`, 1 = première ligne de `narration.txt`) : ponctuation, emphase,
+réécriture phonétique. Toutes les autres lignes restent **identiques au caractère près** — `tts` les reprend alors
+de `voice_cache/` sans les resynthétiser (vérifie `lines_reused` / `lines_synthesized` dans sa sortie). Garde les
+mêmes `--rate` / `--pitch` / `--mood` qu'au premier passage (sinon tout est refait). Puis `transcribe` et
+`voice.json` comme aux étapes 3-4. N'ajoute ni ne retire de ligne : le monteur s'appuie sur ce découpage.
+
 Si la durée sort de ±15 % de `target_duration_s`, dis-le clairement dans ta réponse (le producteur décidera).
 Réponds en 2 lignes : durée, moteur/voix, débit (mots/s), problèmes éventuels.

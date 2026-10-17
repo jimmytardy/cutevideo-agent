@@ -42,7 +42,7 @@ for i in range(n):
 ESCAPE_SCRIPT = """import os, socket
 from PIL import Image
 out = os.environ["OUT_DIR"]
-report = {"env_key": any(k in os.environ for k in ("ANTHROPIC_API_KEY", "STUDIO_GEMINI_API_KEY", "STUDIO_FAL_KEY")), "repo_env": os.path.exists(%r), "network": False}
+report = {"env_key": any(k in os.environ for k in ("ANTHROPIC_API_KEY", "STUDIO_GEMINI_API_KEY", "STUDIO_FAL_KEY", "STUDIO_GCP_CREDENTIALS_JSON")),"repo_env": os.path.exists(%r), "network": False}
 try:
     socket.create_connection(("1.1.1.1", 80), timeout=3); report["network"] = True
 except OSError:
@@ -100,14 +100,16 @@ def test_build_brief_carries_channel_policy() -> None:
     from agent.core.claude_studio import build_brief
 
     cfg = SimpleNamespace(content_language="fr", short_duration_s=45, tts_short=SimpleNamespace(voice="", engine=""),
-                          tts_voice="v", tts_engine="edge", quality_max_iterations=2, min_critic_score=80,
-                          editorial_tone="", studio_animations="templates",
+                          tts_voice="v", tts_engine="edge", min_critic_score=80,
+                          min_scenario_score=90, max_scenario_iterations=5,
+                          editorial_tone="", studio_animations="templates", studio_visual_style="mixed",
                           ai_fallback=SimpleNamespace(enabled=False, max_ai_images_per_video=10))
     ctx = SimpleNamespace(channel_config=cfg, content_plan=None, theme="t", niche_prompt="",
                           target_duration_seconds=30, max_critic_iterations=2,
                           channel=SimpleNamespace(creative_brief="  Pas de sensationnalisme.  "))
     brief = build_brief(ctx)  # type: ignore[arg-type]
     assert brief.animations == "templates"
+    assert brief.visual_style == "mixed"
     assert brief.creative_brief == "Pas de sensationnalisme."
     assert brief.max_ai_images == 0
 
@@ -186,6 +188,7 @@ def test_bwrap_sandbox_blocks_secrets_repo_and_network(tmp_path: Path, monkeypat
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-secret")
     monkeypatch.setenv("STUDIO_GEMINI_API_KEY", "g-test-secret")
     monkeypatch.setenv("STUDIO_FAL_KEY", "fal-test-secret")
+    monkeypatch.setenv("STUDIO_GCP_CREDENTIALS_JSON", '{"private_key": "gcp-test-secret"}')
     asyncio.run(run_sandboxed("python", anim / "escape.py", anim, tmp_path / "out", width=64, height=64, fps=2,
                               duration=0.5))
     report = json.loads((tmp_path / "out" / "frames" / "report.json").read_text())

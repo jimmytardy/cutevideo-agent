@@ -14,22 +14,18 @@ from agent.core.editorial_formats import (
     resolve_format_rotation_config,
 )
 from agent.core.database import Channel
+from studio.contracts import VISUAL_STYLES
 
 if TYPE_CHECKING:
     from agent.core.subscription import SubscriptionLimits
 
 logger = logging.getLogger(__name__)
 
+# Anciens noms de plan encore présents dans des `Channel.config`.
 PLAN_LEGACY_ALIASES: dict[str, str] = {
-    "off": "off",
     "budget": "flux_schnell",
     "balanced": "flux_pro",
     "quality": "flux_ultra",
-    "flux_schnell": "flux_schnell",
-    "flux_pro": "flux_pro",
-    "flux_ultra": "flux_ultra",
-    "imagen3_fast": "imagen3_fast",
-    "imagen3": "imagen3",
 }
 
 
@@ -38,29 +34,18 @@ class AiImagePlan(str, Enum):
     FLUX_SCHNELL = "flux_schnell"
     FLUX_PRO = "flux_pro"
     FLUX_ULTRA = "flux_ultra"
+    FLUX_2_DEV = "flux_2_dev"
     IMAGEN3_FAST = "imagen3_fast"
     IMAGEN3 = "imagen3"
 
 
 class AiFallbackConfig(BaseModel):
+    """Images IA de Claude Studio (`ai-image`) : `plan` = modèle par défaut et plafond de prix
+    (Claude peut choisir un modèle moins cher, cf. `models_up_to`)."""
+
     enabled: bool = True
     plan: AiImagePlan = AiImagePlan.FLUX_PRO
-    fallback_chain: list[str] = Field(default_factory=lambda: ["imagen3"])
-    max_images_per_segment: int = 2
     max_ai_images_per_video: int = 10
-    max_ai_images_per_week: int | None = None
-    fallback_rate_override: float | None = None
-
-    def resolved_provider_chain(self) -> list[str]:
-        if self.plan == AiImagePlan.OFF or not self.enabled:
-            return []
-        primary = self.plan.value
-        chain = [primary]
-        for item in self.fallback_chain:
-            normalized = PLAN_LEGACY_ALIASES.get(item, item)
-            if normalized != "off" and normalized != primary and normalized not in chain:
-                chain.append(normalized)
-        return chain
 
 
 DEFAULT_PLATFORMS = ["youtube", "tiktok", "instagram"]
@@ -114,9 +99,13 @@ class ChannelRuntimeConfig(BaseModel):
     # Création Claude Studio
     # Animations : off | templates | scripts (data/agent_config.json → studio, surcharge chaîne).
     studio_animations: Literal["off", "templates", "scripts"] = "scripts"
-    min_critic_score: int = 90
+    # Style visuel : animation | mixed | realistic (data/agent_config.json → studio.visual_style, surcharge chaîne).
+    studio_visual_style: Literal["animation", "mixed", "realistic"] = "animation"
+    # Boucle vidéo (monteur ⇄ analyse vidéo) puis boucle scénario (scénariste ⇄ analyse scénario).
+    min_critic_score: int = 80
     max_critic_iterations: int = 5
-    quality_max_iterations: int = 3
+    min_scenario_score: int = 90
+    max_scenario_iterations: int = 5
     cost_max_per_video_usd: float = 8.0
     ai_fallback: AiFallbackConfig = Field(default_factory=AiFallbackConfig)
 
@@ -239,31 +228,14 @@ def _resolve_ai_fallback(
     except ValueError:
         plan = AiImagePlan.FLUX_PRO
 
-    fallback_chain = ai_channel.get("fallback_chain") or global_cfg.get(
-        "default_fallback_chain", ["imagen3"]
-    )
     return AiFallbackConfig(
         enabled=switch_on and bool(ai_channel.get("enabled", global_cfg.get("enabled", True))),
         plan=plan,
-        fallback_chain=[str(x) for x in fallback_chain],
-        max_images_per_segment=int(
-            ai_channel.get("max_images_per_segment", global_cfg.get("max_images_per_segment", 2))
-        ),
         max_ai_images_per_video=int(
             ai_channel.get(
                 "max_ai_images_per_video",
                 global_cfg.get("max_ai_images_per_video", 10),
             )
-        ),
-        max_ai_images_per_week=(
-            int(ai_channel["max_ai_images_per_week"])
-            if ai_channel.get("max_ai_images_per_week") is not None
-            else global_cfg.get("max_ai_images_per_week")
-        ),
-        fallback_rate_override=(
-            float(ai_channel["fallback_rate_override"])
-            if ai_channel.get("fallback_rate_override") is not None
-            else None
         ),
     )
 
@@ -290,7 +262,10 @@ def resolve_channel_config(
         channel_overrides = apply_subscription_caps(channel_overrides, subscription_limits)
 
     pipeline = {**global_cfg.get("pipeline", {}), **channel_overrides.get("pipeline", {})}
-    quality_cfg = {**global_cfg.get("quality", {}), **channel_overrides.get("quality", {})}
+    # Ancienne clé `quality.max_iterations` d'une chaîne : reprise tant qu'elle n'a pas de plafond `pipeline`.
+    legacy_quality = channel_overrides.get("quality") or {}
+    if "max_critic_iterations" not in (channel_overrides.get("pipeline") or {}) and "max_iterations" in legacy_quality:
+        pipeline["max_critic_iterations"] = legacy_quality["max_iterations"]
     cost_cfg = {**global_cfg.get("cost", {}), **channel_overrides.get("cost", {})}
     tts = {**global_cfg.get("tts", {}), **channel_overrides.get("tts", {})}
     tts_voice = str(tts.get("voice", "fr-FR-Vivienne:DragonHDLatestNeural"))
@@ -301,6 +276,9 @@ def resolve_channel_config(
     studio_animations = str(studio_cfg.get("animations", "scripts"))
     if studio_animations not in ("off", "templates", "scripts"):
         studio_animations = "scripts"
+    studio_visual_style = str(studio_cfg.get("visual_style", "animation"))
+    if studio_visual_style not in VISUAL_STYLES:
+        studio_visual_style = "animation"
 
     raw_quotas = publishing.get("daily_quotas", {})
     daily_quotas = DailyQuotasConfig(
@@ -340,9 +318,11 @@ def resolve_channel_config(
         format_rotation=resolve_format_rotation_config(channel_overrides),
         content_language=_resolve_content_language(channel_overrides, global_cfg, tts_voice),
         studio_animations=studio_animations,  # type: ignore[arg-type]
-        min_critic_score=int(pipeline.get("min_critic_score", 90)),
-        max_critic_iterations=int(pipeline.get("max_critic_iterations", 3)),
-        quality_max_iterations=int(quality_cfg.get("max_iterations", 3)),
+        studio_visual_style=studio_visual_style,  # type: ignore[arg-type]
+        min_critic_score=int(pipeline.get("min_critic_score", 80)),
+        max_critic_iterations=int(pipeline.get("max_critic_iterations", 5)),
+        min_scenario_score=int(pipeline.get("min_scenario_score", 90)),
+        max_scenario_iterations=int(pipeline.get("max_scenario_iterations", 5)),
         cost_max_per_video_usd=float(cost_cfg.get("max_per_video_usd", 8.0)),
         ai_fallback=_resolve_ai_fallback(global_cfg.get("media_sources", {}), channel_overrides),
     )

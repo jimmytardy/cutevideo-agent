@@ -12,7 +12,7 @@ import redis.exceptions
 
 from agent.core.config import get_pipeline_settings
 from agent.core.orchestrator import Orchestrator
-from agent.core.pipeline_cancel import bind_project, unbind_project
+from agent.core.pipeline_cancel import bind_project, mark_worker_shutdown, unbind_project
 from agent.core.pipeline_lease import (
     acquire_lease,
     get_lease_settings,
@@ -20,7 +20,7 @@ from agent.core.pipeline_lease import (
     renew_lease,
 )
 from agent.core.pipeline_queue import dequeue_next_eligible
-from agent.core.pipeline_reconcile import reconcile_orphan_running_projects
+from agent.core.pipeline_reconcile import reconcile_orphan_running_projects, resume_paused_projects
 from agent.core.queue import queue
 from agent.core.subprocess_registry import kill_all
 
@@ -28,6 +28,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname
 logger = logging.getLogger(__name__)
 
 WORKER_ID = os.environ.get("WORKER_ID", os.environ.get("HOSTNAME", "worker-1"))
+# Fréquence de vérification des créations en pause (limite d'usage Claude) dont le reset est passé.
+PAUSED_CHECK_INTERVAL_S = 60
 
 _shutdown_event: asyncio.Event | None = None
 _current_pipeline_task: asyncio.Task[None] | None = None
@@ -42,6 +44,8 @@ def _get_shutdown_event() -> asyncio.Event:
 
 def _request_shutdown() -> None:
     logger.info("[%s] Arrêt demandé (signal)", WORKER_ID)
+    # Avant l'annulation : la création en cours sera reprise par le worker suivant, pas marquée arrêtée.
+    mark_worker_shutdown()
     _get_shutdown_event().set()
     task = _current_pipeline_task
     if task is not None and not task.done():
@@ -98,7 +102,7 @@ async def _process_task(payload: dict) -> None:
 
     project_token = bind_project(project_id)
     pipeline_task = asyncio.create_task(
-        Orchestrator().run_pipeline(project_id, already_claimed=True)
+        Orchestrator().run_pipeline(project_id, already_claimed=True, resume=bool(payload.get("resume")))
     )
     _current_pipeline_task = pipeline_task
     stop_watcher = asyncio.Event()
@@ -166,6 +170,21 @@ async def _periodic_reconcile_loop(worker_id: str) -> None:
             )
 
 
+async def _resume_paused_loop(worker_id: str) -> None:
+    shutdown = _get_shutdown_event()
+    while not shutdown.is_set():
+        try:
+            count = await resume_paused_projects()
+            if count:
+                logger.info("[%s] %d création(s) en pause remise(s) en file", worker_id, count)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("[%s] Reprise des créations en pause échouée : %s", worker_id, exc, exc_info=True)
+        if await _sleep_or_shutdown(PAUSED_CHECK_INTERVAL_S):
+            return
+
+
 async def _sleep_or_shutdown(seconds: float) -> bool:
     """Attend ``seconds`` ou jusqu'à shutdown. Retourne True si shutdown demandé."""
     shutdown = _get_shutdown_event()
@@ -197,6 +216,7 @@ async def run_worker() -> None:
             logger.info("[%s] Pipeline worker démarré", WORKER_ID)
             backoff_s = 2
             reconcile_task = asyncio.create_task(_periodic_reconcile_loop(WORKER_ID))
+            paused_task = asyncio.create_task(_resume_paused_loop(WORKER_ID))
             try:
                 while not shutdown.is_set():
                     result = await dequeue_next_eligible()
@@ -212,11 +232,12 @@ async def run_worker() -> None:
                     )
                     await _process_task(result.payload)
             finally:
-                reconcile_task.cancel()
-                try:
-                    await reconcile_task
-                except asyncio.CancelledError:
-                    pass
+                for task in (reconcile_task, paused_task):
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
         except redis.exceptions.ConnectionError as exc:
             if shutdown.is_set():
                 break

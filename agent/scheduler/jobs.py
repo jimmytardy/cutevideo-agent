@@ -5,11 +5,11 @@ from typing import Any
 
 from sqlalchemy import select
 
-from agent.core.config import settings
 from agent.core.database import AsyncSessionFactory, Channel, Project
 from agent.core.pipeline_launcher import enqueue_pipeline
 from agent.core.pipeline_queue import PipelineAlreadyQueuedError, is_queued
 from agent.scheduler.cleanup import purge_old_media_files
+from agent.scheduler.config import load_job_config
 from agent.scheduler.editorial_calendar import publication_target_iso
 from agent.scheduler.tracking import track_job_run
 
@@ -92,8 +92,12 @@ def _project_targets_publication_date(project: Project, target_iso: str) -> bool
 
 
 @track_job_run("purge_old_media")
-async def run_purge_old_media() -> None:
-    await purge_old_media_files(retention_days=settings.storage_retention_days)
+async def run_purge_old_media() -> dict[str, Any]:
+    params = (await load_job_config("purge_old_media")).params
+    report = await purge_old_media_files(
+        work_files_days=params["work_files_days"], media_days=params["media_days"]
+    )
+    return report.to_dict()
 
 
 JOB_REGISTRY: dict[str, Any] = {
@@ -104,35 +108,31 @@ JOB_REGISTRY: dict[str, Any] = {
     "purge_old_media": run_purge_old_media,
 }
 
+# Horaires et paramètres : `agent/scheduler/config.py` (base, sinon JOB_DEFAULTS).
 JOB_METADATA: list[dict[str, str]] = [
     {
         "id": "content_planner_daily",
         "name": "Content Planner",
-        "schedule": "6h00 Europe/Paris",
         "description": "Construit le plan éditorial du lendemain et crée les projets vidéo « en attente » pour chaque chaîne.",
     },
     {
         "id": "run_pending_projects_morning",
         "name": "Pipelines (matin)",
-        "schedule": "6h30 Europe/Paris",
         "description": "Lance la pipeline de création des projets en attente dont la publication est prévue le jour cible.",
     },
     {
         "id": "run_pending_projects_hourly",
         "name": "Pipelines (horaire)",
-        "schedule": "7h-23h Europe/Paris",
         "description": "Repasse sur les projets en attente non encore démarrés et lance leur pipeline de création.",
     },
     {
         "id": "distribution_agent",
         "name": "Distribution",
-        "schedule": "*/15 min",
         "description": "Planifie et publie les vidéos approuvées sur les plateformes (YouTube, TikTok, Instagram).",
     },
     {
         "id": "purge_old_media",
         "name": "Purge médias",
-        "schedule": "3h00 UTC",
-        "description": "Nettoie le stockage en supprimant les fichiers médias qui dépassent la durée de rétention.",
+        "description": "Supprime les fichiers des projets terminés (dossiers de travail et vidéos non publiées) après N jours, et toutes les vidéos après la rétention longue.",
     },
 ]

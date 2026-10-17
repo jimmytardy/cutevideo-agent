@@ -7,6 +7,7 @@ import pytest
 
 from studio.contracts import Brief
 from studio.launcher import (
+    ALLOWED_TOOLS,
     REPO_ROOT,
     LaunchConfig,
     StreamParser,
@@ -66,8 +67,11 @@ def test_build_command_keeps_prompt_before_variadic_flags() -> None:
     assert "Bash(python -m studio.tools:*)" in cmd
     assert cmd[cmd.index("--permission-mode") + 1] == "dontAsk"
     # Les options variadiques ne doivent pas avaler une option suivante.
-    after_disallowed = cmd[cmd.index("--disallowedTools") + 1:]
-    assert after_disallowed[2].startswith("--")
+    allowed_end = cmd.index("--allowedTools") + 1 + len(ALLOWED_TOOLS)
+    assert cmd[allowed_end].startswith("--")
+    # Recherche web autorisée (le scénariste vérifie ses faits ; restreinte par le frontmatter des rôles).
+    assert {"WebSearch", "WebFetch"} <= set(cmd[cmd.index("--allowedTools") + 1:allowed_end])
+    assert "--disallowedTools" not in cmd
 
 
 def test_build_env_strips_inherited_secrets_and_injects_user_keys(
@@ -83,12 +87,19 @@ def test_build_env_strips_inherited_secrets_and_injects_user_keys(
     assert env["STUDIO_RUN_DIR"] == str(tmp_path)
     assert str(REPO_ROOT) in env["PYTHONPATH"]
 
-    keys = UserKeys(anthropic="sk-ant-api-user", gemini="g-user", azure_speech="az", azure_speech_region="westeurope")
+    assert "STUDIO_GCP_LOCATION" in INHERITED_SECRET_VARS
+
+    keys = UserKeys(
+        anthropic="sk-ant-api-user", gemini="g-user", azure_speech="az", azure_speech_region="westeurope",
+        gcp_credentials_json='{"project_id": "p"}', gcp_location="us-central1",
+    )
     env = build_env(tmp_path, keys, config_dir=tmp_path / "cfg")
     assert env["ANTHROPIC_API_KEY"] == "sk-ant-api-user"
     assert env["STUDIO_GEMINI_API_KEY"] == "g-user"
     assert env["STUDIO_AZURE_SPEECH_KEY"] == "az"
     assert env["STUDIO_AZURE_SPEECH_REGION"] == "westeurope"
+    assert env["STUDIO_GCP_CREDENTIALS_JSON"] == '{"project_id": "p"}'
+    assert env["STUDIO_GCP_LOCATION"] == "us-central1"
     assert "STUDIO_FAL_KEY" not in env and "CLAUDE_CODE_OAUTH_TOKEN" not in env
     assert env["CLAUDE_CONFIG_DIR"] == str(tmp_path / "cfg") and (tmp_path / "cfg").is_dir()
 
@@ -118,3 +129,12 @@ def test_prepare_run_dir_copies_workspace(tmp_path: Path) -> None:
 def test_prepare_run_dir_refuses_repo_paths() -> None:
     with pytest.raises(ValueError, match="hors du repo"):
         prepare_run_dir(REPO_ROOT / "tmp" / "studio-run", Brief(theme="x"))
+
+
+def test_session_timeout_zero_means_unlimited(monkeypatch) -> None:
+    monkeypatch.setenv("CLAUDE_STUDIO_TIMEOUT_S", "0")
+    assert LaunchConfig().timeout_s is None
+    monkeypatch.setenv("CLAUDE_STUDIO_TIMEOUT_S", "7200")
+    assert LaunchConfig().timeout_s == 7200.0
+    monkeypatch.delenv("CLAUDE_STUDIO_TIMEOUT_S")
+    assert LaunchConfig().timeout_s == 3600.0

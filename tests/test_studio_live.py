@@ -57,8 +57,10 @@ def live_run(tmp_path_factory: pytest.TempPathFactory) -> dict:
 def test_all_roles_ran(live_run: dict) -> None:
     assert live_run["session"]["is_error"] is False
     roles = live_run["roles"]
-    expected = ["scenariste", "voix", "monteur", "miniaturiste", "critique"]
+    expected = ["scenariste", "voix", "monteur", "critique", "miniaturiste"]
     assert set(expected) <= set(roles), roles
+    # La miniature est faite une seule fois, après la boucle.
+    assert roles.count("miniaturiste") == 1 and roles[-1] == "miniaturiste", roles
     # Le producteur peut refaire une étape (durée hors tolérance…), mais l'ordre du pipeline tient.
     first_seen = sorted(expected, key=roles.index)
     assert first_seen == expected, roles

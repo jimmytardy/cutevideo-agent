@@ -45,7 +45,7 @@ async def test_run_pipeline_uses_claude_studio_and_approves() -> None:
         "agent.core.orchestrator.resolve_channel_config",
         return_value=ChannelRuntimeConfig(short_duration_s=45),
     ), patch(
-        "agent.core.orchestrator.resolve_effective_quality_iterations", return_value=3
+        "agent.core.orchestrator.resolve_effective_max_critic_iterations", return_value=3
     ), patch.object(
         orch, "_update_project_status", new_callable=AsyncMock
     ) as update_status, patch(
@@ -80,7 +80,7 @@ async def test_run_pipeline_marks_failed_when_studio_fails() -> None:
     ), patch(
         "agent.core.orchestrator.resolve_channel_config", return_value=ChannelRuntimeConfig()
     ), patch(
-        "agent.core.orchestrator.resolve_effective_quality_iterations", return_value=2
+        "agent.core.orchestrator.resolve_effective_max_critic_iterations", return_value=2
     ), patch.object(
         orch, "_update_project_status", new_callable=AsyncMock
     ) as update_status, patch(

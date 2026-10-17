@@ -23,7 +23,10 @@ def studio_dirs(project_id: uuid.UUID) -> list[Path]:
     from agent.core.claude_studio import OUTPUT_ROOT
     from studio.launcher import default_runs_dir
 
-    return [OUTPUT_ROOT / str(project_id), default_runs_dir() / str(project_id)]
+    runs = default_runs_dir()
+    # Transcriptions Claude Code gardées pour reprendre une création (CLAUDE_CONFIG_DIR par utilisateur).
+    transcripts = sorted(runs.glob(f".claude-config/*/projects/*{project_id}*"))
+    return [OUTPUT_ROOT / str(project_id), runs / str(project_id), *transcripts]
 
 
 async def clear_creation_artifacts(project_id: uuid.UUID, session: AsyncSession) -> None:

@@ -1,6 +1,6 @@
 /** Listes de choix des réglages de chaîne (onglets de /channels/[id]/settings). */
 
-export interface Option {
+interface Option {
   value: string
   label: string
 }
@@ -17,6 +17,13 @@ export const ANIMATION_MODES: Option[] = [
   { value: 'scripts', label: 'Scripts libres + modèles' },
   { value: 'templates', label: 'Modèles prêts seulement (titre, compteur, barres, liste)' },
   { value: 'off', label: 'Désactivées (photos et vidéos uniquement)' },
+]
+
+export const VISUAL_STYLES: Option[] = [
+  { value: '', label: 'Par défaut de la plateforme (animation)' },
+  { value: 'animation', label: 'Animation : schémas et animations, photos réelles ponctuelles' },
+  { value: 'mixed', label: 'Mixte : photos et vidéos réelles + animations pour les chiffres' },
+  { value: 'realistic', label: 'Réaliste : images réelles sur presque tous les plans' },
 ]
 
 export const PRODUCTION_MODES: Option[] = [
@@ -46,21 +53,12 @@ export const YOUTUBE_CATEGORIES: Option[] = [
 export const AI_PLANS: (Option & { family: string })[] = [
   { value: 'off', label: 'Désactivé', family: '' },
   { value: 'flux_schnell', label: 'Flux Schnell (budget)', family: 'Flux' },
+  { value: 'flux_2_dev', label: 'FLUX 2 Dev (bon rapport qualité/prix)', family: 'Flux' },
   { value: 'flux_pro', label: 'Flux 1.1 Pro (standard)', family: 'Flux' },
   { value: 'flux_ultra', label: 'Flux Pro Ultra (qualité max)', family: 'Flux' },
   { value: 'imagen3_fast', label: 'Imagen 3 Fast (budget Google)', family: 'Google Imagen 3' },
   { value: 'imagen3', label: 'Imagen 3 (standard Google)', family: 'Google Imagen 3' },
 ]
-
-/** Plans de repli proposés pour chaque plan principal. */
-export const FALLBACK_OPTIONS: Record<string, string[]> = {
-  off: [],
-  flux_schnell: ['imagen3_fast', 'imagen3'],
-  flux_pro: ['imagen3', 'flux_ultra'],
-  flux_ultra: ['imagen3'],
-  imagen3_fast: ['flux_schnell', 'flux_pro'],
-  imagen3: ['flux_pro', 'flux_ultra'],
-}
 
 export const TTS_ENGINES: Option[] = [
   { value: 'azure', label: 'Azure Neural' },

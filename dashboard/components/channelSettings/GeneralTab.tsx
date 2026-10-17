@@ -8,7 +8,7 @@ import TextField from '@mui/material/TextField'
 import Typography from '@mui/material/Typography'
 
 import type { ChannelSettingsForm, UpdateChannelForm } from '@/lib/channelSettingsForm'
-import { ANIMATION_MODES, PLATFORMS, PRODUCTION_MODES, YOUTUBE_CATEGORIES } from '@/lib/channelSettingsOptions'
+import { ANIMATION_MODES, PLATFORMS, PRODUCTION_MODES, VISUAL_STYLES, YOUTUBE_CATEGORIES } from '@/lib/channelSettingsOptions'
 
 interface Props {
   form: ChannelSettingsForm
@@ -54,6 +54,12 @@ export default function GeneralTab({ form, update }: Props) {
         helperText="Scripts libres : Claude écrit ses propres animations (HTML/JS, Python) dans un bac à sable isolé, comme sur claude.ai."
         onChange={(e) => update({ animations: e.target.value })}>
         {ANIMATION_MODES.map((m) => <MenuItem key={m.value} value={m.value}>{m.label}</MenuItem>)}
+      </TextField>
+
+      <TextField select fullWidth label="Style visuel" value={form.visual_style} sx={{ mb: 2 }}
+        helperText="Mixte / Réaliste : photos et vidéos libres (Pexels, Pixabay, Unsplash…) avec crédits ; imposé au scénariste et au monteur."
+        onChange={(e) => update({ visual_style: e.target.value })}>
+        {VISUAL_STYLES.map((m) => <MenuItem key={m.value} value={m.value}>{m.label}</MenuItem>)}
       </TextField>
 
       <Box sx={{ display: 'flex', gap: 2, mb: 2, flexWrap: 'wrap' }}>

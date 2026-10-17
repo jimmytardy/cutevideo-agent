@@ -18,16 +18,19 @@ import os
 import re
 import shutil
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import aiohttp
 
 from agent.core.concurrency import bounded_gather
 from agent.skills.media.rights_check import filter_publishable
 from agent.skills.video.ffmpeg_runtime import filter_thread_args, measure_loudness, run_ffmpeg, thread_args
-from studio.assets import FONT_FILE, IMAGE_EXTENSIONS, SHEET_COLS, TILE_H, TILE_W, max_ai_images
+from studio.assets import FONT_FILE, IMAGE_EXTENSIONS, SHEET_COLS, TILE_H, TILE_W, ai_models, max_ai_images
 from studio.contracts import read_json, write_json
-from studio.user_keys import FAL_KEY, user_key
+from studio.user_keys import FAL_KEY, GCP_CREDENTIALS_JSON, GCP_LOCATION, user_key
+
+if TYPE_CHECKING:
+    from agent.core.api_keys import GcpCredentials
 
 logger = logging.getLogger(__name__)
 
@@ -200,10 +203,37 @@ async def download_candidate(run_dir: Path, cid: str, name: str) -> dict[str, An
     return {"path": rel, **info, "license": item.get("license"), "author": item.get("author")}
 
 
-async def generate_ai_image(run_dir: Path, prompt: str, name: str, aspect: str = "9:16") -> dict[str, Any]:
-    from agent.core.channel_config import AiFallbackConfig
+def _user_gcp_credentials() -> GcpCredentials | None:
+    """Compte de service GCP du propriétaire (Imagen 3), posé par le launcher."""
+    from agent.core.api_keys import GcpCredentials
+    from agent.core.config import settings
+    from agent.core.vertex import vertex_project_id
+
+    credentials_json = user_key(GCP_CREDENTIALS_JSON)
+    if not credentials_json:
+        return None
+    try:
+        project_id = vertex_project_id(credentials_json)
+    except RuntimeError:
+        return None
+    location = user_key(GCP_LOCATION) or settings.gcp_location
+    return GcpCredentials(project_id=project_id, location=location, credentials_json=credentials_json)
+
+
+async def generate_ai_image(
+    run_dir: Path, prompt: str, name: str, aspect: str = "9:16", model: str | None = None
+) -> dict[str, Any]:
     from agent.skills.media_sources.ai_image import generate_image
 
+    allowed = ai_models()
+    if not allowed:
+        raise RuntimeError(
+            "images IA indisponibles (désactivées par la chaîne ou aucune clé fal / GCP) : "
+            "utilise une banque d'images ou une animation du kit (anim/lib/studio.js)"
+        )
+    model = model or allowed[0]
+    if model not in allowed:
+        raise RuntimeError(f"modèle {model} non autorisé pour cette chaîne : choisis parmi {', '.join(allowed)}")
     credits = read_json(_credits_path(run_dir), {})
     used = sum(1 for c in credits.values() if c.get("source") == "ai_image")
     if used >= max_ai_images():
@@ -214,18 +244,18 @@ async def generate_ai_image(run_dir: Path, prompt: str, name: str, aspect: str =
     result = await generate_image(
         prompt,
         out_dir,
-        ai_cfg=AiFallbackConfig(),
+        plan=model,
         aspect_ratio=aspect,
-        plan_override="flux_2_dev",
-        use_prompt_as_is=True,
-        visual_type="custom",
-        # Clé fal du propriétaire de la chaîne, posée par le launcher.
+        # Clés du propriétaire de la chaîne, posées par le launcher.
         fal_api_key=user_key(FAL_KEY),
+        gcp_credentials=_user_gcp_credentials() if model.startswith("imagen") else None,
     )
-    if not result or not result.get("local_generated"):
+    if not result:
+        others = [m for m in allowed if m != model]
+        hint = f"réessaie avec --model {others[0]} ou " if others else ""
         raise RuntimeError(
-            "génération IA indisponible (clé FAL absente ou refusée) : illustre ce plan avec une animation "
-            "du kit (anim/lib/studio.js) ou une banque d'images"
+            f"génération {model} échouée (clé refusée ou prompt bloqué) : {hint}illustre ce plan avec "
+            "une animation du kit (anim/lib/studio.js) ou une banque d'images"
         )
     src = Path(result["local_generated"])
     dest = run_dir / "media" / f"{name}{src.suffix or '.png'}"

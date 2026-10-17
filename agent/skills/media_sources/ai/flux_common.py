@@ -5,10 +5,12 @@ import uuid
 
 import aiohttp
 
-from agent.core.config import load_agent_config
-from agent.skills.media_sources.ai.base import ImageGenerationRequest, ImageGenerationResult
-from agent.skills.media_sources.ai.flux_negative_prompt import flux_negative_prompt_for_visual_type
-from agent.skills.media_sources.ai.prompt_builder import build_documentary_prompt
+from agent.skills.media_sources.ai.base import (
+    ImageGenerationRequest,
+    ImageGenerationResult,
+    ai_fallback_config,
+    ai_license_label,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +23,7 @@ FLUX_ATTRIBUTIONS: dict[str, str] = {
 
 
 def _flux_model_for_plan(plan_id: str) -> str | None:
-    cfg = load_agent_config().get("media_sources", {}).get("ai_fallback", {}).get("flux", {})
+    cfg = ai_fallback_config().get("flux", {})
     mapping = {
         "flux_schnell": str(cfg.get("schnell_model", "fal-ai/flux/schnell")),
         "flux_pro": str(cfg.get("pro_model", "fal-ai/flux-pro/v1.1")),
@@ -31,187 +33,73 @@ def _flux_model_for_plan(plan_id: str) -> str | None:
     return mapping.get(plan_id)
 
 
-def _fal_key_for(request: ImageGenerationRequest) -> str | None:
-    """Clé fal de l'utilisateur (aucune clé plateforme)."""
-    return request.fal_api_key
-
-
-def _apply_flux_negative_prompt(payload: dict, request: ImageGenerationRequest) -> None:
-    negative = flux_negative_prompt_for_visual_type(request.visual_type)
-    if negative:
-        payload["negative_prompt"] = negative
-
-
-async def generate_flux_image(
-    plan_id: str,
-    request: ImageGenerationRequest,
-) -> ImageGenerationResult | None:
-    fal_key = _fal_key_for(request)
-    if not fal_key:
-        logger.warning("FAL_KEY absente — provider Flux %s ignoré", plan_id)
-        return None
-
-    model = _flux_model_for_plan(plan_id)
-    if not model:
-        return None
-
-    full_prompt = (
-        request.prompt
-        if request.use_prompt_as_is
-        else build_documentary_prompt(
-            request.prompt,
-            theme_category=request.theme_category,
-            editorial_tone=request.editorial_tone,
-            aspect_ratio=request.aspect_ratio,
-            style_block=request.style_block,
-        )
-    )
+def _payload(plan_id: str, request: ImageGenerationRequest) -> dict:
     payload: dict = {
-        "prompt": full_prompt,
+        "prompt": request.prompt,
         "image_size": {"width": request.image_width, "height": request.image_height},
         "num_images": 1,
         "output_format": "jpeg",
-        "safety_tolerance": "2",
     }
+    if plan_id == "flux_2_dev":
+        payload.update(enable_safety_checker=True, guidance_scale=2.5)
+    else:
+        payload["safety_tolerance"] = "2"
     if plan_id == "flux_ultra":
         payload["raw"] = True
-    if request.seed is not None:
-        payload["seed"] = int(request.seed)
-    _apply_flux_negative_prompt(payload, request)
+    return payload
 
-    headers = {"Authorization": f"Key {fal_key}", "Content-Type": "application/json"}
-    url = f"https://fal.run/{model}"
 
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                url,
-                headers=headers,
-                json=payload,
-                timeout=aiohttp.ClientTimeout(total=120),
-            ) as resp:
-                if resp.status != 200:
-                    body = await resp.text()
-                    logger.warning("Flux API error %s (%s): %s", plan_id, resp.status, body[:200])
-                    return None
-                data = await resp.json()
+class FluxProvider:
+    """Modèles Flux de fal.ai, avec la clé fal du propriétaire de la chaîne (aucune clé plateforme)."""
 
-        images = data.get("images") or []
-        if not images:
+    def __init__(self, plan_id: str) -> None:
+        self.plan_id = plan_id
+
+    async def generate(self, request: ImageGenerationRequest) -> ImageGenerationResult | None:
+        plan_id = self.plan_id
+        fal_key = request.fal_api_key
+        if not fal_key:
+            logger.warning("Clé fal absente — provider Flux %s ignoré", plan_id)
             return None
-        image_url = images[0].get("url")
-        if not image_url:
+        model = _flux_model_for_plan(plan_id)
+        if not model:
             return None
 
-        request.output_dir.mkdir(parents=True, exist_ok=True)
-        dest = request.output_dir / f"ai_{uuid.uuid4().hex[:8]}.jpg"
+        headers = {"Authorization": f"Key {fal_key}", "Content-Type": "application/json"}
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"https://fal.run/{model}",
+                    headers=headers,
+                    json=_payload(plan_id, request),
+                    timeout=aiohttp.ClientTimeout(total=120),
+                ) as resp:
+                    if resp.status != 200:
+                        body = await resp.text()
+                        logger.warning("Flux API error %s (%s): %s", plan_id, resp.status, body[:200])
+                        return None
+                    data = await resp.json()
 
-        async with aiohttp.ClientSession() as session:
-            async with session.get(image_url, timeout=aiohttp.ClientTimeout(total=60)) as img_resp:
-                if img_resp.status != 200:
-                    return None
-                dest.write_bytes(await img_resp.read())
+            images = data.get("images") or []
+            image_url = images[0].get("url") if images else None
+            if not image_url:
+                return None
 
-        license_label = str(
-            load_agent_config()
-            .get("media_sources", {})
-            .get("ai_fallback", {})
-            .get("license", "synthetic-ai-generated")
-        )
-        return ImageGenerationResult(
-            local_path=dest,
-            attribution=FLUX_ATTRIBUTIONS.get(plan_id, "Image générée par IA (Flux via fal.ai)"),
-            license=license_label,
-            title=request.prompt[:120],
-            provider_plan=plan_id,
-        )
-    except aiohttp.ClientError as e:
-        logger.warning("Génération Flux %s échouée : %s", plan_id, e)
-        return None
+            request.output_dir.mkdir(parents=True, exist_ok=True)
+            dest = request.output_dir / f"ai_{uuid.uuid4().hex[:8]}.jpg"
+            async with aiohttp.ClientSession() as session:
+                async with session.get(image_url, timeout=aiohttp.ClientTimeout(total=60)) as img_resp:
+                    if img_resp.status != 200:
+                        return None
+                    dest.write_bytes(await img_resp.read())
 
-
-async def generate_flux2_image(
-    plan_id: str,
-    request: ImageGenerationRequest,
-) -> ImageGenerationResult | None:
-    fal_key = _fal_key_for(request)
-    if not fal_key:
-        logger.warning("FAL_KEY absente — provider Flux %s ignoré", plan_id)
-        return None
-
-    model = _flux_model_for_plan(plan_id)
-    if not model:
-        return None
-
-    full_prompt = (
-        request.prompt
-        if request.use_prompt_as_is
-        else build_documentary_prompt(
-            request.prompt,
-            theme_category=request.theme_category,
-            editorial_tone=request.editorial_tone,
-            aspect_ratio=request.aspect_ratio,
-            style_block=request.style_block,
-        )
-    )
-    payload: dict = {
-        "prompt": full_prompt,
-        "image_size": {"width": request.image_width, "height": request.image_height},
-        "num_images": 1,
-        "output_format": "jpeg",
-        "enable_safety_checker": True,
-        "guidance_scale": 2.5,
-    }
-    if request.seed is not None:
-        payload["seed"] = int(request.seed)
-    _apply_flux_negative_prompt(payload, request)
-
-    headers = {"Authorization": f"Key {fal_key}", "Content-Type": "application/json"}
-    url = f"https://fal.run/{model}"
-
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                url,
-                headers=headers,
-                json=payload,
-                timeout=aiohttp.ClientTimeout(total=120),
-            ) as resp:
-                if resp.status != 200:
-                    body = await resp.text()
-                    logger.warning("Flux2 API error %s (%s): %s", plan_id, resp.status, body[:200])
-                    return None
-                data = await resp.json()
-
-        images = data.get("images") or []
-        if not images:
+            return ImageGenerationResult(
+                local_path=dest,
+                attribution=FLUX_ATTRIBUTIONS.get(plan_id, "Image générée par IA (Flux via fal.ai)"),
+                license=ai_license_label(),
+                title=request.prompt[:120],
+                provider_plan=plan_id,
+            )
+        except aiohttp.ClientError as e:
+            logger.warning("Génération Flux %s échouée : %s", plan_id, e)
             return None
-        image_url = images[0].get("url")
-        if not image_url:
-            return None
-
-        request.output_dir.mkdir(parents=True, exist_ok=True)
-        dest = request.output_dir / f"ai_{uuid.uuid4().hex[:8]}.jpg"
-
-        async with aiohttp.ClientSession() as session:
-            async with session.get(image_url, timeout=aiohttp.ClientTimeout(total=60)) as img_resp:
-                if img_resp.status != 200:
-                    return None
-                dest.write_bytes(await img_resp.read())
-
-        license_label = str(
-            load_agent_config()
-            .get("media_sources", {})
-            .get("ai_fallback", {})
-            .get("license", "synthetic-ai-generated")
-        )
-        return ImageGenerationResult(
-            local_path=dest,
-            attribution=FLUX_ATTRIBUTIONS.get(plan_id, "Image générée par IA (Flux via fal.ai)"),
-            license=license_label,
-            title=request.prompt[:120],
-            provider_plan=plan_id,
-        )
-    except aiohttp.ClientError as e:
-        logger.warning("Génération Flux2 %s échouée : %s", plan_id, e)
-        return None

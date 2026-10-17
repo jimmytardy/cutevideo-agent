@@ -109,6 +109,3 @@ export function createAppTheme(): Theme {
     components: componentOverrides(),
   })
 }
-
-/** @deprecated Use createAppTheme() — kept for backward compatibility */
-export const theme = createAppTheme()

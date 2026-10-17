@@ -19,8 +19,11 @@ FAL_KEY = "STUDIO_FAL_KEY"
 AZURE_SPEECH_KEY = "STUDIO_AZURE_SPEECH_KEY"
 AZURE_SPEECH_REGION = "STUDIO_AZURE_SPEECH_REGION"
 GCP_CREDENTIALS_JSON = "STUDIO_GCP_CREDENTIALS_JSON"
+GCP_LOCATION = "STUDIO_GCP_LOCATION"
 
-STUDIO_SECRET_VARS = (GEMINI_API_KEY, FAL_KEY, AZURE_SPEECH_KEY, AZURE_SPEECH_REGION, GCP_CREDENTIALS_JSON)
+STUDIO_SECRET_VARS = (
+    GEMINI_API_KEY, FAL_KEY, AZURE_SPEECH_KEY, AZURE_SPEECH_REGION, GCP_CREDENTIALS_JSON, GCP_LOCATION,
+)
 
 # Variables qu'un ancien `.env` ou l'hôte pourraient encore exposer : jamais transmises au CLI.
 INHERITED_SECRET_VARS = (
@@ -42,14 +45,20 @@ INHERITED_SECRET_VARS = (
 
 
 def studio_env(keys: UserKeys) -> dict[str, str]:
-    """Variables à poser pour le CLI (`ANTHROPIC_API_KEY`) et ses outils (`STUDIO_*`)."""
+    """Variables à poser pour le CLI et ses outils (`STUDIO_*`).
+
+    Le CLI s'authentifie avec le token d'abonnement de l'admin s'il en a un, sinon avec la clé
+    API : jamais les deux, car `ANTHROPIC_API_KEY` l'emporterait sur `CLAUDE_CODE_OAUTH_TOKEN`.
+    """
     values = {
-        "ANTHROPIC_API_KEY": keys.anthropic,
+        "CLAUDE_CODE_OAUTH_TOKEN": keys.claude_subscription,
+        "ANTHROPIC_API_KEY": None if keys.claude_subscription else keys.anthropic,
         GEMINI_API_KEY: keys.gemini,
         FAL_KEY: keys.fal,
         AZURE_SPEECH_KEY: keys.azure_speech,
         AZURE_SPEECH_REGION: keys.azure_speech_region,
         GCP_CREDENTIALS_JSON: keys.gcp_credentials_json,
+        GCP_LOCATION: keys.gcp_location,
     }
     return {name: value for name, value in values.items() if value}
 

@@ -1,6 +1,5 @@
-export type LlmProvider = 'gemini' | 'anthropic'
+export type LlmProvider = 'gemini' | 'anthropic' | 'claude_cli'
 export type LlmTier = 'free' | 'paid'
-export type AgentTaskKind = 'text' | 'vision' | 'gemini_search'
 
 export interface AgentLlmPreference {
   provider: LlmProvider
@@ -15,23 +14,22 @@ export interface AgentLlmConfig {
   recommendations: Record<string, string>
   has_gemini_key: boolean
   has_anthropic_key: boolean
+  has_claude_cli?: boolean
 }
 
-export const AGENT_LLM_LINKED_TO: Record<string, string> = {}
-
-export const DEFAULT_AGENT_LLM_PREFERENCE: AgentLlmPreference = {
+const DEFAULT_AGENT_LLM_PREFERENCE: AgentLlmPreference = {
   provider: 'gemini',
   model: 'gemini-2.5-flash-lite',
   tier: 'free',
 }
 
-export interface ConfigurableAgentInfo {
+interface ConfigurableAgentInfo {
   label: string
   title: string
   tasks: string[]
 }
 
-export const CONFIGURABLE_AGENT_INFO: Record<string, ConfigurableAgentInfo> = {
+const CONFIGURABLE_AGENT_INFO: Record<string, ConfigurableAgentInfo> = {
   content_planner_agent: {
     label: 'Planificateur de contenu',
     title: 'Calendrier éditorial',
@@ -52,14 +50,14 @@ export const CONFIGURABLE_AGENT_INFO: Record<string, ConfigurableAgentInfo> = {
   },
 }
 
-export interface AgentLlmGroup {
+interface AgentLlmGroup {
   id: string
   label: string
   description: string
   agents: string[]
 }
 
-export const AGENT_LLM_GROUPS: ReadonlyArray<{
+const AGENT_LLM_GROUPS: ReadonlyArray<{
   id: string
   label: string
   description: string
@@ -80,7 +78,7 @@ export const AGENT_LLM_GROUPS: ReadonlyArray<{
 ]
 
 export function groupConfigurableAgents(knownAgents: string[]): AgentLlmGroup[] {
-  const known = new Set([...knownAgents, ...Object.keys(AGENT_LLM_LINKED_TO)])
+  const known = new Set(knownAgents)
   const groups: AgentLlmGroup[] = []
   const assigned = new Set<string>()
 
@@ -107,96 +105,58 @@ export function groupConfigurableAgents(knownAgents: string[]): AgentLlmGroup[] 
 
 export function resolvePreferenceAgent(
   agentName: string,
-  linkedAgents: Record<string, string> = AGENT_LLM_LINKED_TO,
+  linkedAgents: Record<string, string>,
 ): string {
   return linkedAgents[agentName] ?? agentName
 }
 
 export function isLinkedAgent(
   agentName: string,
-  linkedAgents: Record<string, string> = AGENT_LLM_LINKED_TO,
+  linkedAgents: Record<string, string>,
 ): boolean {
   return agentName in linkedAgents
 }
 
-export const GEMINI_FREE_MODELS = [
+const GEMINI_FREE_MODELS = [
   { value: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite' },
   { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
 ] as const
 
-export const GEMINI_PAID_MODELS = [
+const GEMINI_PAID_MODELS = [
   { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
   { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
   { value: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash' },
   { value: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro Preview' },
 ] as const
 
-export const GEMINI_VISION_FREE_MODELS = [
-  { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
-] as const
-
-export const GEMINI_VISION_PAID_MODELS = GEMINI_PAID_MODELS
-
-export const GEMINI_SEARCH_FREE_MODELS = [
-  { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
-  { value: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash' },
-] as const
-
-export const GEMINI_SEARCH_PAID_MODELS = GEMINI_PAID_MODELS
-
-export const ANTHROPIC_MODELS = [
+const ANTHROPIC_MODELS = [
   { value: 'claude-opus-5-5', label: 'Claude Opus 5.5' },
   { value: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5' },
   { value: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5' },
 ] as const
 
-const AGENT_TASK_KIND: Record<string, AgentTaskKind> = {}
+// Claude Code CLI : abonnement Claude, aucune clé API requise.
+const CLAUDE_CLI_MODELS = [
+  { value: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5' },
+  { value: 'claude-opus-5-5', label: 'Claude Opus 5.5' },
+  { value: 'claude-haiku-5-5', label: 'Claude Haiku 5.5' },
+] as const
 
-export function agentTaskKind(agentName: string): AgentTaskKind {
-  const source = resolvePreferenceAgent(agentName)
-  return AGENT_TASK_KIND[source] ?? 'text'
-}
+const ALL_PROVIDERS: readonly LlmProvider[] = ['gemini', 'anthropic', 'claude_cli']
 
-export function allowedProvidersFor(agentName: string): readonly LlmProvider[] {
-  const kind = agentTaskKind(agentName)
-  if (kind === 'vision' || kind === 'gemini_search') {
-    return ['gemini']
-  }
-  return ['gemini', 'anthropic']
-}
-
-function geminiModelsForTask(kind: AgentTaskKind, tier: LlmTier) {
-  if (kind === 'vision') {
-    return tier === 'paid' ? GEMINI_VISION_PAID_MODELS : GEMINI_VISION_FREE_MODELS
-  }
-  if (kind === 'gemini_search') {
-    return tier === 'paid' ? GEMINI_SEARCH_PAID_MODELS : GEMINI_SEARCH_FREE_MODELS
-  }
-  return tier === 'paid' ? GEMINI_PAID_MODELS : GEMINI_FREE_MODELS
-}
-
-export function modelOptionsForAgent(agentName: string, provider: LlmProvider, tier: LlmTier) {
-  const kind = agentTaskKind(agentName)
-  if (provider === 'anthropic') {
-    return kind === 'text' ? ANTHROPIC_MODELS : []
-  }
-  return geminiModelsForTask(kind, tier)
-}
-
+// Les agents restants ne font que du texte : mêmes règles que agent/core/agent_llm_constraints.py.
 export function modelOptionsFor(provider: LlmProvider, tier: LlmTier) {
   if (provider === 'anthropic') {
     return ANTHROPIC_MODELS
   }
+  if (provider === 'claude_cli') {
+    return CLAUDE_CLI_MODELS
+  }
   return tier === 'paid' ? GEMINI_PAID_MODELS : GEMINI_FREE_MODELS
 }
 
-export function defaultModelForAgent(
-  agentName: string,
-  provider: LlmProvider,
-  tier: LlmTier,
-): string {
-  const options = modelOptionsForAgent(agentName, provider, tier)
-  return options[0]?.value ?? DEFAULT_AGENT_LLM_PREFERENCE.model
+export function defaultModel(provider: LlmProvider, tier: LlmTier): string {
+  return modelOptionsFor(provider, tier)[0]?.value ?? DEFAULT_AGENT_LLM_PREFERENCE.model
 }
 
 export function getAgentInfo(agentName: string): ConfigurableAgentInfo {
@@ -213,25 +173,11 @@ export function getAgentLabel(agentName: string): string {
   return getAgentInfo(agentName).label
 }
 
-export function normalizePreference(
-  pref: AgentLlmPreference,
-  agentName?: string,
-): AgentLlmPreference {
-  const sourceAgent = agentName ? resolvePreferenceAgent(agentName) : undefined
-  const providers = sourceAgent ? allowedProvidersFor(sourceAgent) : (['gemini', 'anthropic'] as const)
-  const provider: LlmProvider = providers.includes(pref.provider as LlmProvider)
-    ? pref.provider
-    : providers[0]
-  const tier: LlmTier = provider === 'anthropic' ? 'paid' : pref.tier === 'paid' ? 'paid' : 'free'
-  const options = sourceAgent
-    ? modelOptionsForAgent(sourceAgent, provider, tier)
-    : modelOptionsFor(provider, tier)
-  const validModels = options.map((o) => o.value)
-  const model = validModels.includes(pref.model as (typeof validModels)[number])
-    ? pref.model
-    : sourceAgent
-      ? defaultModelForAgent(sourceAgent, provider, tier)
-      : options[0].value
+export function normalizePreference(pref: AgentLlmPreference): AgentLlmPreference {
+  const provider: LlmProvider = ALL_PROVIDERS.includes(pref.provider) ? pref.provider : ALL_PROVIDERS[0]
+  const tier: LlmTier = provider === 'anthropic' ? 'paid' : provider === 'claude_cli' ? 'free' : pref.tier === 'paid' ? 'paid' : 'free'
+  const validModels: string[] = modelOptionsFor(provider, tier).map((o) => o.value)
+  const model = validModels.includes(pref.model) ? pref.model : defaultModel(provider, tier)
   return { provider, tier, model }
 }
 
@@ -241,7 +187,7 @@ export function buildPreferencesMap(
 ): Record<string, AgentLlmPreference> {
   const out: Record<string, AgentLlmPreference> = {}
   for (const agent of agents) {
-    out[agent] = normalizePreference(saved[agent] ?? DEFAULT_AGENT_LLM_PREFERENCE, agent)
+    out[agent] = normalizePreference(saved[agent] ?? DEFAULT_AGENT_LLM_PREFERENCE)
   }
   return out
 }

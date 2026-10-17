@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import { Inter } from 'next/font/google'
 import InitColorSchemeScript from '@mui/material/InitColorSchemeScript'
 import ThemeRegistry from '@/components/ThemeRegistry'
+import { THEME_STORAGE_KEY } from '@/lib/theme'
 import SWRProvider from '@/components/SWRProvider'
 
 const inter = Inter({
@@ -19,7 +20,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="fr" suppressHydrationWarning className={inter.variable}>
       <body>
-        <InitColorSchemeScript defaultMode="system" modeStorageKey="cutevideo-theme-mode" />
+        <InitColorSchemeScript defaultMode="system" modeStorageKey={THEME_STORAGE_KEY} />
         <ThemeRegistry>
           <SWRProvider>{children}</SWRProvider>
         </ThemeRegistry>

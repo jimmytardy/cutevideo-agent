@@ -7,7 +7,6 @@ import aiohttp
 logger = logging.getLogger(__name__)
 
 API_URL = "https://gallica.bnf.fr/SRU"
-THUMBNAIL_URL = "https://gallica.bnf.fr/ark:/12148/{ark}/f1.highres"
 
 
 async def search(
