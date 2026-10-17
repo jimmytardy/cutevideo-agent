@@ -251,6 +251,19 @@ async def _usage_limit_cases() -> dict:
         error = str(exc)
     os.environ.pop("FAKE_CLAUDE_LIMIT_IN")
     facts["api_key"] = {**await _project(api_pid), "raised": error}
+    # Plafond atteint en pleine création (compte neuf, aucune limite connue) : les étapes finissent `failed`.
+    capped_pid, capped_uid = await _setup(subscription=True)
+    os.environ["FAKE_CLAUDE_LIMIT_IN"] = "monteur"
+    os.environ["STUDIO_MAX_LIMIT_PAUSES"] = "0"
+    error = None
+    try:
+        await Orchestrator().run_pipeline(capped_pid)
+    except Exception as exc:
+        error = str(exc)
+    os.environ.pop("STUDIO_MAX_LIMIT_PAUSES")
+    os.environ.pop("FAKE_CLAUDE_LIMIT_IN")
+    facts["capped_in_run"] = {**await _project(capped_pid), "runs": await _runs(capped_pid), "raised": error,
+                              "transcripts": _transcripts(capped_uid, capped_pid)}
     return facts
 
 

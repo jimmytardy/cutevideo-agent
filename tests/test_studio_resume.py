@@ -10,12 +10,16 @@ import json
 import os
 import subprocess
 import sys
+import uuid
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from datetime import UTC, datetime, timedelta
-
+from agent.core import studio_resume
+from agent.core.claude_studio import ClaudeStudioRunner
 from agent.core.studio_resume import decide, paused_until, record_pause, usage_limit_reset
 from studio.launcher import ClaudeRunError, LaunchConfig, StreamParser, build_command
 from tests.studio_fakes import install_fake_claude
@@ -125,6 +129,48 @@ def test_record_pause_is_capped(monkeypatch) -> None:
     assert state["limit_pauses"] == 3 and paused_until(state) == NOW
 
 
+@pytest.fixture
+def pausing_runner(monkeypatch, tmp_path: Path):
+    """Runner isolé de la base : collaborateurs DB/Redis remplacés, recorder factice (le fixture e2e couvre la base)."""
+    monkeypatch.setenv("STUDIO_RUNS_DIR", str(tmp_path))
+    monkeypatch.setattr(studio_resume, "set_user_limit", AsyncMock())
+    ctx = SimpleNamespace(project_id=uuid.uuid4(), channel=SimpleNamespace(user_id=uuid.uuid4()))
+    runner = ClaudeStudioRunner(ctx)
+    monkeypatch.setattr(runner, "_save_session_state", AsyncMock())
+    monkeypatch.setattr(runner, "_forget_session", MagicMock())
+    monkeypatch.setattr(runner, "_fail_open_runs", AsyncMock())
+    recorder = SimpleNamespace(close_dangling=AsyncMock(), mark_limit_interrupted=AsyncMock())
+    return runner, recorder, tmp_path / "cfg"
+
+
+@pytest.mark.asyncio
+async def test_pause_in_run_fails_open_steps_at_cap(monkeypatch, pausing_runner) -> None:
+    monkeypatch.setenv("STUDIO_MAX_LIMIT_PAUSES", "0")
+    runner, recorder, cfg = pausing_runner
+    with pytest.raises(ClaudeRunError, match="1 fois"):
+        await runner._pause(NOW + timedelta(hours=1), {"session_id": "s"}, cfg, recorder=recorder)
+    recorder.close_dangling.assert_awaited_once()
+    assert recorder.close_dangling.await_args.args[0] == "failed"
+    recorder.mark_limit_interrupted.assert_not_awaited()
+    runner._fail_open_runs.assert_awaited_once()  # étapes `interrupted` d'une pause précédente aussi
+    runner._save_session_state.assert_awaited_once_with(None)
+    runner._forget_session.assert_called_once()
+    studio_resume.set_user_limit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_pause_in_run_interrupts_open_steps_when_pause_granted(monkeypatch, pausing_runner) -> None:
+    monkeypatch.setenv("STUDIO_MAX_LIMIT_PAUSES", "6")
+    runner, recorder, cfg = pausing_runner
+    with pytest.raises(studio_resume.StudioPaused):
+        await runner._pause(NOW + timedelta(hours=1), {"session_id": "s"}, cfg, recorder=recorder)
+    recorder.close_dangling.assert_awaited_once_with("interrupted", studio_resume.LIMIT_MESSAGE)
+    recorder.mark_limit_interrupted.assert_awaited_once()
+    runner._fail_open_runs.assert_not_awaited()
+    assert runner._save_session_state.await_args.args[0]["limit_pauses"] == 1
+    studio_resume.set_user_limit.assert_awaited_once()
+
+
 def test_decide_after_pause_does_not_count_as_worker_resume(monkeypatch) -> None:
     monkeypatch.setenv("STUDIO_MAX_RESUMES", "3")
     state = {"session_id": "s", "resumes": 3, "progress": 2, "paused_until": NOW.isoformat(), "limit_pauses": 1}
@@ -206,6 +252,11 @@ def test_worker_restart_resumes_creation(tmp_path: Path) -> None:
     assert _successes(resumed["runs"], *EARLY_STEPS) == _successes(paused["runs"], *EARLY_STEPS)  # rien de refait
     api_key = limit["api_key"]
     assert api_key["status"] == "failed" and "usage limit" in (api_key["raised"] or "")
+    capped_in_run = limit["capped_in_run"]  # plafond atteint pendant la création : rien ne reste « interrupted »
+    assert capped_in_run["status"] == "failed" and "1 fois" in (capped_in_run["raised"] or "")
+    assert ["editor_agent", "failed", 1] in capped_in_run["runs"]
+    assert not [run for run in capped_in_run["runs"] if run[1] == "interrupted"]
+    assert capped_in_run["session"] is None and capped_in_run["transcripts"] == 0
 
 
 def test_usage_limit_reset_real_claude_code_shapes() -> None:

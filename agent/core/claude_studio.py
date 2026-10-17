@@ -330,8 +330,8 @@ class ClaudeStudioRunner:
 
         decision = await self._resume_decision() if self.ctx.resume else None
         if decision and decision.action == "give_up":
-            self._forget_session(config_dir)
-            await self._save_session_state(None)
+            await self._fail_open_runs(decision.reason)
+            await self._discard_session(config_dir)
             raise ClaudeRunError(decision.reason)
         resuming = decision is not None and decision.action == "resume"
         # Abonnement Claude (mode CLI) : une limite d'usage met la création en pause jusqu'au reset.
@@ -402,13 +402,10 @@ class ClaudeStudioRunner:
                 await recorder.close_dangling("interrupted", studio_resume.INTERRUPTED_MESSAGE)
                 raise
             if subscription and isinstance(exc, ClaudeRunError) and (until := studio_resume.usage_limit_reset(exc)):
-                # Limite d'usage : session et run dir gardés, reprise au reset.
-                await recorder.close_dangling("interrupted", studio_resume.LIMIT_MESSAGE)
-                await recorder.mark_limit_interrupted()
-                await self._pause(until, session_state, config_dir)
+                # Limite d'usage : session et run dir gardés, reprise au reset (ou abandon au plafond de pauses).
+                await self._pause(until, session_state, config_dir, recorder=recorder)
             await recorder.close_dangling("stopped" if not isinstance(exc, Exception) else "failed", str(exc)[:500])
-            self._forget_session(config_dir)
-            await self._save_session_state(None)  # plus de session à reprendre : état effacé comme en succès
+            await self._discard_session(config_dir)  # plus de session à reprendre : état effacé comme en succès
             raise
         await recorder.close_dangling("failed", "sous-agent non terminé")
         self._forget_session(config_dir)
@@ -426,16 +423,50 @@ class ClaudeStudioRunner:
 
     # ── reprise ──────────────────────────────────────────────────────────
 
-    async def _pause(self, until: datetime, state: dict[str, Any] | None, config_dir: Path) -> NoReturn:
-        """Pause jusqu'à `until` (limite d'usage) ; abandon au-delà de `STUDIO_MAX_LIMIT_PAUSES`."""
+    async def _discard_session(self, config_dir: Path) -> None:
+        """Plus rien à reprendre : transcription Claude oubliée et état de session effacé."""
+        self._forget_session(config_dir)
+        await self._save_session_state(None)
+
+    async def _fail_open_runs(self, reason: str) -> None:
+        """Création abandonnée : aucune étape ne doit rester `running` ou `interrupted` (« reprise automatique »)."""
+        async with AsyncSessionFactory() as session:
+            await session.execute(
+                update(AgentRun)
+                .where(AgentRun.project_id == self.ctx.project_id, AgentRun.status.in_(("running", "interrupted")))
+                .values(status="failed", error=reason, ended_at=datetime.now(UTC))
+            )
+            await session.commit()
+
+    async def _pause(
+        self,
+        until: datetime,
+        state: dict[str, Any] | None,
+        config_dir: Path,
+        *,
+        recorder: _ProgressRecorder | None = None,
+    ) -> NoReturn:
+        """Pause jusqu'à `until` (limite d'usage) ; abandon au-delà de `STUDIO_MAX_LIMIT_PAUSES`.
+
+        `recorder` = limite tombée en pleine création : ses étapes ouvertes finissent `interrupted` (reprise
+        automatique) si la pause est accordée, `failed` si le plafond est atteint — le projet passe alors `failed`
+        et ne doit pas afficher d'étape en attente de reprise.
+        """
         allowed, state = studio_resume.record_pause(state, until)
+        # Étapes d'abord (base), Redis ensuite : une panne Redis ne doit pas laisser d'étape `running`.
+        if not allowed:
+            reason = f"Limite d'usage Claude atteinte {state['limit_pauses']} fois, création abandonnée"
+            if recorder is not None:
+                await recorder.close_dangling("failed", reason)  # garde la trace « Interrompu » dans le log
+            await self._fail_open_runs(reason)  # + étapes `interrupted` d'une pause précédente
+        elif recorder is not None:
+            await recorder.close_dangling("interrupted", studio_resume.LIMIT_MESSAGE)
+            await recorder.mark_limit_interrupted()
+        # Le compte est limité quoi qu'il arrive : les autres créations du compte attendent le reset.
         await studio_resume.set_user_limit(self.ctx.channel.user_id, until)
         if not allowed:
-            self._forget_session(config_dir)
-            await self._save_session_state(None)
-            raise ClaudeRunError(
-                f"Limite d'usage Claude atteinte {state['limit_pauses']} fois, création abandonnée"
-            )
+            await self._discard_session(config_dir)
+            raise ClaudeRunError(reason)
         await self._save_session_state(state)
         logger.info("Projet %s : limite d'usage Claude, pause jusqu'à %s", self.ctx.project_id, until.isoformat())
         raise studio_resume.StudioPaused(until)
