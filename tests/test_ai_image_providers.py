@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from PIL import Image
 
 from agent.skills.media_sources.ai.base import ImageGenerationRequest, ImageGenerationResult
 from agent.skills.media_sources.ai.registry import generate_with_plan, models_up_to, provider_family
@@ -120,7 +121,7 @@ async def test_studio_ai_image_defaults_to_first_allowed_model(tmp_path: Path, m
     monkeypatch.setenv("STUDIO_AI_MODELS", "flux_pro,flux_2_dev")
     monkeypatch.setenv("STUDIO_FAL_KEY", "fal-key")
     src = tmp_path / "gen.jpg"
-    src.write_bytes(b"x")
+    Image.new("RGB", (4, 4), "red").save(src)
     fake = AsyncMock(return_value={"local_generated": str(src), "attribution": "a", "provider_plan": "flux_pro"})
     with patch("agent.skills.media_sources.ai_image.generate_image", new=fake), \
             patch.object(media, "probe_media", new=AsyncMock(return_value={})):
@@ -131,3 +132,23 @@ async def test_studio_ai_image_defaults_to_first_allowed_model(tmp_path: Path, m
     assert fake.await_args.kwargs["fal_api_key"] == "fal-key"
     credits = json.loads((tmp_path / "media" / "credits.json").read_text())
     assert credits["media/05_x.jpg"]["author"] == "flux_pro"
+
+
+@pytest.mark.asyncio
+async def test_studio_ai_image_rejects_corrupt_output(tmp_path: Path, monkeypatch) -> None:
+    from studio import media
+    from studio.contracts import ContractError
+
+    (tmp_path / "media").mkdir()
+    monkeypatch.setenv("STUDIO_AI_MODELS", "flux_pro")
+    monkeypatch.setenv("STUDIO_FAL_KEY", "fal-key")
+    src = tmp_path / "gen.jpg"
+    src.write_bytes(b"<html>not an image</html>")
+    fake = AsyncMock(return_value={"local_generated": str(src), "attribution": "a", "provider_plan": "flux_pro"})
+    with patch("agent.skills.media_sources.ai_image.generate_image", new=fake), \
+            pytest.raises(ContractError, match="image corrompue"):
+        await media.generate_ai_image(tmp_path, "x", "05_x")
+    assert not (tmp_path / "media" / "05_x.jpg").exists()
+    # Génération facturée malgré tout : comptée dans le quota, mais jamais sous un chemin utilisable.
+    credits = json.loads((tmp_path / "media" / "credits.json").read_text())
+    assert list(credits) == ["gen.jpg"] and credits["gen.jpg"]["unusable"] is True

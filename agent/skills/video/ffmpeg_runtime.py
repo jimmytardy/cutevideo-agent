@@ -68,13 +68,17 @@ def _get_semaphore() -> asyncio.Semaphore:
     return _FFMPEG_SEMAPHORE
 
 
-async def run_ffmpeg(cmd: list[str], *, error_prefix: str = "FFmpeg error", check: bool = True) -> str:
+async def run_ffmpeg(
+    cmd: list[str], *, error_prefix: str = "FFmpeg error", check: bool = True, timeout_s: float | None = None
+) -> str:
     """Exécute ffmpeg en série (sémaphore global) et renvoie son stderr ; lève en cas d'échec
     (sauf ``check=False``, pour les mesures qui lisent le stderr).
 
     Garantit qu'un seul process ffmpeg s'exécute à la fois dans tout le
     process Python, même si l'appelant fait du fan-out (asyncio.gather).
-    Tue le subprocess si la tâche asyncio parente est annulée.
+    Tue le subprocess si la tâche asyncio parente est annulée, ou après
+    ``timeout_s`` secondes (RuntimeError) : sans cela un ffmpeg qui boucle sur
+    une source illisible bloquerait tous les encodages suivants.
     """
     from agent.core.subprocess_registry import register, terminate_proc, unregister
 
@@ -87,7 +91,13 @@ async def run_ffmpeg(cmd: list[str], *, error_prefix: str = "FFmpeg error", chec
         register(proc)
         stderr = b""
         try:
-            _, stderr = await proc.communicate()
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout_s)
+        except TimeoutError:
+            # Un ffmpeg bloqué a souvent son stderr saturé (plus rien ne le lit) : SIGTERM resterait sans effet.
+            await terminate_proc(proc, grace_s=0.5)
+            raise RuntimeError(
+                f"{error_prefix}: ffmpeg interrompu après {timeout_s:.0f} s (source illisible ou boucle infinie ?)"
+            ) from None
         except asyncio.CancelledError:
             await terminate_proc(proc)
             raise

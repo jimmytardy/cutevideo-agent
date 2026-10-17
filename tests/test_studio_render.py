@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+import time
+
 from studio.contracts import ContractError, TimelineClip
 from studio.media import probe_media, record_credit
 from studio.render import _segment_key, render_timeline
@@ -106,7 +108,7 @@ async def test_render_failure_leaves_cache_clean(run_dir: Path) -> None:
     segments = run_dir / ".render" / "segments"
     before = sorted(segments.glob("*.mp4"))
 
-    # Un mp4 corrompu : ffmpeg le refuse à l'ouverture (un PNG corrompu avec `-loop 1` tournerait en boucle).
+    # Un mp4 corrompu : ffmpeg le refuse à l'ouverture (une image corrompue est, elle, refusée par verify_image).
     (run_dir / "media" / "bad.mp4").write_bytes(b"pas une video")
     with pytest.raises(RuntimeError, match="Rendu clip 1"):
         await render_timeline(run_dir, _write_timeline(run_dir, [clip_ok, {"media": "media/bad.mp4", "start": 1.0, "end": 2.0}]),
@@ -146,3 +148,16 @@ def test_segment_key_changes_with_the_source_file(run_dir: Path) -> None:
     key = _segment_key(TimelineClip(**_IMAGE), src)
     src.write_bytes(src.read_bytes() + b"\0")
     assert _segment_key(TimelineClip(**_IMAGE), src) != key
+
+
+@pytest.mark.asyncio
+async def test_render_rejects_corrupt_image_before_encoding(run_dir: Path) -> None:
+    """Un PNG tronqué ferait boucler `ffmpeg -loop 1` sans fin : refusé avant tout encodage."""
+    good = (run_dir / "media" / "01.png").read_bytes()
+    (run_dir / "media" / "bad.png").write_bytes(good[: len(good) // 2])
+    timeline = _write_timeline(run_dir, [{"media": "media/bad.png", "start": 0, "end": 2.0}])
+    started = time.monotonic()
+    with pytest.raises(ContractError, match="image corrompue"):
+        await render_timeline(run_dir, timeline, Path("renders/v1.mp4"))
+    assert time.monotonic() - started < 10
+    assert not (run_dir / ".render" / "segments").exists() or not list((run_dir / ".render" / "segments").iterdir())

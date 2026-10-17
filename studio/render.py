@@ -37,7 +37,7 @@ from studio.contracts import (
     write_json,
 )
 from studio.kenburns import build_static_filter, build_zoom_filter
-from studio.media import probe_media
+from studio.media import probe_media, verify_image
 from studio.subtitles import SubtitleStyle, ass_filter, write_ass
 from studio.textfx import drawtext_chain, fit_fontsize, wrap_lines
 
@@ -50,6 +50,9 @@ CLIP_TEXT_MAX_CHARS = 18
 # `studio.assets` entrent dans la clé ; à incrémenter quand le code des filtres change (`studio/kenburns.py`,
 # `studio/textfx.py`, `_render_clip`) sans que ces réglages bougent.
 SEGMENT_CACHE_VERSION = 1
+# Garde-fou contre un ffmpeg qui ne termine jamais (source illisible) : largement au-dessus d'un encodage normal.
+CLIP_RENDER_TIMEOUT_FLOOR_S = 120
+CLIP_RENDER_TIMEOUT_PER_SECOND = 20
 # `<run_dir>/.render/` : dossiers de travail `<stem du rendu>` (jetables) et cache `segments/`.
 RENDER_DIR = ".render"
 SEGMENTS_DIR = "segments"
@@ -106,7 +109,11 @@ async def _render_clip(clip: TimelineClip, src: Path, out: Path, work: Path, idx
         "-r", str(SHORT_FPS),
         str(out),
     ]
-    await run_ffmpeg(cmd, error_prefix=f"Rendu clip {idx} ({src.name})")
+    await run_ffmpeg(
+        cmd,
+        error_prefix=f"Rendu clip {idx} ({src.name})",
+        timeout_s=max(CLIP_RENDER_TIMEOUT_FLOOR_S, duration * CLIP_RENDER_TIMEOUT_PER_SECOND),
+    )
 
 
 def _segment_key(clip: TimelineClip, src: Path) -> str:
@@ -174,6 +181,8 @@ async def _validate_inputs(run_dir: Path, timeline: Timeline) -> tuple[Path, lis
         src = resolve_in_run_dir(run_dir, clip.media)
         if not src.exists():
             raise ContractError(f"média introuvable : {clip.media}")
+        if src.suffix.lower() in IMAGE_EXTENSIONS:
+            verify_image(src)  # une image tronquée ferait boucler `ffmpeg -loop 1` sans fin
         sources.append(src)
     music = resolve_in_run_dir(run_dir, timeline.music) if timeline.music else None
     if music is not None and not music.exists():

@@ -26,7 +26,7 @@ from agent.core.concurrency import bounded_gather
 from agent.skills.media.rights_check import filter_publishable
 from agent.skills.video.ffmpeg_runtime import filter_thread_args, measure_loudness, run_ffmpeg, thread_args
 from studio.assets import FONT_FILE, IMAGE_EXTENSIONS, SHEET_COLS, TILE_H, TILE_W, ai_models, max_ai_images
-from studio.contracts import read_json, write_json
+from studio.contracts import ContractError, read_json, write_json
 from studio.user_keys import FAL_KEY, GCP_CREDENTIALS_JSON, GCP_LOCATION, user_key
 
 if TYPE_CHECKING:
@@ -167,15 +167,63 @@ async def _fetch(url: str, dest: Path) -> None:
             tmp.replace(dest)
 
 
+def verify_image(path: Path) -> None:
+    """Vérifie qu'une image se décode entièrement (pas seulement son en-tête).
+
+    Un fichier tronqué, ou une page HTML renvoyée en 200 sous un nom .jpg, passe `ffprobe` mais fait boucler
+    `ffmpeg -loop 1` sans fin au rendu : on le refuse ici avec un message pour Claude.
+    """
+    from PIL import Image
+
+    try:
+        with Image.open(path) as img:
+            img.load()
+    except Image.DecompressionBombError as exc:
+        raise ContractError(
+            f"image trop grande pour être traitée : {path.name} ({str(exc)[:120]}) — choisis un autre candidat"
+        ) from exc
+    except Exception as exc:  # Pillow lève OSError, ValueError, SyntaxError, struct.error… selon le format
+        raise ContractError(
+            f"image corrompue ou illisible : {path.name} ({str(exc)[:120]}) — re-télécharge ou choisis un autre candidat"
+        ) from exc
+
+
+async def verify_media(path: Path) -> dict[str, Any]:
+    """Média lisible : image entièrement décodée, vidéo/audio sondés par ffprobe. Renvoie le `probe_media()`."""
+    if path.suffix.lower() in IMAGE_EXTENSIONS:
+        verify_image(path)
+    try:
+        return await probe_media(path)
+    except RuntimeError as exc:
+        raise ContractError(
+            f"média corrompu ou illisible : {path.name} ({str(exc)[:120]}) — re-télécharge ou choisis un autre candidat"
+        ) from exc
+
+
+async def _verified_cache_file(cached: Path, fetch) -> None:
+    """Télécharge (si absent) puis vérifie un fichier du cache ; un fichier illisible est évincé avant de lever,
+    sinon il serait réutilisé à chaque nouvelle tentative."""
+    if not cached.exists():
+        await fetch()
+    try:
+        await verify_media(cached)
+    except ContractError:
+        cached.unlink(missing_ok=True)
+        raise
+
+
 async def _cached_download(run_dir: Path, cid: str) -> Path:
     item = _candidate(run_dir, cid)
     cached = run_dir / "media" / ".cache" / f"{cid}{_extension_for(item)}"
-    if not cached.exists():
+
+    async def fetch() -> None:
         await _fetch(str(item["url"]), cached)
         if item.get("source") == "coverr" and item.get("coverr_video_id"):
             from agent.skills.media_sources.coverr import record_download
 
             await record_download(str(item["coverr_video_id"]))
+
+    await _verified_cache_file(cached, fetch)
     return cached
 
 
@@ -185,8 +233,7 @@ async def _preview_source(run_dir: Path, cid: str) -> Path:
     thumb_url = item.get("thumbnail_url") or item.get("thumbnail")
     if item.get("asset_type") == "video" and thumb_url:
         thumb = run_dir / "media" / ".cache" / f"{cid}_thumb.jpg"
-        if not thumb.exists():
-            await _fetch(str(thumb_url), thumb)
+        await _verified_cache_file(thumb, lambda: _fetch(str(thumb_url), thumb))
         return thumb
     return await _cached_download(run_dir, cid)
 
@@ -198,8 +245,8 @@ async def download_candidate(run_dir: Path, cid: str, name: str) -> dict[str, An
     dest = run_dir / "media" / f"{safe}{cached.suffix}"
     shutil.copy2(cached, dest)
     rel = str(dest.relative_to(run_dir))
+    info = await probe_media(dest)  # le cache a déjà été vérifié ; crédit enregistré seulement pour un média lisible
     record_credit(run_dir, rel, _credit_entry(item))
-    info = await probe_media(dest)
     return {"path": rel, **info, "license": item.get("license"), "author": item.get("author")}
 
 
@@ -258,17 +305,24 @@ async def generate_ai_image(
             "une animation du kit (anim/lib/studio.js) ou une banque d'images"
         )
     src = Path(result["local_generated"])
-    dest = run_dir / "media" / f"{name}{src.suffix or '.png'}"
-    shutil.copy2(src, dest)
-    rel = str(dest.relative_to(run_dir))
-    record_credit(run_dir, rel, {
+    credit = {
         "source": "ai_image",
         "license": "ai_generated",
         "author": result.get("provider_plan"),
         "attribution": result.get("attribution") or "Image générée par IA",
         "source_url": None,
         "requires_attribution": False,
-    })
+    }
+    try:
+        verify_image(src)
+    except ContractError:
+        # Génération facturée : comptée dans le quota (crédit sous media/.ai, jamais utilisé par une timeline).
+        record_credit(run_dir, str(src.relative_to(run_dir)), {**credit, "unusable": True})
+        raise
+    dest = run_dir / "media" / f"{name}{src.suffix or '.png'}"
+    shutil.copy2(src, dest)
+    rel = str(dest.relative_to(run_dir))
+    record_credit(run_dir, rel, credit)
     return {"path": rel, **(await probe_media(dest))}
 
 

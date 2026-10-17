@@ -74,3 +74,20 @@ async def test_run_ffmpeg_kills_subprocess_on_cancel() -> None:
         await task
 
     await kill_all()
+
+
+@pytest.mark.asyncio
+async def test_run_ffmpeg_timeout_kills_process() -> None:
+    from agent.skills.video import ffmpeg_runtime
+
+    ffmpeg_runtime._FFMPEG_SEMAPHORE = None
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    with pytest.raises(RuntimeError, match="interrompu après 1 s"):
+        await ffmpeg_runtime.run_ffmpeg(
+            ["ffmpeg", "-y", "-re", "-f", "lavfi", "-i", "anullsrc", "-t", "120", "-f", "null", "-"],
+            error_prefix="test",
+            timeout_s=1,
+        )
+    assert loop.time() - started < 6
+    await kill_all()
