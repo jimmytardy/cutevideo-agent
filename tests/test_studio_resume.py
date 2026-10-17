@@ -21,7 +21,7 @@ import pytest
 from agent.core import studio_resume
 from agent.core.claude_studio import ClaudeStudioRunner
 from agent.core.studio_resume import decide, paused_until, record_pause, usage_limit_reset
-from studio.launcher import ClaudeRunError, LaunchConfig, StreamParser, build_command
+from studio.launcher import ClaudeRunError, LaunchConfig, StreamParser, build_command, error_detail
 from tests.studio_fakes import install_fake_claude
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -182,6 +182,17 @@ def test_decide_after_pause_does_not_count_as_worker_resume(monkeypatch) -> None
     assert decide(decision.state, progress=2, run_dir_ok=True).action == "give_up"  # 4e reprise sans progrès
 
 
+def test_error_detail_falls_back_to_the_limit_message() -> None:
+    """Sur une limite d'usage, `claude -p` renvoie un `result` vide : l'explication vient du message synthétique."""
+    parser = StreamParser()
+    parser.feed(json.dumps({"type": "assistant", "error": "rate_limit", "message": {
+        "content": [{"type": "text", "text": "You've hit your session limit · resets 3:45pm"}]}}))
+    parser.feed(json.dumps({"type": "result", "subtype": "success", "is_error": True, "result": ""}))
+    assert error_detail(parser) == "You've hit your session limit · resets 3:45pm"
+    parser.result = {"is_error": True, "result": "", "errors": ["429 rate_limit_error"]}
+    assert error_detail(parser) == "429 rate_limit_error"  # `errors` prime sur le message synthétique
+
+
 def test_stream_parser_keeps_last_rate_limit() -> None:
     parser = StreamParser()
     for status in ("allowed", "rejected"):
@@ -251,7 +262,9 @@ def test_worker_restart_resumes_creation(tmp_path: Path) -> None:
     assert resumed["payload_resume"] is True and resumed["status"] == "approved" and resumed["session"] is None
     assert _successes(resumed["runs"], *EARLY_STEPS) == _successes(paused["runs"], *EARLY_STEPS)  # rien de refait
     api_key = limit["api_key"]
-    assert api_key["status"] == "failed" and "usage limit" in (api_key["raised"] or "")
+    raised = api_key["raised"] or ""
+    assert api_key["status"] == "failed" and "Limite d'usage Claude" in raised
+    assert "session limit" in raised  # le message synthétique de Claude Code est conservé
     capped_in_run = limit["capped_in_run"]  # plafond atteint pendant la création : rien ne reste « interrupted »
     assert capped_in_run["status"] == "failed" and "1 fois" in (capped_in_run["raised"] or "")
     assert ["editor_agent", "failed", 1] in capped_in_run["runs"]

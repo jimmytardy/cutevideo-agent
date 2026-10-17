@@ -80,9 +80,10 @@ def test_critic_loop_and_steps_are_recorded(facts: dict) -> None:
     steps = {(name, iteration) for name, status, iteration in facts["runs"] if status == "success"}
     assert {("scenario_agent", 1), ("narrator_agent", 1), ("editor_agent", 1), ("critic_agent", 1),
             ("editor_agent", 2), ("critic_agent", 2), ("thumbnail_agent", 2)} <= steps
-    # Voix et scénario non cités par la critique 1 : réutilisés (dupliqués) dans l'itération 2.
+    # Voix, scénario et sa critique (boucle scénario, itération 1) non cités par la critique 1 : réutilisés
+    # (dupliqués, coût nul) dans l'itération 2 — REUSABLE_AGENTS dans agent/core/claude_studio.py.
     reused = {(name, iteration) for name, status, iteration in facts["runs"] if status == "reused"}
-    assert reused == {("scenario_agent", 2), ("narrator_agent", 2)}
+    assert reused == {("scenario_agent", 2), ("scenario_critic_agent", 2), ("narrator_agent", 2)}
     assert all(status in ("success", "reused") for _, status, _ in facts["runs"])
     # Une seule miniature, rattachée à la dernière itération.
     assert [it for name, _, it in facts["runs"] if name == "thumbnail_agent"] == [2]

@@ -278,6 +278,13 @@ def _tool_result_text(content: Any) -> str:
     ).strip()
 
 
+def error_detail(parser: StreamParser) -> str:
+    """Texte d'une session terminée en erreur : `result`, sinon `errors`, sinon le message synthétique de
+    Claude Code sur une limite d'usage (`result` est alors vide)."""
+    result = parser.result or {}
+    return str(result.get("result") or "; ".join(map(str, result.get("errors") or [])) or parser.limit_message or "")
+
+
 class ClaudeRunError(RuntimeError):
     def __init__(
         self,
@@ -370,9 +377,8 @@ async def run_claude(
             limit_message=parser.limit_message,
         )
     if parser.result.get("is_error"):
-        detail = parser.result.get("result") or "; ".join(map(str, parser.result.get("errors") or []))
         raise ClaudeRunError(
-            f"session Claude en erreur ({parser.result.get('subtype')}) : {str(detail)[:500]}",
+            f"session Claude en erreur ({parser.result.get('subtype')}) : {error_detail(parser)[:500]}",
             result=parser.result,
             rate_limit=parser.rate_limit,
             limit_message=parser.limit_message,
