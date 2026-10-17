@@ -29,11 +29,13 @@ def client() -> httpx.AsyncClient:
 
 
 def _route_paths(router) -> set[str]:
-    """Chemins de toutes les routes, y compris celles des routeurs inclus (enveloppés par FastAPI)."""
+    """Chemins de toutes les routes, y compris celles des routeurs inclus (FastAPI ≥ 0.140 les enveloppe dans
+    un `_IncludedRouter` qui expose le routeur d'origine)."""
     paths: set[str] = set()
     for route in router.routes:
-        if hasattr(route, "routes"):
-            paths |= _route_paths(route)
+        inner = getattr(route, "original_router", None)
+        if inner is not None:
+            paths |= _route_paths(inner)
         elif hasattr(route, "path"):
             paths.add(route.path)
     return paths
