@@ -56,7 +56,7 @@ def list_artifacts(run_dir: Path) -> dict[str, Any]:
     """Résumé du run dir ; `available: False` s'il n'existe plus (purgé ou jamais créé)."""
     if not run_dir.is_dir():
         return {
-            "available": False, "scenario": None, "scenario_critiques": [], "voice": None, "thumbnail": None,
+            "available": False, "scenario": None, "scenario_critiques": [], "voice": None, "thumbnail": None, "publish": None,
             "iterations": {},
         }
 
@@ -111,12 +111,14 @@ def list_artifacts(run_dir: Path) -> dict[str, Any]:
 
     scenario = _read_json(run_dir / "scenario.json")
     thumbnail = _read_json(run_dir / "thumbnail.json")
+    publish = _read_json(run_dir / "publish.json")  # fiche de publication (miniaturiste, après la boucle)
     return {
         "available": True,
         "scenario": scenario if isinstance(scenario, dict) else None,
         "scenario_critiques": scenario_critiques,
         "voice": voice,
         "thumbnail": thumbnail if isinstance(thumbnail, dict) else None,
+        "publish": publish if isinstance(publish, dict) else None,
         "iterations": {str(n): iterations[n] for n in sorted(iterations)},
     }
 

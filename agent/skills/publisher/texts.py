@@ -1,8 +1,8 @@
 """Texte d'une publication selon la plateforme.
 
 `Publication.description` porte toujours la description YouTube (SEO + hashtags + crédits). TikTok et
-Instagram reçoivent la légende écrite pour elles par le scénariste (`Project.config.youtube_metadata.
-tiktok_caption` / `instagram_caption`), sinon un repli court. Résolu à l'exécution : les publications déjà
+Instagram reçoivent la légende écrite pour elles par le miniaturiste dans `publish.json` à la fin de la création
+(persistée dans `Project.config.youtube_metadata.tiktok_caption` / `instagram_caption`), sinon un repli court. Résolu à l'exécution : les publications déjà
 planifiées et le bouton « Publier » manuel en profitent aussi. Les hashtags sont ajoutés par `build_caption`.
 """
 

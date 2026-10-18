@@ -41,11 +41,8 @@ Pas de sujet « tiède » : si l'angle du brief est plat, trouve le détail éto
   `mixed` si des images réelles sont indispensables) ; `mixed` → `mixed` ; `realistic` → `footage` (ou `mixed`).
   `validate --kind scenario` refuse les autres valeurs.
   `theme` (night, space, paper, blueprint, lab) et `accent` (une couleur hex) adaptés au sujet.
-- `publish` : titre orienté recherche (le mot que les gens tapent + la promesse, sans mensonge), `description`
-  YouTube de 2-3 phrases avec les mots-clés, 4-6 hashtags dont `#shorts` et 2 de niche (#science, #histoire…),
-  plus deux légendes dédiées (sans hashtags, ajoutés automatiquement) : `tiktok_caption` (≤ 150 caractères, une
-  accroche qui donne envie de regarder jusqu'au bout, pas de résumé) et `instagram_caption` (1-2 phrases + une
-  question qui fait commenter).
+- Pas de fiche de publication ici : titre public, description, hashtags et légendes sont écrits à la fin par le
+  miniaturiste (`publish.json`), sur la vidéo finale. `title` est un titre de travail.
 
 ## 4. Vérifier (recherche web)
 Chaque chiffre, date, record, nom ou fait surprenant dont tu n'es pas **certain** se vérifie avec WebSearch puis

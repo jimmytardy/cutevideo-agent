@@ -57,3 +57,12 @@ def test_resolve_artifact_file_whitelist(run_dir):
             resolve_artifact_file(run_dir, rel)
     with pytest.raises(FileNotFoundError):
         resolve_artifact_file(run_dir, "renders/v9.mp4")
+
+
+def test_publish_sheet_is_exposed_when_present(tmp_path) -> None:
+    from studio.artifacts import list_artifacts
+
+    assert list_artifacts(tmp_path)["publish"] is None
+    (tmp_path / "publish.json").write_text('{"title": "T", "hashtags": ["#shorts"], "tiktok_caption": "Accroche"}', encoding="utf-8")
+    publish = list_artifacts(tmp_path)["publish"]
+    assert publish["title"] == "T" and publish["tiktok_caption"] == "Accroche"

@@ -328,6 +328,24 @@ function StepOutput({
           ) : (
             <Missing purged={purged} />
           )}
+          {isLastIteration && artifacts?.publish && (
+            <Box sx={{ mt: 2 }}>
+              <Typography variant="subtitle2">Fiche de publication</Typography>
+              {artifacts.publish.title && <Typography variant="body2" sx={{ fontWeight: 600 }}>{artifacts.publish.title}</Typography>}
+              {artifacts.publish.description && (
+                <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>{artifacts.publish.description}</Typography>
+              )}
+              {artifacts.publish.hashtags?.length ? (
+                <Typography variant="caption" color="text.secondary">{artifacts.publish.hashtags.join(' ')}</Typography>
+              ) : null}
+              {artifacts.publish.tiktok_caption && (
+                <Typography variant="body2" sx={{ mt: 0.5 }}>TikTok : {artifacts.publish.tiktok_caption}</Typography>
+              )}
+              {artifacts.publish.instagram_caption && (
+                <Typography variant="body2">Instagram : {artifacts.publish.instagram_caption}</Typography>
+              )}
+            </Box>
+          )}
           {isLastIteration && artifacts?.thumbnail?.text && (
             <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
               Texte : {artifacts.thumbnail.text}

@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from studio.contracts import Brief, Critique, Scenario, ScenarioCritique, StudioResult, Thumbnail, Timeline, load_contract
+from studio.contracts import PublishMetadata, Brief, Critique, Scenario, ScenarioCritique, StudioResult, Thumbnail, Timeline, load_contract
 from studio.launcher import ROLES, WORKSPACE_TEMPLATE, LaunchConfig, prepare_run_dir, run_claude
 from studio.media import probe_media
 from studio.sandbox import scripts_supported
@@ -89,7 +89,8 @@ def test_tool_calls_are_attributed_to_subagents(generated: dict) -> None:
 def test_all_contract_files_are_valid(generated: dict) -> None:
     run_dir: Path = generated["run_dir"]
     scenario = load_contract(run_dir / "scenario.json", Scenario)
-    assert scenario.publish.title
+    assert scenario.title and scenario.publish is None  # la fiche de publication n'est plus dans le scénario
+    assert load_contract(run_dir / "publish.json", PublishMetadata).title == "Les flamants naissent gris"
     # Boucle scénario : la passe 1 signale un fait à vérifier, la passe 2 (sourcée) est approuvée.
     passes = [load_contract(run_dir / f"scenario_critique_{i}.json", ScenarioCritique) for i in (1, 2)]
     assert [c.decision for c in passes] == ["iterate", "approve"]

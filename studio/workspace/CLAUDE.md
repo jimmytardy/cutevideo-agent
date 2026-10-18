@@ -119,8 +119,6 @@ style narratif, interdits — à respecter), `content_plan`, `animations` (off |
  "beats": [{"text": "phrase(s) dite(s)", "visual_intent": "ce qu'on doit voir", "on_screen_text": "MOT-CLÉ"}],
  "cta": "…", "mood": "mysterieux", "music_mood": "mysterieux",
  "visual_mode": "animation", "theme": "night", "accent": "#FFB938",
- "publish": {"title": "titre ≤ 100 car.", "description": "2-3 phrases (YouTube)", "hashtags": ["#shorts", "…"],
-             "tiktok_caption": "accroche ≤ 150 car.", "instagram_caption": "1-2 phrases + question"},
  "sources": [{"claim": "le fait vérifié", "url": "https://…", "checked": true}]}
 ```
 `sources` : faits vérifiés sur le web par le scénariste (chiffres, dates, records, faits surprenants).
@@ -155,7 +153,10 @@ d'affilée**. `music_volume` 0.08 ≈ musique 17 dB sous la voix (0.06-0.12). So
 
 `renders/v<N>.mp4` (monteur) ; `thumbnail.json` (miniaturiste) :
 `{"vertical": "thumbnails/final_9x16.png", "horizontal": "thumbnails/final_16x9.png", "text": "…", "background": "media/…"}`
-(une seule fois, après la boucle, sur la vidéo finale).
+(une seule fois, après la boucle, sur la vidéo finale). `publish.json` (miniaturiste, au même moment) :
+`{"title": "titre ≤ 100 car.", "description": "2-3 phrases (YouTube)", "hashtags": ["#shorts", "…"],
+  "tiktok_caption": "accroche ≤ 150 car.", "instagram_caption": "1-2 phrases + question"}` — hashtags ajoutés
+automatiquement aux légendes, crédits médias ajoutés à la description YouTube.
 
 `critique_<N>.json` (critique) :
 ```json

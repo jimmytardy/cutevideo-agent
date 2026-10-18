@@ -18,7 +18,8 @@ dir et reprends à la première étape incomplète :
   **réutilisant** les médias et animations déjà présents dans `media/` (ne refaire que ceux qui manquent) ;
 - `critique_N.json` valide → critique N faite (applique alors la boucle vidéo) ;
 - boucle vidéo terminée (dernière critique `approve`, score ≥ `min_score` ou plafond atteint) → section **Miniature**
-  (si `thumbnail.json` existe déjà, dis-le au miniaturiste : il décidera s'il faut la refaire), puis **Fin**.
+  (si `thumbnail.json` existe déjà, dis-le au miniaturiste : il décidera s'il faut la refaire ; si `publish.json`
+  manque, il doit au moins écrire la fiche de publication), puis **Fin**.
 Dans le prompt du sous-agent relancé, précise qu'il s'agit d'une reprise et quels fichiers existent déjà.
 Si tu reprends ta propre session, tu connais déjà l'étape en cours : vérifie seulement ce qu'elle a laissé sur disque.
 
@@ -60,8 +61,9 @@ La miniature n'est **pas** faite pendant la boucle (la critique ne la juge pas) 
 ## Miniature
 Choisis la vidéo finale : la meilleure version (score le plus haut ; à égalité la plus récente) `renders/vK.mp4`.
 Lance **miniaturiste** une seule fois en lui donnant ce chemin → `thumbnails/final_9x16.png`,
-`thumbnails/final_16x9.png`, `thumbnail.json`. Si `thumbnail.json` existe déjà, précise-le : il vérifie qu'elle
-colle à la vidéo finale et ne la régénère que si nécessaire.
+`thumbnails/final_16x9.png`, `thumbnail.json` et la fiche de publication `publish.json` (titre, description,
+hashtags, légendes TikTok / Instagram). Si `thumbnail.json` existe déjà, précise-le : il vérifie qu'elle colle à
+la vidéo finale et ne la régénère que si nécessaire ; `publish.json` est toujours écrit.
 
 ## Fin
 Avec la vidéo finale retenue ci-dessus, écris `result.json` :
@@ -69,4 +71,4 @@ Avec la vidéo finale retenue ci-dessus, écris `result.json` :
 puis valide-le : `python -m studio.tools validate --kind result --path result.json`.
 
 Si une étape échoue deux fois de suite pour la même raison, écris `result.json` avec `status: "failed"` et une
-explication dans `notes`, puis arrête-toi. Termine par un résumé de 3 lignes (titre, score final, fichier).
+explication dans `notes`, puis arrête-toi. Termine par un résumé de 3 lignes (titre de `publish.json`, score final, fichier).

@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from studio.contracts import Brief, Critique, Scenario, StudioResult, Thumbnail, load_contract
+from studio.contracts import PublishMetadata, Brief, Critique, Scenario, StudioResult, Thumbnail, load_contract
 from studio.launcher import LaunchConfig, prepare_run_dir, run_claude
 from studio.media import probe_media
 
@@ -72,7 +72,8 @@ def test_result_and_contracts(live_run: dict) -> None:
     assert result.status in {"approved", "max_iterations"}
     assert result.final_video
     scenario = load_contract(run_dir / "scenario.json", Scenario)
-    assert scenario.publish.title and scenario.beats
+    assert scenario.title and scenario.beats
+    assert load_contract(run_dir / "publish.json", PublishMetadata).title  # fiche de publication du miniaturiste
     critique = load_contract(run_dir / "critique_1.json", Critique)
     assert 0 <= critique.score <= 100
 

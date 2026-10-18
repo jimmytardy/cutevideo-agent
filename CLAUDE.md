@@ -109,10 +109,11 @@ Orchestrator.run_pipeline → ClaudeStudioRunner
        changes carry `lines`), until score ≥ brief.min_score (80) or brief.max_iterations (5), only cited roles re-run
        (others reused → AgentRun copied as status `reused`, cost 0)
        then miniaturiste ONCE on the final video (keeps an existing thumbnail if it still fits) → thumbnails/final_*.png
-       + thumbnail.json, then result.json
+       + thumbnail.json + publish.json (title/description/hashtags + TikTok/Instagram captions: the publication sheet is no
+       longer in scenario.json, the scenariste only keeps a working `title`), then result.json
   → persist: Scenario, Video short_master + short_<platform> (S3), CriticReport per iteration,
     Project.config.youtube_metadata (title/description/hashtags + media credits, plus `tiktok_caption` / `instagram_caption`
-    written by the scenariste: `platform_text()` in agent/skills/publisher/texts.py picks the text at publish time — scheduled or manual), .thumbnail, .claude_studio
+    written by the miniaturiste in `publish.json`, read by `_publish_metadata()`: `platform_text()` in agent/skills/publisher/texts.py picks the text at publish time — scheduled or manual), .thumbnail, .claude_studio
 ```
 
 - `studio/workspace/` — the Claude workspace copied into each run dir: `CLAUDE.md` (Short rules + file contracts), `.claude/commands/make-video.md` (producer/loop), `.claude/agents/*.md` (the 6 roles)

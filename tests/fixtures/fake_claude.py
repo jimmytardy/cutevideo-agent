@@ -158,9 +158,6 @@ def scenariste(brief: dict, attempt: int = 1) -> None:
         "mood": "calme",
         "music_mood": "",
         "visual_mode": _visual_mode(),
-        "publish": {"title": "Les flamants naissent gris", "description": "Leur couleur vient de leur assiette.",
-                    "hashtags": ["#shorts", "#animaux"], "tiktok_caption": "Un flamant rose… gris ?",
-                    "instagram_caption": "Leur couleur vient de leur assiette. Vous le saviez ?"},
         "sources": sources if attempt >= 2 else [],
     })
     tool(agent.id, "validate", "--kind", "scenario", "--path", "scenario.json")
@@ -253,7 +250,11 @@ def miniaturiste(iteration: int) -> None:
     write_json("thumbnail.json", {"vertical": "thumbnails/final_9x16.png", "horizontal": "thumbnails/final_16x9.png",
                                   "text": "NÉ|GRIS", "background": "media/01_poussin.png"})
     tool(agent.id, "validate", "--kind", "thumbnail", "--path", "thumbnail.json")
-    agent.done("Texte « NÉ GRIS ».")
+    write_json("publish.json", {"title": "Les flamants naissent gris", "description": "Leur couleur vient de leur assiette.",
+                                "hashtags": ["#shorts", "#animaux"], "tiktok_caption": "Un flamant rose… gris ?",
+                                "instagram_caption": "Leur couleur vient de leur assiette. Vous le saviez ?"})
+    tool(agent.id, "validate", "--kind", "publish", "--path", "publish.json")
+    agent.done("Texte « NÉ GRIS », fiche de publication écrite.")
 
 
 def critique(iteration: int) -> None:

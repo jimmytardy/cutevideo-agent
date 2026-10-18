@@ -36,6 +36,7 @@ from agent.core import studio_resume
 from agent.skills.media_sources.ai.registry import models_up_to
 from studio.agent_stream import coalesce, encode, trim
 from studio.contracts import (
+    PublishMetadata,
     VOICE_CACHE_DIR,
     Brief,
     ContractError,
@@ -634,6 +635,19 @@ class ClaudeStudioRunner:
             })
         return sorted(out, key=lambda c: c["iteration"])
 
+    def _publish_metadata(self, scenario: StudioScenario) -> PublishMetadata:
+        """Fiche de publication : `publish.json` (miniaturiste, une fois sur la vidéo finale) ; anciens run dirs :
+        `scenario.publish`, sinon le titre du scénario."""
+        path = self.run_dir / "publish.json"
+        if path.exists():
+            try:
+                return load_contract(path, PublishMetadata)
+            except ContractError as exc:
+                logger.warning("publish.json invalide, fiche de publication dégradée : %s", exc)
+        elif scenario.publish is None:
+            logger.warning("publish.json absent : titre de travail publié, sans description ni légendes")
+        return scenario.publish or PublishMetadata(title=scenario.title[:100])
+
     @staticmethod
     def _load_credits(final_video: Path) -> list[dict[str, Any]]:
         return list(read_json(final_video.with_suffix(".render.json"), {}).get("credits") or [])
@@ -668,20 +682,21 @@ class ClaudeStudioRunner:
         critiques: list[Critique],
     ) -> None:
         primary_thumb, thumb_candidates = self._thumbnail_config()
-        hashtags = [h if h.startswith("#") else f"#{h}" for h in scenario.publish.hashtags]
-        description = scenario.publish.description.strip()
+        publish = self._publish_metadata(scenario)
+        hashtags = [h if h.startswith("#") else f"#{h}" for h in publish.hashtags]
+        description = publish.description.strip()
         credit_lines = [c.get("attribution") for c in credits if c.get("attribution")]
         if hashtags:
             description += "\n\n" + " ".join(hashtags)
         if credit_lines:
             description += "\n\nCrédits :\n" + "\n".join(f"- {line}" for line in credit_lines)
         metadata = {
-            "title": scenario.publish.title,
+            "title": publish.title,
             "description": description,
             "tags": [h.lstrip("#") for h in hashtags],
             # Légendes par plateforme (sans hashtags : ajoutés à la publication par build_caption).
-            "tiktok_caption": scenario.publish.tiktok_caption.strip(),
-            "instagram_caption": scenario.publish.instagram_caption.strip(),
+            "tiktok_caption": publish.tiktok_caption.strip(),
+            "instagram_caption": publish.instagram_caption.strip(),
             "source": "claude_studio",
         }
         studio_info = {
@@ -709,6 +724,6 @@ class ClaudeStudioRunner:
             await session.execute(
                 update(Project)
                 .where(Project.id == self.ctx.project_id)
-                .values(config=config, title=scenario.publish.title)
+                .values(config=config, title=publish.title)
             )
             await session.commit()

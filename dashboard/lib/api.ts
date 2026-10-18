@@ -742,6 +742,14 @@ export interface StudioArtifacts {
   scenario_critiques?: StudioScenarioCritiqueFile[]
   voice: (StudioMediaFile & { duration_s?: number | null; engine?: string | null; voice?: string | null }) | null
   thumbnail: { text?: string } | null
+  /** Fiche de publication écrite par le miniaturiste après la boucle (publish.json). */
+  publish: {
+    title?: string
+    description?: string
+    hashtags?: string[]
+    tiktok_caption?: string
+    instagram_caption?: string
+  } | null
   iterations: Record<
     string,
     { render: StudioMediaFile | null; thumbnails: StudioMediaFile[]; critique: StudioCritiqueFile | null }

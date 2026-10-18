@@ -96,7 +96,9 @@ class Scenario(BaseModel):
     visual_mode: Literal["animation", "mixed", "footage"] = "animation"
     theme: str = "night"
     accent: str = ""
-    publish: PublishMetadata
+    # Historique : la fiche de publication est désormais `publish.json`, écrite par le miniaturiste après la boucle
+    # (anciens run dirs : lue ici en repli).
+    publish: PublishMetadata | None = None
     sources: list[ScenarioSource] = Field(default_factory=list)
 
     @property

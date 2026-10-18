@@ -354,6 +354,7 @@ async def cmd_validate(args: argparse.Namespace, run_dir: Path) -> Any:
         "critique": contracts.Critique,
         "scenario-critique": contracts.ScenarioCritique,
         "thumbnail": contracts.Thumbnail,
+        "publish": contracts.PublishMetadata,
         "result": contracts.StudioResult,
     }
     model = models[args.kind]
@@ -487,7 +488,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_probe)
 
     p = sub.add_parser("validate", help="valide un fichier de contrat")
-    p.add_argument("--kind", required=True, choices=["brief", "scenario", "scenario-critique", "timeline", "critique", "thumbnail", "result"])
+    p.add_argument("--kind", required=True, choices=["brief", "scenario", "scenario-critique", "timeline", "critique", "thumbnail", "publish", "result"])
     p.add_argument("--path", required=True)
     p.set_defaults(func=cmd_validate)
 
