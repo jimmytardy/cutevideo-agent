@@ -401,15 +401,13 @@ class ClaudeStudioRunner:
                 # Reprise au redémarrage : on garde la session et le run dir.
                 await recorder.close_dangling("interrupted", studio_resume.INTERRUPTED_MESSAGE)
                 raise
-            if isinstance(exc, ClaudeRunError) and (until := studio_resume.usage_limit_reset(exc)):
-                if subscription:
-                    # Limite d'usage : session et run dir gardés, reprise au reset (ou abandon au plafond de pauses).
-                    await self._pause(until, session_state, config_dir, recorder=recorder)
+            limit_until = studio_resume.usage_limit_reset(exc) if isinstance(exc, ClaudeRunError) else None
+            if limit_until and subscription:
+                # Limite d'usage : session et run dir gardés, reprise au reset (ou abandon au plafond de pauses).
+                await self._pause(limit_until, session_state, config_dir, recorder=recorder)  # NoReturn
+            if limit_until:
                 # Clé API : échec normal, mais nommé (le résultat Claude est vide sur une limite).
-                exc = ClaudeRunError(
-                    f"{studio_resume.LIMIT_MESSAGE} (clé API : pas de pause automatique) — {exc}",
-                    result=exc.result, rate_limit=exc.rate_limit, limit_message=exc.limit_message,
-                )
+                exc = ClaudeRunError(f"{studio_resume.LIMIT_MESSAGE} (clé API : pas de pause automatique) — {exc}")
             await recorder.close_dangling("stopped" if not isinstance(exc, Exception) else "failed", str(exc)[:500])
             await self._discard_session(config_dir)  # plus de session à reprendre : état effacé comme en succès
             raise exc
