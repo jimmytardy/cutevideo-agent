@@ -28,6 +28,7 @@ os.chdir(REPO_ROOT)
 from agent.core.config import load_agent_config  # noqa: E402
 from agent.skills.media_sources.ai.registry import ALLOWED_PLANS  # noqa: E402
 from studio import media  # noqa: E402
+from agent.skills.audio.gemini_tts import DEFAULT_GEMINI_VOICE  # noqa: E402
 from studio.contracts import (  # noqa: E402
     VOICE_CACHE_DIR,
     ContractError,
@@ -98,7 +99,7 @@ def _tts_engine_chain(run_dir: Path, requested: str | None) -> tuple[list[str], 
     chain = [primary] + [e for e in ("gemini", "edge") if e != primary]
     voices = {
         "azure": short_cfg.get("voice", "fr-FR-Vivienne:DragonHDLatestNeural"),
-        "gemini": tts_cfg.get("gemini", {}).get("voice", "Leda"),
+        "gemini": tts_cfg.get("gemini", {}).get("voice", DEFAULT_GEMINI_VOICE),
         "edge": tts_cfg.get("fallback_voice", "fr-FR-RemyMultilingualNeural"),
     }
     if brief_engine and brief.get("voice"):

@@ -14,7 +14,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_GEMINI_TTS_MODEL = "gemini-2.5-flash-preview-tts"
 # Sur Vertex AI, les modèles TTS ne portent pas les mêmes noms que sur AI Studio.
 DEFAULT_VERTEX_TTS_MODEL = "gemini-2.5-flash-tts"
-DEFAULT_GEMINI_VOICE = "Leda"
+# Puck (« dynamique ») : Leda (« jeune ») rendait les Shorts trop posés.
+DEFAULT_GEMINI_VOICE = "Puck"
 DEFAULT_GEMINI_LANGUAGE = "fr"
 
 MOOD_TO_INSTRUCTION: dict[str, str] = {
@@ -37,31 +38,53 @@ TONE_TO_INSTRUCTION: dict[str, str] = {
 }
 
 
+def rate_instruction(rate: str) -> str | None:
+    """Consigne de débit en langage naturel à partir du réglage `--rate` (`+10%`) : Gemini n'a pas de
+    paramètre de vitesse, c'est le seul levier (edge/Azure l'appliquent directement)."""
+    try:
+        pct = int(str(rate or "").strip().replace("%", "").replace("+", "") or 0)
+    except ValueError:
+        return None
+    # Consigne continue (pas de paliers) : une emphase par ligne (`[rate=-4%]`) ne doit pas faire sauter le rythme
+    # d'une phrase à l'autre une fois les lignes recollées.
+    if pct > 0:
+        return f"Débit : environ {pct} % plus vite qu'une lecture normale, sans avaler les syllabes."
+    if pct < 0:
+        return f"Débit : environ {-pct} % plus lent qu'une lecture normale, pour laisser respirer le propos."
+    return None
+
+
 def build_gemini_tts_prompt(
     text: str,
     *,
     mood: str = "",
     editorial_tone: str = "",
     tts_style: str = "",
+    rate: str = "+0%",
 ) -> str:
     """Construit un prompt naturel pour piloter l'expressivité Gemini TTS.
 
-    Gemini n'accepte pas de SSML : l'intonation et le rythme passent uniquement par ces
-    instructions en langage naturel. On fixe une base « rendu studio » (débit posé, pauses
-    naturelles, articulation soignée) puis on affine selon le ton éditorial et le mood.
+    Gemini n'accepte pas de SSML : l'intonation et le rythme passent uniquement par ces instructions en
+    langage naturel. Base « Short vertical » (rythme soutenu, énergie, intonation variée), puis le débit
+    demandé, le ton éditorial et le mood (énergique par défaut : un Short sans relief perd le spectateur).
     """
     instructions: list[str] = [
-        "Narration en français pour une vidéo éducative.",
-        "Débit posé et naturel, articulation soignée, pauses naturelles à la ponctuation.",
+        "Narration en français d'un Short vertical : rythme soutenu et vivant, énergie constante du début à la fin.",
+        "Articulation nette, pauses brèves à la ponctuation, intonation variée : on appuie les chiffres, "
+        "on monte sur les questions, on marque les révélations.",
     ]
+    if rate_hint := rate_instruction(rate):
+        instructions.append(rate_hint)
 
     tone_key = editorial_tone.strip().lower()
     if tone_key and tone_key in TONE_TO_INSTRUCTION:
         instructions.append(TONE_TO_INSTRUCTION[tone_key])
 
     mood_key = mood.strip().lower()
-    if mood_key and mood_key in MOOD_TO_INSTRUCTION:
-        instructions.append(MOOD_TO_INSTRUCTION[mood_key])
+    if not mood_key:
+        instructions.append(MOOD_TO_INSTRUCTION["energique"])  # un Short sans relief perd le spectateur
+    else:
+        instructions.append(MOOD_TO_INSTRUCTION.get(mood_key) or f"ton {mood_key}")  # mood libre : transmis tel quel
 
     if tts_style and tts_style not in ("narration-professional", "default"):
         instructions.append(f"style vocal : {tts_style.replace('-', ' ')}")
@@ -118,6 +141,7 @@ async def synthesize_gemini_tts(
     api_key: str | None = None,
     vertex: VertexTarget | None = None,
     mastering: dict[str, Any] | None = None,
+    rate: str = "+0%",
     transient_retries: int = MAX_TRANSIENT_RETRIES,
 ) -> float:
     """Synthèse Gemini Flash TTS → WAV normalisé 48 kHz.
@@ -140,6 +164,7 @@ async def synthesize_gemini_tts(
         mood=mood,
         editorial_tone=editorial_tone,
         tts_style=tts_style,
+        rate=rate,
     )
     if key:
         client = genai.Client(api_key=key)

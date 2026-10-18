@@ -59,7 +59,7 @@ class DailyQuotasConfig(BaseModel):
 class GeminiTtsConfig(BaseModel):
     apply_to: Literal["off", "shorts", "long", "both"] = "off"
     model: str = "gemini-2.5-flash-preview-tts"
-    voice: str = "Leda"
+    voice: str = "Puck"
     language_code: str = "fr"
 
 
@@ -136,7 +136,7 @@ def _resolve_gemini_tts(tts: dict[str, Any]) -> GeminiTtsConfig:
     return GeminiTtsConfig(
         apply_to=apply_to,  # type: ignore[arg-type]
         model=str(gemini.get("model", "gemini-2.5-flash-preview-tts")),
-        voice=str(gemini.get("voice", "Leda")),
+        voice=str(gemini.get("voice", "Puck")),
         language_code=str(gemini.get("language_code", "fr")),
     )
 

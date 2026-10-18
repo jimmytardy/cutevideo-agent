@@ -115,6 +115,7 @@ async def generate_tts(
             "editorial_tone": editorial_tone,
             "tts_style": tts_style,
             "mastering": mastering,
+            "rate": tts_rate,  # Gemini : converti en consigne de débit dans le prompt
         }
         if effective_gemini:
             try:

@@ -43,7 +43,7 @@ function resolveShortTts(tts: Json): { engine: string; voice: string } {
   const shortRaw = tts.short as Json | undefined
   const gemini = section(tts, 'gemini')
   if (!shortRaw && (gemini.apply_to === 'shorts' || gemini.apply_to === 'both')) {
-    return { engine: 'gemini', voice: String(gemini.voice || 'Leda') }
+    return { engine: 'gemini', voice: String(gemini.voice || 'Puck') }
   }
   return {
     engine: String(shortRaw?.engine || tts.engine || 'azure'),

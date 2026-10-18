@@ -27,7 +27,7 @@
       "apply_to": "off",
       "model": "gemini-2.5-flash-preview-tts",
       "vertex_model": "gemini-2.5-flash-tts",
-      "voice": "Leda",
+      "voice": "Puck",
       "language_code": "fr"
     }
   },
