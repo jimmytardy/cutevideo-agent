@@ -10,6 +10,7 @@ import pytest
 import soundfile as sf
 
 from agent.skills.audio.whisper_utils import WordSegment
+from studio import textfx
 from studio import analyze, audiomix, subtitles, voicefx
 from studio.animate import TEMPLATES, TEMPLATES_DIR, WORKSPACE_LIB
 
@@ -166,3 +167,9 @@ def test_cues_are_relative_to_the_clip(tmp_path: Path) -> None:
     cues = json.loads(out.stdout)["cues"]
     assert [c["word"] for c in cues] == ["Cinquante", "pour"]
     assert cues[0]["at"] == pytest.approx(0.06, abs=0.001)
+
+
+def test_drawtext_overlays_keep_percent_sign(tmp_path: Path) -> None:
+    """Sans expansion=none, drawtext interprète `%` (séquences %{…}) et « 70 % » disparaît de l'image."""
+    chain = textfx.drawtext_chain(["70 %"], tmp_path, "t", fontsize=80, y_top="100")
+    assert "expansion=none" in chain and (tmp_path / "t_00.txt").read_text(encoding="utf-8") == "70 %"

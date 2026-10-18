@@ -40,9 +40,11 @@ def drawtext_chain(
     font = f":fontfile={FONT_FILE}" if Path(FONT_FILE).exists() else ""
     border = max(fontsize // 12, 4)
     line_h = int(fontsize * 1.18)
+    # expansion=none : le texte est affiché tel quel ; sinon drawtext interprète `%` (séquences %{…}) et un
+    # « 70 % » perd son signe.
     style = (
         f"fontsize={fontsize}:fontcolor={color}:borderw={border}:bordercolor=black:"
-        "shadowcolor=black@0.6:shadowx=4:shadowy=4"
+        "shadowcolor=black@0.6:shadowx=4:shadowy=4:expansion=none"
     )
     if box:
         style += ":box=1:boxcolor=black@0.35:boxborderw=14"
