@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -29,6 +30,14 @@ def _fail(job: dict, message: str) -> None:
         (out / "result.json").write_text(json.dumps({"ok": False, "error": message}), encoding="utf-8")
 
 
+def _kill_group(proc: subprocess.Popen) -> None:
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    proc.wait()
+
+
 def handle(job_file: Path) -> None:
     running = job_file.with_suffix(".running")
     try:
@@ -43,14 +52,18 @@ def handle(job_file: Path) -> None:
             raise ValueError("chemins hors du volume des runs")
         job_path = out_dir / "job.json"
         job_path.write_text(json.dumps(job), encoding="utf-8")
+        # Groupe de processus dédié : à l'expiration, Chromium et ses renderers meurent avec le script, au lieu
+        # de survivre orphelins (zombies comptés dans pids_limit).
+        proc = subprocess.Popen(
+            [sys.executable, str(EXEC_SCRIPT), str(job_path)],
+            cwd=str(out_dir), start_new_session=True,
+            env={"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": "/tmp",
+                 "PLAYWRIGHT_BROWSERS_PATH": os.getenv("PLAYWRIGHT_BROWSERS_PATH", "/ms-playwright")},
+        )
         try:
-            subprocess.run(
-                [sys.executable, str(EXEC_SCRIPT), str(job_path)],
-                cwd=str(out_dir), timeout=float(job.get("timeout_s", 300)) + 20,
-                env={"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": "/tmp",
-                     "PLAYWRIGHT_BROWSERS_PATH": os.getenv("PLAYWRIGHT_BROWSERS_PATH", "/ms-playwright")},
-            )
+            proc.wait(timeout=float(job.get("timeout_s", 300)) + 20)
         except subprocess.TimeoutExpired:
+            _kill_group(proc)
             _fail(job, "délai dépassé")
     except Exception as exc:  # noqa: BLE001 — le job ne doit jamais tuer le service
         try:

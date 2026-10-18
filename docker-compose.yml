@@ -172,6 +172,9 @@ services:
       - ./studio/sandbox_exec.py:/opt/sandbox/sandbox_exec.py:ro
       - ./studio/sandbox_worker.py:/opt/sandbox/sandbox_worker.py:ro
     read_only: true
+    # PID 1 = init (tini) : récolte les processus Chromium orphelins, sinon ils restent zombies et saturent
+    # pids_limit en quelques dizaines de jobs (Chromium meurt alors en SIGTRAP au lancement).
+    init: true
     tmpfs:
       - /tmp
     security_opt:
@@ -183,7 +186,8 @@ services:
     mem_limit: 1200m
     memswap_limit: 1200m
     cpus: 1.5
-    pids_limit: 256
+    # Threads compris : un Chromium headless en consomme ~100-150.
+    pids_limit: 512
     restart: unless-stopped
 
   # Ce bloc reste en sommeil, sauf si app-dev le réveille

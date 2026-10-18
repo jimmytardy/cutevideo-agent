@@ -50,45 +50,47 @@ async def render_html(job: dict, frames: Path) -> int:
             "--disable-background-networking",
             "--mute-audio",
         ])
-        page = await browser.new_page(viewport={"width": int(job["width"]), "height": int(job["height"])})
-        await page.route("**/*", lambda route: route.continue_() if route.request.url.startswith("file:")
-                         else route.abort())
-        errors: list[str] = []
-        page.on("pageerror", lambda exc: errors.append(str(exc)))
-        # Horloge simulée figée : le temps n'avance que frame par frame (sinon il s'écoule
-        # en temps réel pendant le chargement et les captures, et l'animation « saute »).
-        await page.clock.install(time=0)
-        await page.clock.pause_at(1)
-        await page.goto(Path(job["script"]).as_uri(), wait_until="load")
-        await page.evaluate("document.fonts ? document.fonts.ready : null")
-        if errors:
-            raise RuntimeError(f"erreur JavaScript : {errors[0]}")
-        has_render = await page.evaluate("typeof window.renderFrame === 'function'")
-        if not has_render:
-            await page.evaluate("window.gsap && window.gsap.ticker.lagSmoothing(0)")
-        elapsed_ms = 0
-        has_check = await page.evaluate("typeof window.__studioCheck === 'function'")
-        seen: dict[str, str] = {}
-        check_every = max(1, fps // 2)
-        for i in range(n):
-            t = i / fps
-            if has_render:
-                await page.evaluate("async (t) => { await window.renderFrame(t); }", t)
-            else:
-                target_ms = round(t * 1000)
-                if target_ms > elapsed_ms:
-                    await page.clock.run_for(target_ms - elapsed_ms)
-                    elapsed_ms = target_ms
-                await page.evaluate(_SEEK_JS, t)
-            await page.screenshot(path=str(frames / f"frame_{i:05d}.jpg"), type="jpeg", quality=94)
-            # Contrôle des zones toutes les ~0,5 s (un zoom caméra peut sortir le contenu en cours de route).
-            if has_check and (i % check_every == 0 or i == n - 1):
-                for w in await page.evaluate("window.__studioCheck()") or []:
-                    key = "".join(c for c in str(w) if not c.isdigit())
-                    seen.setdefault(key, f"t={t:.1f}s : {w}")
+        try:
+            page = await browser.new_page(viewport={"width": int(job["width"]), "height": int(job["height"])})
+            await page.route("**/*", lambda route: route.continue_() if route.request.url.startswith("file:")
+                             else route.abort())
+            errors: list[str] = []
+            page.on("pageerror", lambda exc: errors.append(str(exc)))
+            # Horloge simulée figée : le temps n'avance que frame par frame (sinon il s'écoule
+            # en temps réel pendant le chargement et les captures, et l'animation « saute »).
+            await page.clock.install(time=0)
+            await page.clock.pause_at(1)
+            await page.goto(Path(job["script"]).as_uri(), wait_until="load")
+            await page.evaluate("document.fonts ? document.fonts.ready : null")
             if errors:
-                raise RuntimeError(f"erreur JavaScript à t={t:.2f}s : {errors[0]}")
-        await browser.close()
+                raise RuntimeError(f"erreur JavaScript : {errors[0]}")
+            has_render = await page.evaluate("typeof window.renderFrame === 'function'")
+            if not has_render:
+                await page.evaluate("window.gsap && window.gsap.ticker.lagSmoothing(0)")
+            elapsed_ms = 0
+            has_check = await page.evaluate("typeof window.__studioCheck === 'function'")
+            seen: dict[str, str] = {}
+            check_every = max(1, fps // 2)
+            for i in range(n):
+                t = i / fps
+                if has_render:
+                    await page.evaluate("async (t) => { await window.renderFrame(t); }", t)
+                else:
+                    target_ms = round(t * 1000)
+                    if target_ms > elapsed_ms:
+                        await page.clock.run_for(target_ms - elapsed_ms)
+                        elapsed_ms = target_ms
+                    await page.evaluate(_SEEK_JS, t)
+                await page.screenshot(path=str(frames / f"frame_{i:05d}.jpg"), type="jpeg", quality=94)
+                # Contrôle des zones toutes les ~0,5 s (un zoom caméra peut sortir le contenu en cours de route).
+                if has_check and (i % check_every == 0 or i == n - 1):
+                    for w in await page.evaluate("window.__studioCheck()") or []:
+                        key = "".join(c for c in str(w) if not c.isdigit())
+                        seen.setdefault(key, f"t={t:.1f}s : {w}")
+                if errors:
+                    raise RuntimeError(f"erreur JavaScript à t={t:.2f}s : {errors[0]}")
+        finally:
+            await browser.close()
     # Alertes du kit studio.js (éléments hors des zones utiles, scène vide…), première occurrence de chacune.
     job["_warnings"] = list(seen.values())[:12]
     return n
