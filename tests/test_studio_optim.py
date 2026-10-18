@@ -103,9 +103,13 @@ def test_kit_icons_cited_in_workspace_exist() -> None:
 
 
 def test_emphasis_tags_are_parsed_per_line() -> None:
-    text = "Le plus fou ?\n[rate=-4% pitch=+12Hz] Nous !\n\n[bidon] La Terre freine."
+    text = ("Le plus fou ?\n[rate=-4% pitch=+12Hz] Nous !\n\n[bidon] La Terre freine.\n"
+            "[mood=Mysterieux style=Whispering rate=-6%] Personne n'en a parlé.")
     lines = voicefx.parse_emphasis(text)
-    assert lines == [("Le plus fou ?", {}), ("Nous !", {"rate": "-4%", "pitch": "+12Hz"}), ("La Terre freine.", {})]
+    assert lines == [
+        ("Le plus fou ?", {}), ("Nous !", {"rate": "-4%", "pitch": "+12Hz"}), ("La Terre freine.", {}),
+        ("Personne n'en a parlé.", {"mood": "mysterieux", "style": "whispering", "rate": "-6%"}),
+    ]
 
 
 def test_concat_wavs_inserts_short_gaps(tmp_path: Path) -> None:

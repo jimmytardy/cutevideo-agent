@@ -146,15 +146,24 @@ async def _synthesize(
         azure_speech_key=user_key(AZURE_SPEECH_KEY),
         gcp_credentials_json=user_key(GCP_CREDENTIALS_JSON),
     )
-    stats = {"lines_synthesized": 0, "lines_reused": 0, "chars_synthesized": 0}
+    stats = {"lines_synthesized": 0, "lines_reused": 0, "chars_synthesized": 0, "lines_tuned": 0}
     parts: list[Path] = []
     durations: list[float] = []
     used = engine
     for seg_text, opts in segments:
         rate = combine_offset(args.rate, opts.get("rate"))
         pitch = combine_offset(args.pitch, opts.get("pitch"))
+        # Ambiance et style de la ligne (préfixe `[mood=… style=…]`), sinon ceux de la commande. Un `mood` seul
+        # laisse Azure dériver le style de l'ambiance (un style explicite l'écraserait).
+        line_mood = opts.get("mood") or (args.mood or "")
+        line_style = opts.get("style") or ("" if opts.get("mood") else style)
+        stats["lines_tuned"] += bool(opts)
+        # edge-tts ignore ambiance et style : ils n'entrent pas dans sa clé (même audio → même ligne reprise).
+        # (`edge` = clé de la chaîne du brief, `edge-tts` = repli de resolve_engine.)
+        is_edge = effective_engine in ("edge", "edge-tts")
+        keyed_mood, keyed_style = (args.mood or "", style) if is_edge else (line_mood, line_style)
         key = _line_cache_key(
-            seg_text, engine=effective_engine, voice=voice, rate=rate, pitch=pitch, style=style, mood=args.mood or ""
+            seg_text, engine=effective_engine, voice=voice, rate=rate, pitch=pitch, style=keyed_style, mood=keyed_mood
         )
         part = cache_dir / f"{key}.wav"
         meta_path = part.with_suffix(".json")
@@ -174,10 +183,10 @@ async def _synthesize(
                     tmp,
                     voice=voice,
                     engine=engine,
-                    tts_style=style,
+                    tts_style=line_style,
                     tts_rate=rate,
                     tts_pitch=pitch,
-                    mood=args.mood or "",
+                    mood=line_mood,
                     # Clés du propriétaire de la chaîne (sans clé : moteur indisponible → edge-tts).
                     gemini_api_key=user_key(GEMINI_API_KEY),
                     azure_speech_key=user_key(AZURE_SPEECH_KEY),

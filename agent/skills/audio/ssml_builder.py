@@ -205,8 +205,8 @@ def _resolve_prosody(
         or tone_defaults.get("pitch", DEFAULT_PITCH)
     )
 
-    # Defaults chaîne (prioritaires seulement si explicitement configurés)
-    if default_style != DEFAULT_STYLE:
+    # Defaults chaîne (prioritaires seulement si explicitement configurés ; vide = laisser le mood décider)
+    if default_style and default_style != DEFAULT_STYLE:
         style = _sanitize_style(default_style)
     if default_rate != DEFAULT_RATE:
         rate = default_rate

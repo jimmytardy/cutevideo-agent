@@ -78,8 +78,14 @@ def tighten_pauses(path: Path, *, max_pause_s: float = 0.4, threshold_db: float 
 _TAG = re.compile(r"^\s*\[(?P<body>[^\]]*)\]\s*")
 
 
+# Réglages acceptés en tête de ligne : débit et hauteur (relatifs au réglage global), ambiance et style de
+# cette ligne seule (`mood` → prompt Gemini / prosodie Azure ; `style` → style Azure `express-as`, texte libre
+# pour Gemini ; edge-tts n'applique que rate/pitch).
+LINE_SETTINGS = ("rate", "pitch", "mood", "style")
+
+
 def parse_emphasis(text: str) -> list[tuple[str, dict[str, str]]]:
-    """Lignes de narration avec réglages optionnels en tête : `[rate=+12% pitch=+4Hz] Nous !`."""
+    """Lignes de narration avec réglages optionnels en tête : `[rate=+12% pitch=+4Hz mood=energique] Nous !`."""
     lines: list[tuple[str, dict[str, str]]] = []
     for raw in text.splitlines():
         if not raw.strip():
@@ -89,8 +95,8 @@ def parse_emphasis(text: str) -> list[tuple[str, dict[str, str]]]:
         if m:
             for part in m.group("body").replace(",", " ").split():
                 key, _, value = part.partition("=")
-                if key in ("rate", "pitch") and value:
-                    opts[key] = value
+                if key in LINE_SETTINGS and value:
+                    opts[key] = value.lower() if key in ("mood", "style") else value
             raw = raw[m.end():]
         lines.append((raw.strip(), opts))
     return lines
