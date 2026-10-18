@@ -679,6 +679,9 @@ class ClaudeStudioRunner:
             "title": scenario.publish.title,
             "description": description,
             "tags": [h.lstrip("#") for h in hashtags],
+            # Légendes par plateforme (sans hashtags : ajoutés à la publication par build_caption).
+            "tiktok_caption": scenario.publish.tiktok_caption.strip(),
+            "instagram_caption": scenario.publish.instagram_caption.strip(),
             "source": "claude_studio",
         }
         studio_info = {

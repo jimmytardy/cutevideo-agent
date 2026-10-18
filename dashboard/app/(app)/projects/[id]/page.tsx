@@ -255,9 +255,22 @@ export default function ProjectDetailPage({ params }: Props) {
         {metadata && (metadata.title || metadata.description) && (
           <PageSection title="Publication">
             <Typography variant="subtitle1">{metadata.title}</Typography>
-            <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', mt: 1 }}>
+            <Typography variant="caption" color="text.secondary">YouTube</Typography>
+            <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', mt: 0.5 }}>
               {metadata.description}
             </Typography>
+            {metadata.tiktok_caption && (
+              <>
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1.5 }}>TikTok</Typography>
+                <Typography variant="body2">{metadata.tiktok_caption}</Typography>
+              </>
+            )}
+            {metadata.instagram_caption && (
+              <>
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1.5 }}>Instagram</Typography>
+                <Typography variant="body2">{metadata.instagram_caption}</Typography>
+              </>
+            )}
           </PageSection>
         )}
 

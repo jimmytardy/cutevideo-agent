@@ -67,8 +67,14 @@ class ScenarioBeat(BaseModel):
 
 class PublishMetadata(BaseModel):
     title: str = Field(min_length=1, max_length=100)
+    # YouTube : 2-3 phrases orientées recherche (hashtags et crédits ajoutés à la publication).
     description: str = ""
     hashtags: list[str] = Field(default_factory=list)
+    # Légendes dédiées (hashtags ajoutés à la publication) : TikTok = accroche courte qui donne envie de
+    # regarder jusqu'au bout ; Instagram = 1-2 phrases + question pour faire commenter. Vides → repli
+    # sur le titre (TikTok) / la description (Instagram).
+    tiktok_caption: str = Field(default="", max_length=150)
+    instagram_caption: str = Field(default="", max_length=2000)
 
 
 class ScenarioSource(BaseModel):

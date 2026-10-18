@@ -10,6 +10,7 @@ from sqlalchemy import select, update
 from agent.core.channel_config import ChannelRuntimeConfig
 from agent.core.database import AsyncSessionFactory, Channel, Project, Publication, Video
 from agent.core.storage import get_public_video_url_async, resolve_local_path_for_upload
+from agent.skills.publisher.texts import platform_text, project_captions
 from agent.skills.publisher.tiktok_providers import build_caption, get_tiktok_publisher
 
 logger = logging.getLogger(__name__)
@@ -83,10 +84,11 @@ async def publish_scheduled(
             return await _publish_youtube(
                 publication, channel, channel_config, video, title, description, tags
             )
-        if platform == "tiktok":
-            return await _publish_tiktok(publication, channel, video, title, tags)
-        if platform == "instagram":
-            return await _publish_instagram(publication, channel, video, title, tags)
+        if platform in ("tiktok", "instagram"):
+            caption = platform_text(platform, title, description, await project_captions(video.project_id))
+            if platform == "tiktok":
+                return await _publish_tiktok(publication, channel, video, caption, title, tags)
+            return await _publish_instagram(publication, channel, video, caption, tags)
         await _mark_failed(publication.id, f"unknown_platform:{platform}")
         return None
     except Exception as e:
@@ -227,6 +229,7 @@ async def _publish_tiktok(
     publication: Publication,
     channel: Channel,
     video: Video,
+    caption_text: str,
     title: str,
     tags: list[str],
 ) -> Publication | None:
@@ -236,7 +239,7 @@ async def _publish_tiktok(
     post_id, url = await publisher.publish(
         channel,
         video_url=video_url,
-        caption=build_caption(title, tags),
+        caption=build_caption(caption_text, tags),
         title=title,
         privacy=privacy,
         external_id=str(publication.id),

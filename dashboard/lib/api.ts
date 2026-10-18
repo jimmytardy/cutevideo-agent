@@ -209,6 +209,9 @@ export interface ProjectMetadata {
   title: string
   description: string
   tags: string[]
+  /** Légendes dédiées écrites par le scénariste (hashtags ajoutés à la publication). */
+  tiktok_caption?: string
+  instagram_caption?: string
   chapters: Array<{ start_s?: number; title?: string }>
 }
 

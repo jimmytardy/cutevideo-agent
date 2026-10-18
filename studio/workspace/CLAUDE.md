@@ -119,7 +119,8 @@ style narratif, interdits — à respecter), `content_plan`, `animations` (off |
  "beats": [{"text": "phrase(s) dite(s)", "visual_intent": "ce qu'on doit voir", "on_screen_text": "MOT-CLÉ"}],
  "cta": "…", "mood": "mysterieux", "music_mood": "mysterieux",
  "visual_mode": "animation", "theme": "night", "accent": "#FFB938",
- "publish": {"title": "titre ≤ 100 car.", "description": "2-3 phrases", "hashtags": ["#shorts", "…"]},
+ "publish": {"title": "titre ≤ 100 car.", "description": "2-3 phrases (YouTube)", "hashtags": ["#shorts", "…"],
+             "tiktok_caption": "accroche ≤ 150 car.", "instagram_caption": "1-2 phrases + question"},
  "sources": [{"claim": "le fait vérifié", "url": "https://…", "checked": true}]}
 ```
 `sources` : faits vérifiés sur le web par le scénariste (chiffres, dates, records, faits surprenants).

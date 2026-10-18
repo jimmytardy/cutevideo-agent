@@ -159,7 +159,8 @@ def scenariste(brief: dict, attempt: int = 1) -> None:
         "music_mood": "",
         "visual_mode": _visual_mode(),
         "publish": {"title": "Les flamants naissent gris", "description": "Leur couleur vient de leur assiette.",
-                    "hashtags": ["#shorts", "#animaux"]},
+                    "hashtags": ["#shorts", "#animaux"], "tiktok_caption": "Un flamant rose… gris ?",
+                    "instagram_caption": "Leur couleur vient de leur assiette. Vous le saviez ?"},
         "sources": sources if attempt >= 2 else [],
     })
     tool(agent.id, "validate", "--kind", "scenario", "--path", "scenario.json")

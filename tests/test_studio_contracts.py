@@ -97,3 +97,12 @@ def test_scenario_sources_optional() -> None:
     assert Scenario.model_validate(base).sources == []
     sourced = Scenario.model_validate({**base, "sources": [{"claim": "fait", "url": "https://example.org"}]})
     assert sourced.sources[0].checked is True
+
+
+def test_publish_metadata_accepts_platform_captions_and_caps_them() -> None:
+    from studio.contracts import PublishMetadata
+
+    meta = PublishMetadata(title="T", tiktok_caption="Un flamant… gris ?", instagram_caption="Vous le saviez ?")
+    assert meta.tiktok_caption and meta.instagram_caption
+    with pytest.raises(ValueError):
+        PublishMetadata(title="T", tiktok_caption="x" * 151)

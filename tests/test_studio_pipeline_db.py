@@ -95,6 +95,7 @@ def test_publication_metadata_thumbnail_and_credits(facts: dict) -> None:
     meta = facts["metadata"]
     assert meta["title"] == "Les flamants naissent gris"
     assert meta["tags"] == ["shorts", "animaux"]
+    assert meta["tiktok_caption"] == "Un flamant rose… gris ?" and "Vous le saviez" in meta["instagram_caption"]
     assert "Crédits :" in meta["description"] and "via Pexels" in meta["description"]
     assert facts["thumbnail"]["primary"] is True
     assert facts["thumbnail_exists"]

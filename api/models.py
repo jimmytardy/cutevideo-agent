@@ -173,6 +173,8 @@ class ProjectMetadataResponse(BaseModel):
     title: str = ""
     description: str = ""
     tags: list[str] = Field(default_factory=list)
+    tiktok_caption: str = ""
+    instagram_caption: str = ""
     chapters: list[dict[str, Any]] = Field(default_factory=list)
 
 
