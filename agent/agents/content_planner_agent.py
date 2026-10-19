@@ -15,6 +15,7 @@ from agent.core.content_plan_models import DailyContentPlan, ThemeAnalysis, Vide
 from agent.core.database import AsyncSessionFactory, Channel, Project
 from agent.core.editorial_formats import format_bank_summary, get_format_by_id
 from agent.core.llm_config import is_planner_llm_day
+from agent.core.llm_json import parse_llm_json
 from agent.skills.content_planning.format_rotation import apply_format_rotation_to_plan
 from agent.skills.content_planning.heuristic_planner import build_heuristic_plan, find_similar_in_history
 from agent.scheduler.content_planning import (
@@ -313,7 +314,7 @@ class ContentPlannerAgent(BaseAgent):
         )
 
         raw = await self._call_llm_for_channel(channel.id, prompt, system=PLANNER_SYSTEM)
-        data = self._parse_json(raw)
+        data = parse_llm_json(raw)
         plan = self._build_plan(
             channel,
             data,
@@ -530,11 +531,3 @@ class ContentPlannerAgent(BaseAgent):
             outros,
             k=cfg.format_rotation.window_k,
         )
-
-    @staticmethod
-    def _parse_json(raw: str) -> dict[str, Any]:
-        raw = raw.strip()
-        if raw.startswith("```"):
-            lines = raw.split("\n")
-            raw = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
-        return json.loads(raw)

@@ -151,7 +151,7 @@ export const API_KEY_PROVIDERS: ApiKeyProviderInfo[] = [
     tutorialTitle: 'Connecter un compte Google',
     steps: [
       'Le plus simple : connectez chaque chaîne via « Connecter YouTube » dans ses paramètres (OAuth), sans rien saisir ici.',
-      'Sinon, générez un refresh token OAuth avec le scope YouTube (youtube.upload) pour l’application de la plateforme.',
+      'Sinon, générez un refresh token OAuth avec les scopes YouTube youtube.upload et youtube.force-ssl (ce dernier sert aux réponses automatiques aux commentaires) pour l’application de la plateforme.',
       'Collez le refresh token ci-dessus : il sert aux chaînes sans connexion propre.',
     ],
     docUrl: 'https://developers.google.com/youtube/v3/guides/auth/server-side-web-apps',
@@ -165,7 +165,7 @@ export const API_KEY_PROVIDERS: ApiKeyProviderInfo[] = [
     tutorialTitle: 'Obtenir un token Instagram',
     steps: [
       'Reliez votre compte Instagram professionnel à une page Facebook.',
-      'Dans Meta for Developers, générez un access token longue durée avec instagram_content_publish.',
+      'Dans Meta for Developers, générez un access token longue durée avec instagram_content_publish et instagram_manage_comments (réponses automatiques aux commentaires).',
       'Collez le token ci-dessus et indiquez l’ID du compte Instagram (page) sur lequel publier.',
     ],
     docUrl: 'https://developers.facebook.com/docs/instagram-platform/content-publishing',

@@ -51,14 +51,14 @@ async def _create_container(
     session: aiohttp.ClientSession, video_url: str, caption: str, page_id: str, access_token: str
 ) -> str | None:
     params = {"media_type": "REELS", "video_url": video_url, "caption": caption, "access_token": access_token}
-    return await _graph_post(session, graph_api_url(f"{page_id}/media"), params, step="création du conteneur")
+    return await graph_post(session, graph_api_url(f"{page_id}/media"), params, step="création du conteneur")
 
 
 async def _publish_container(
     session: aiohttp.ClientSession, container_id: str, page_id: str, access_token: str
 ) -> str | None:
     params = {"creation_id": container_id, "access_token": access_token}
-    return await _graph_post(session, graph_api_url(f"{page_id}/media_publish"), params, step="publication")
+    return await graph_post(session, graph_api_url(f"{page_id}/media_publish"), params, step="publication")
 
 
 async def wait_until_container_ready(
@@ -80,10 +80,10 @@ async def wait_until_container_ready(
     last_state = "inconnu"
     for attempt in range(10_000):
         try:
-            data = await _graph_get(
+            data = await graph_get(
                 session, graph_api_url(container_id), {"fields": "status_code,status", "access_token": access_token}
             )
-        except _TransientGraphError as exc:
+        except TransientGraphError as exc:
             last_state = f"erreur transitoire ({exc})"
         else:
             code = str(data.get("status_code") or "").upper()
@@ -99,11 +99,11 @@ async def wait_until_container_ready(
         await sleep(intervals_s[min(attempt, len(intervals_s) - 1)])
 
 
-class _TransientGraphError(RuntimeError):
+class TransientGraphError(RuntimeError):
     """Réseau, 5xx ou limite de débit : on peut réessayer."""
 
 
-async def _graph_request(
+async def graph_request(
     session: aiohttp.ClientSession, method: str, url: str, **kwargs: Any
 ) -> tuple[int, dict[str, Any] | None, dict[str, Any]]:
     """Requête Graph API → (statut HTTP, corps JSON ou None si illisible, objet `error` Meta ou {})."""
@@ -121,31 +121,31 @@ async def _graph_request(
     return status, data, error
 
 
-def _error_text(status: int, error: dict[str, Any]) -> str:
+def error_text(status: int, error: dict[str, Any]) -> str:
     subcode = f"/{error['error_subcode']}" if error.get("error_subcode") else ""
     return f"HTTP {status}, code {error.get('code')}{subcode} : {error.get('message')}"
 
 
-async def _graph_post(
+async def graph_post(
     session: aiohttp.ClientSession, url: str, params: dict[str, str], *, step: str
 ) -> str | None:
     """POST Graph API ; renvoie l'`id` du résultat, sinon None en journalisant ce que Meta a répondu."""
-    status, data, error = await _graph_request(session, "POST", url, data=params)
+    status, data, error = await graph_request(session, "POST", url, data=params)
     if data and data.get("id") and not error:
         return str(data["id"])
-    logger.warning("Instagram : %s refusée (%s)", step, _error_text(status, error) if error else f"HTTP {status}, sans id : {data}")
+    logger.warning("Instagram : %s refusée (%s)", step, error_text(status, error) if error else f"HTTP {status}, sans id : {data}")
     return None
 
 
-async def _graph_get(session: aiohttp.ClientSession, url: str, params: dict[str, str]) -> dict[str, Any]:
-    """GET Graph API ; `_TransientGraphError` si ça vaut la peine de réessayer, RuntimeError sinon."""
+async def graph_get(session: aiohttp.ClientSession, url: str, params: dict[str, str]) -> dict[str, Any]:
+    """GET Graph API ; `TransientGraphError` si ça vaut la peine de réessayer, RuntimeError sinon."""
     try:
-        status, data, error = await _graph_request(session, "GET", url, params=params)
+        status, data, error = await graph_request(session, "GET", url, params=params)
     except (TimeoutError, aiohttp.ClientError) as exc:
-        raise _TransientGraphError(f"{type(exc).__name__}: {str(exc)[:120]}") from exc
+        raise TransientGraphError(f"{type(exc).__name__}: {str(exc)[:120]}") from exc
     if data is not None and not error:
         return data
-    text = _error_text(status, error)
+    text = error_text(status, error)
     if error.get("code") in _FATAL_GRAPH_CODES:
         raise RuntimeError(f"instagram_graph_error : {text}")
-    raise _TransientGraphError(text)  # 5xx, limite de débit (4/17/32), corps illisible
+    raise TransientGraphError(text)  # 5xx, limite de débit (4/17/32), corps illisible

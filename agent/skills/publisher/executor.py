@@ -248,6 +248,7 @@ async def _publish_tiktok(
         publication.id,
         platform_video_id=post_id,
         platform_url=url,
+        provider=publisher.name,
     )
 
 
@@ -316,6 +317,7 @@ async def _mark_published(
     publication_id: uuid.UUID,
     platform_video_id: str,
     platform_url: str | None,
+    provider: str | None = None,
 ) -> Publication:
     async with AsyncSessionFactory() as session:
         result = await session.execute(
@@ -326,6 +328,7 @@ async def _mark_published(
             raise ValueError(f"Publication {publication_id} introuvable")
         pub.platform_video_id = platform_video_id
         pub.platform_url = platform_url
+        pub.provider = provider
         pub.published_at = datetime.now(UTC)
         pub.status = "published"
         await session.commit()

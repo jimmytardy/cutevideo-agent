@@ -65,6 +65,11 @@ interface SchedulerStatus {
 const PARAM_LABELS: Record<string, string> = {
   work_files_days: 'Fichiers de travail et vidéos non publiées (jours)',
   media_days: 'Toutes les vidéos, publiées comprises (jours)',
+  window_hours: 'Fenêtre après publication (heures)',
+  min_delay_s: 'Délai minimum avant une réponse (secondes)',
+  max_delay_s: 'Délai maximum avant une réponse (secondes)',
+  max_replies_per_video: 'Réponses maximum par vidéo',
+  max_replies_per_run: 'Réponses maximum par passage',
 }
 
 interface JobDraft {

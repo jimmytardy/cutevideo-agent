@@ -21,7 +21,7 @@ GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 
 
-def _build_credentials(refresh_token: str | None = None) -> Any:
+def build_youtube_credentials(refresh_token: str | None = None) -> Any:
     from google.oauth2.credentials import Credentials
 
     if not refresh_token:
@@ -80,7 +80,7 @@ def exchange_oauth_code(code: str, redirect_uri: str) -> str:
 def _list_sync(refresh_token: str | None) -> list[dict[str, str]]:
     from googleapiclient.discovery import build
 
-    youtube = build("youtube", "v3", credentials=_build_credentials(refresh_token))
+    youtube = build("youtube", "v3", credentials=build_youtube_credentials(refresh_token))
     request = youtube.channels().list(part="snippet", mine=True, maxResults=50)
     response = request.execute()
     channels: list[dict[str, str]] = []
@@ -149,7 +149,7 @@ def _update_branding_settings(
 def _update_sync(youtube_channel_id: str, brand: YouTubeBrand, refresh_token: str | None) -> None:
     from googleapiclient.discovery import build
 
-    youtube = build("youtube", "v3", credentials=_build_credentials(refresh_token))
+    youtube = build("youtube", "v3", credentials=build_youtube_credentials(refresh_token))
     existing = _fetch_channel_branding(youtube, youtube_channel_id)
     existing_channel_branding = (existing.get("brandingSettings") or {}).get("channel") or {}
     current_title = existing_channel_branding.get("title") or existing.get("snippet", {}).get("title", "")
@@ -194,7 +194,7 @@ def _upload_banner_sync(image_path: Path, youtube_channel_id: str, refresh_token
     from googleapiclient.discovery import build
     from googleapiclient.http import MediaFileUpload
 
-    youtube = build("youtube", "v3", credentials=_build_credentials(refresh_token))
+    youtube = build("youtube", "v3", credentials=build_youtube_credentials(refresh_token))
 
     media = MediaFileUpload(str(image_path), mimetype="image/png", resumable=False)
     banner_response = youtube.channelBanners().insert(
@@ -228,7 +228,7 @@ async def upload_channel_banner(
 def _set_trailer_sync(youtube_channel_id: str, yt_video_id: str, refresh_token: str | None) -> None:
     from googleapiclient.discovery import build
 
-    youtube = build("youtube", "v3", credentials=_build_credentials(refresh_token))
+    youtube = build("youtube", "v3", credentials=build_youtube_credentials(refresh_token))
     existing = _fetch_channel_branding(youtube, youtube_channel_id)
     existing_channel_branding = (existing.get("brandingSettings") or {}).get("channel") or {}
     channel_updates: dict[str, Any] = {"unsubscribedTrailer": yt_video_id}
@@ -257,7 +257,7 @@ async def set_channel_trailer(
 def _create_playlist_sync(title: str, description: str, refresh_token: str | None) -> str:
     from googleapiclient.discovery import build
 
-    youtube = build("youtube", "v3", credentials=_build_credentials(refresh_token))
+    youtube = build("youtube", "v3", credentials=build_youtube_credentials(refresh_token))
     response = youtube.playlists().insert(
         part="snippet,status",
         body={
@@ -284,7 +284,7 @@ async def create_playlist(
 def _add_to_playlist_sync(playlist_id: str, yt_video_id: str, refresh_token: str | None) -> None:
     from googleapiclient.discovery import build
 
-    youtube = build("youtube", "v3", credentials=_build_credentials(refresh_token))
+    youtube = build("youtube", "v3", credentials=build_youtube_credentials(refresh_token))
     youtube.playlistItems().insert(
         part="snippet",
         body={

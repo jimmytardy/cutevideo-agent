@@ -287,6 +287,8 @@ class Publication(Base):
     platform: Mapped[str | None] = mapped_column(String, nullable=True)
     platform_video_id: Mapped[str | None] = mapped_column(String, nullable=True)
     platform_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Fournisseur qui a publié (TikTok : composio / postforme / zernio) ; `platform_video_id` est son id.
+    provider: Mapped[str | None] = mapped_column(String, nullable=True)
     title: Mapped[str | None] = mapped_column(String, nullable=True)
     description: Mapped[str | None] = mapped_column(String, nullable=True)
     hashtags: Mapped[list | None] = mapped_column(JSONB, nullable=True)
@@ -294,6 +296,43 @@ class Publication(Base):
     scheduling_reason: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     published_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
     status: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class PlatformComment(Base):
+    """Commentaire de premier niveau vu sous une vidéo publiée, et la réponse de `comment_reply_agent`.
+
+    `status` : `pending` (réponse prévue à `reply_due_at`) → `sending` (réservée juste avant l'envoi ; une
+    ligne restée `sending` après un arrêt n'est jamais renvoyée) → `replied` / `skipped` (`reason` : owner,
+    already_replied, cap, llm:…) / `failed` (`reason` = erreur ; `attempts` compte les échecs LLM, retentés).
+    """
+
+    __tablename__ = "platform_comments"
+    __table_args__ = (UniqueConstraint("platform", "platform_comment_id", name="uq_platform_comments_platform_id"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    publication_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("publications.id"), nullable=False, index=True
+    )
+    channel_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("channels.id"), nullable=False
+    )
+    platform: Mapped[str] = mapped_column(String, nullable=False)
+    platform_comment_id: Mapped[str] = mapped_column(String, nullable=False)
+    author_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    author_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    language: Mapped[str | None] = mapped_column(String, nullable=True)
+    comment_created_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    seen_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    reply_due_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    reply_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reply_platform_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    replied_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class SchedulerRun(Base):

@@ -55,6 +55,7 @@ CONFIGURABLE_AGENTS: frozenset[str] = frozenset(
     {
         "content_planner_agent",
         "distribution_agent",
+        "comment_reply_agent",
     }
 )
 

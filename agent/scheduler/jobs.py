@@ -30,6 +30,13 @@ async def run_distribution_agent() -> dict[str, Any]:
     return await DistributionAgent().run_scheduled()
 
 
+@track_job_run("comment_reply_agent")
+async def run_comment_reply_agent() -> dict[str, Any]:
+    from agent.agents.comment_reply_agent import CommentReplyAgent
+
+    return await CommentReplyAgent().run_scheduled()
+
+
 @track_job_run("run_pending_projects_morning")
 async def run_pending_projects_morning() -> dict[str, int]:
     return await _run_pending_projects()
@@ -106,6 +113,7 @@ JOB_REGISTRY: dict[str, Any] = {
     "run_pending_projects_hourly": run_pending_projects_hourly,
     "distribution_agent": run_distribution_agent,
     "purge_old_media": run_purge_old_media,
+    "comment_reply_agent": run_comment_reply_agent,
 }
 
 # Horaires et paramètres : `agent/scheduler/config.py` (base, sinon JOB_DEFAULTS).
@@ -134,5 +142,10 @@ JOB_METADATA: list[dict[str, str]] = [
         "id": "purge_old_media",
         "name": "Purge médias",
         "description": "Supprime les fichiers des projets terminés (dossiers de travail et vidéos non publiées) après N jours, et toutes les vidéos après la rétention longue.",
+    },
+    {
+        "id": "comment_reply_agent",
+        "name": "Réponses aux commentaires",
+        "description": "Répond une fois, dans la langue du commentaire et après un délai aléatoire, aux nouveaux commentaires des vidéos publiées depuis moins de N heures (YouTube, Instagram, TikTok via Zernio). Ton : /config → comments.style.",
     },
 ]

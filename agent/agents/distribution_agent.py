@@ -18,6 +18,7 @@ from agent.core.database import (
     Scenario,
     Video,
 )
+from agent.core.llm_json import parse_llm_json
 from agent.scheduler.distribution_slots import (
     DailyQuotas,
     filter_occupied_slots,
@@ -244,7 +245,7 @@ class DistributionAgent(BaseAgent):
             raw = await self._call_llm_for_channel(
                 channel.id, prompt, system=SLOT_PICK_SYSTEM, max_tokens=256
             )
-            data = self._parse_json(raw)
+            data = parse_llm_json(raw)
             return int(data.get("slot_index", 0))
         except Exception as e:
             logger.debug("Choix créneau LLM ignoré (%s) : %s", channel.slug, e)
@@ -459,11 +460,3 @@ class DistributionAgent(BaseAgent):
 
         cache[video.project_id] = (title, description, tags)
         return title, description, tags
-
-    @staticmethod
-    def _parse_json(raw: str) -> dict[str, Any]:
-        raw = raw.strip()
-        if raw.startswith("```"):
-            lines = raw.split("\n")
-            raw = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
-        return json.loads(raw)

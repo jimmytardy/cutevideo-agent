@@ -345,9 +345,7 @@ class ZernioPublisher:
         privacy: str,
         external_id: str,
     ) -> tuple[str, str | None]:
-        account_id = provider_account(channel, self.name).get("account_id")
-        if not account_id:
-            raise RuntimeError(f"TikTok ({self.label}) non connecté pour la chaîne {channel.slug}")
+        account_id = self._account_id(channel)
         key = await _api_key(channel, self.name)
         body: dict[str, Any] = {
             "content": caption,
@@ -388,6 +386,42 @@ class ZernioPublisher:
             if status in ("failed", "partial"):
                 raise RuntimeError(f"Publication TikTok ({self.label}) échouée : {post}")
         raise RuntimeError(f"{self.label} : post {post_id} toujours en cours (délai dépassé)")
+
+    # Commentaires (seul fournisseur TikTok qui les expose ; compte connecté via l'app TikTok Business,
+    # réponse de lecture mise en cache 10 min côté Zernio).
+
+    def _account_id(self, channel: Channel) -> str:
+        account_id = provider_account(channel, self.name).get("account_id")
+        if not account_id:
+            raise RuntimeError(f"TikTok ({self.label}) non connecté pour la chaîne {channel.slug}")
+        return str(account_id)
+
+    async def list_comments(self, channel: Channel, post_id: str) -> list[dict[str, Any]]:
+        """Commentaires de premier niveau d'un post (id Zernio ou id TikTok), bruts."""
+        key = await _api_key(channel, self.name)
+        data = await self._call(
+            key, "GET", f"/inbox/comments/{post_id}", params={"accountId": self._account_id(channel), "limit": 100}
+        )
+        return [c for c in data.get("comments") or [] if isinstance(c, dict)]
+
+    async def reply_comment(self, channel: Channel, post_id: str, comment_id: str, message: str) -> str:
+        """Répond publiquement à un commentaire ; renvoie l'id de la réponse ("" si Zernio ne le donne pas)."""
+        key = await _api_key(channel, self.name)
+        data = await self._call(
+            key, "POST", f"/inbox/comments/{post_id}",
+            json={"accountId": self._account_id(channel), "message": message, "commentId": comment_id},
+            headers={"Idempotency-Key": f"reply-{comment_id}"},
+        )
+        result = data.get("data") if isinstance(data.get("data"), dict) else data
+        return str(result.get("commentId") or result.get("id") or "")
+
+
+def supports_comments(channel: Channel, publication_provider: str | None = None) -> bool:
+    """Lecture/réponse aux commentaires TikTok : Zernio seulement (Composio et Post for Me n'ont pas d'API).
+
+    Décidé par le fournisseur qui a publié la vidéo (son id de post n'a de sens que chez lui) ; à défaut
+    (publications antérieures à `Publication.provider`), par le fournisseur actuel de la chaîne."""
+    return (publication_provider or provider_name(channel)) == "zernio"
 
 
 def _ref_id(value: Any) -> str:

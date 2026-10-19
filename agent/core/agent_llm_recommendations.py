@@ -17,6 +17,7 @@ MODEL_DISPLAY: dict[str, str] = {
 _AGENT_RECOMMENDED: dict[str, str] = {
     "content_planner_agent": "claude-sonnet-5-5",
     "distribution_agent": "claude-sonnet-5-5",
+    "comment_reply_agent": "claude-sonnet-5-5",
 }
 
 

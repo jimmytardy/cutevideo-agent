@@ -38,6 +38,16 @@ def test_purge_params_validated() -> None:
             sched_config._validate_params("purge_old_media", {"work_files_days": bad})
 
 
+def test_comment_reply_params_validated() -> None:
+    clean = sched_config._validate_params("comment_reply_agent", {"window_hours": 3, "max_replies_per_run": 5})
+    assert clean == {"window_hours": 3, "min_delay_s": 120, "max_delay_s": 300, "max_replies_per_video": 30,
+                     "max_replies_per_run": 5}
+    for bad in ({"window_hours": 0}, {"min_delay_s": 400}, {"max_delay_s": "300"}):
+        with pytest.raises(InvalidJobConfigError):
+            sched_config._validate_params("comment_reply_agent", bad)
+    assert sched_config._validate_params("distribution_agent", {"x": 1}) == {}
+
+
 def test_row_merges_default_params() -> None:
     row = SimpleNamespace(job_id="purge_old_media", enabled=False, cron="0 4 * * *", timezone="UTC",
                           params={"work_files_days": 2})

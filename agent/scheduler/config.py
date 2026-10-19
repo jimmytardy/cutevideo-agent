@@ -15,6 +15,19 @@ from apscheduler.triggers.cron import CronTrigger
 from agent.core.database import AsyncSessionFactory, SchedulerJobConfig, SchedulerSettings
 
 PURGE_DEFAULT_PARAMS: dict[str, int] = {"work_files_days": 7, "media_days": 30}
+# Réponses aux commentaires : fenêtre après publication, délai aléatoire avant chaque réponse, plafonds.
+COMMENT_REPLY_DEFAULT_PARAMS: dict[str, int] = {
+    "window_hours": 2,
+    "min_delay_s": 120,
+    "max_delay_s": 300,
+    "max_replies_per_video": 30,
+    "max_replies_per_run": 20,
+}
+# Jobs à paramètres (entiers ≥ 0, édités sur /scheduler) ; les autres n'en ont pas.
+JOB_PARAM_DEFAULTS: dict[str, dict[str, int]] = {
+    "purge_old_media": PURGE_DEFAULT_PARAMS,
+    "comment_reply_agent": COMMENT_REPLY_DEFAULT_PARAMS,
+}
 
 
 @dataclass
@@ -38,6 +51,9 @@ JOB_DEFAULTS: dict[str, JobConfig] = {
     "run_pending_projects_hourly": JobConfig("run_pending_projects_hourly", True, "0 7-23 * * *", "Europe/Paris"),
     "distribution_agent": JobConfig("distribution_agent", True, "*/15 * * * *", "UTC"),
     "purge_old_media": JobConfig("purge_old_media", True, "0 3 * * *", "UTC", dict(PURGE_DEFAULT_PARAMS)),
+    "comment_reply_agent": JobConfig(
+        "comment_reply_agent", True, "*/2 * * * *", "UTC", dict(COMMENT_REPLY_DEFAULT_PARAMS)
+    ),
 }
 
 
@@ -96,14 +112,20 @@ def _cron_day_number(value: str) -> int:
 
 
 def _validate_params(job_id: str, params: dict[str, Any]) -> dict[str, Any]:
-    if job_id != "purge_old_media":
-        return {}  # seul le job de purge a des paramètres
+    defaults = JOB_PARAM_DEFAULTS.get(job_id)
+    if not defaults:
+        return {}
     clean: dict[str, Any] = {}
-    for key, default in PURGE_DEFAULT_PARAMS.items():
+    for key, default in defaults.items():
         value = params.get(key, default)
         if not isinstance(value, int) or isinstance(value, bool) or value < 0:
             raise InvalidJobConfigError(f"{key} doit être un entier ≥ 0")
         clean[key] = value
+    if job_id == "comment_reply_agent":
+        if clean["window_hours"] < 1:
+            raise InvalidJobConfigError("window_hours doit être ≥ 1")
+        if clean["min_delay_s"] > clean["max_delay_s"]:
+            raise InvalidJobConfigError("min_delay_s doit être ≤ max_delay_s")
     return clean
 
 

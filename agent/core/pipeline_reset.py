@@ -14,7 +14,7 @@ from pathlib import Path
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.core.database import AgentRun, CriticReport, Publication, Scenario, Video
+from agent.core.database import AgentRun, CriticReport, PlatformComment, Publication, Scenario, Video
 from agent.core.storage import delete_s3_object
 
 logger = logging.getLogger(__name__)
@@ -70,6 +70,8 @@ async def delete_project_completely(
     video_ids = [row[0] for row in video_ids_result.all()]
 
     if video_ids:
+        publication_ids = select(Publication.id).where(Publication.video_id.in_(video_ids))
+        await session.execute(delete(PlatformComment).where(PlatformComment.publication_id.in_(publication_ids)))
         await session.execute(delete(Publication).where(Publication.video_id.in_(video_ids)))
         await session.execute(delete(CriticReport).where(CriticReport.video_id.in_(video_ids)))
 

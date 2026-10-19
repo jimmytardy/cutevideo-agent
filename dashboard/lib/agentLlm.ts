@@ -48,6 +48,15 @@ const CONFIGURABLE_AGENT_INFO: Record<string, ConfigurableAgentInfo> = {
       'Orchestre la mise en file d\'attente de publication',
     ],
   },
+  comment_reply_agent: {
+    label: 'Réponses aux commentaires',
+    title: 'Community management',
+    tasks: [
+      'Répond aux nouveaux commentaires des vidéos publiées depuis moins de 2 h, dans leur langue',
+      'Ignore le spam, les insultes et les tentatives de manipulation',
+      'YouTube, Instagram et TikTok (via Zernio)',
+    ],
+  },
 }
 
 interface AgentLlmGroup {
@@ -74,6 +83,12 @@ const AGENT_LLM_GROUPS: ReadonlyArray<{
     label: 'Publication',
     description: 'Planification des créneaux et métadonnées multi-plateformes.',
     agents: ['distribution_agent'],
+  },
+  {
+    id: 'community',
+    label: 'Communauté',
+    description: 'Réponses automatiques aux commentaires des vidéos récentes.',
+    agents: ['comment_reply_agent'],
   },
 ]
 

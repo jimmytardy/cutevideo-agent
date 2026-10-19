@@ -152,14 +152,19 @@
     "youtube_category_id": "27",
     "tiktok_provider": "composio"
   },
+  "comments": {
+    "style": "Chaleureux et concis, comme un créateur qui lit vraiment ses commentaires : remercie, rebondis sur ce qui est dit, apporte une précision utile si une question est posée. Pas d'emoji à chaque phrase."
+  },
   "llm": {
     "default_model": "claude-opus-5-5",
     "economy_model": "claude-sonnet-5-5",
     "agent_models": {
-      "content_planner_agent": "economy"
+      "content_planner_agent": "economy",
+      "comment_reply_agent": "economy"
     },
     "max_tokens": {
-      "content_planner_agent": 2048
+      "content_planner_agent": 2048,
+      "comment_reply_agent": 300
     },
     "planner_llm_weekdays": [
       0,

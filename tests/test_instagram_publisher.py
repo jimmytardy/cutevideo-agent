@@ -121,8 +121,8 @@ async def test_wait_times_out_after_transient_errors(monkeypatch) -> None:
 async def test_graph_post_logs_and_returns_none_without_id(caplog) -> None:
     session = FakeSession([(200, {"success": True}), (502, "<html>oops</html>")])
     with caplog.at_level("WARNING"):
-        assert await instagram._graph_post(session, "https://graph.facebook.com/v26.0/p/media", {}, step="création") is None
-        assert await instagram._graph_post(session, "https://graph.facebook.com/v26.0/p/media", {}, step="création") is None
+        assert await instagram.graph_post(session, "https://graph.facebook.com/v26.0/p/media", {}, step="création") is None
+        assert await instagram.graph_post(session, "https://graph.facebook.com/v26.0/p/media", {}, step="création") is None
     assert "sans id" in caplog.text and "réponse non JSON (HTTP 502)" in caplog.text
 
 
