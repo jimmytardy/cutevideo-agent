@@ -26,6 +26,7 @@ from agent.core.env import env_int
 CONFIG_KEY = "claude_studio_session"
 INTERRUPTED_MESSAGE = "Worker redémarré — reprise automatique"
 KILLED_TASK_MESSAGE = "Tâche de fond interrompue par Claude Code — reprise automatique"
+STALL_MESSAGE = "Création sans activité — reprise automatique"
 LIMIT_MESSAGE = "Limite d'usage Claude atteinte"
 
 # Reprise jamais avant ce délai (reset déjà passé ou imprécis) ni sans marge après le reset annoncé.
@@ -67,17 +68,18 @@ class StudioPaused(Exception):
 
 
 class StudioInterrupted(Exception):
-    """Session coupée par le CLI lui-même (tâche de fond tuée au plafond d'attente), sans result.json.
+    """Session coupée sans result.json alors que le travail n'était pas fini (tâche de fond tuée au
+    plafond d'attente du CLI, ou silence prolongé du flux).
 
     Le run dir et la session sont intacts : le projet reste `running` et `reconcile_orphan_running_projects()`
     le remet en file avec `resume=True`, comme après un redémarrage du worker. Le plafond
     `STUDIO_MAX_RESUMES` de `decide()` empêche la boucle si la reprise ne progresse pas.
     """
 
-    def __init__(self, tasks: list[str] | None = None) -> None:
+    def __init__(self, tasks: list[str] | None = None, *, reason: str = KILLED_TASK_MESSAGE) -> None:
         self.tasks = [t for t in (tasks or []) if t]
         detail = f" ({', '.join(self.tasks)})" if self.tasks else ""
-        super().__init__(f"{KILLED_TASK_MESSAGE}{detail}")
+        super().__init__(f"{reason}{detail}")
 
 
 @dataclass(frozen=True)

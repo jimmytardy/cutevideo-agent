@@ -161,18 +161,19 @@ class Orchestrator:
             logger.info("Pipeline annulé pour le projet %s", project_id)
             raise
         except StudioInterrupted as interrupted:
-            # Le CLI a tué ses tâches de fond : comme à l'arrêt du worker, le projet reste `running` et
-            # `pipeline_reconcile` le remet en file pour que la création reprenne (studio_resume).
+            # Session coupée en plein travail (tâche de fond tuée par le CLI, ou silence prolongé) : comme
+            # à l'arrêt du worker, le projet reste `running` et `pipeline_reconcile` le remet en file pour
+            # que la création reprenne (studio_resume).
             # Un « Arrêter » concurrent prime : sans ce garde-fou on repasserait `stopped` à `running`.
             if await queue.is_pipeline_cancel_requested(str(project_id)):
                 async with AsyncSessionFactory() as session:
                     await self._update_project_status(session, project_id, "stopped", "Arrêté manuellement")
                 await stop_running_agent_runs(project_id)
-                logger.info("Pipeline arrêté manuellement pendant une interruption du CLI (%s)", project_id)
+                logger.info("Pipeline arrêté manuellement pendant une interruption (%s)", project_id)
                 return
             async with AsyncSessionFactory() as session:
                 await self._update_project_status(session, project_id, "running", str(interrupted))
-            logger.warning("Pipeline interrompu par le CLI pour le projet %s : %s", project_id, interrupted)
+            logger.warning("Pipeline interrompu pour le projet %s : %s", project_id, interrupted)
         except StudioPaused as paused:
             # Limite d'usage de l'abonnement Claude : le worker reprendra la création après le reset.
             local = paused.until.astimezone(ZoneInfo("Europe/Paris"))

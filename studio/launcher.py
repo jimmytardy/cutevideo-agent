@@ -48,6 +48,8 @@ _BACKGROUND_SUBTYPES = ("background_tasks_changed", "task_started", "task_update
 BG_WAIT_CEILING_MS = 0
 # Message du CLI quand ce plafond est atteint et qu'il tue ses tâches de fond.
 _BG_CEILING_MARKER = "Background tasks still running"
+# Silence du flux stream-json au-delà duquel la session est tenue pour bloquée (cf. `_stall_timeout`).
+STALL_TIMEOUT_DEFAULT_S = 3600.0
 # Ligne stream-json max (les tool_result peuvent contenir de gros JSON).
 _STREAM_LIMIT = 16 * 1024 * 1024
 
@@ -78,6 +80,18 @@ def prepare_run_dir(run_dir: Path, brief: Brief) -> Path:
 def _session_timeout() -> float | None:
     """Durée max de la session Claude (`CLAUDE_STUDIO_TIMEOUT_S`, en s) ; 0 ou moins = pas de limite."""
     value = env_float("CLAUDE_STUDIO_TIMEOUT_S", 3600.0)
+    return value if value > 0 else None
+
+
+def _stall_timeout() -> float | None:
+    """Silence toléré sur le flux (`STUDIO_STALL_TIMEOUT_S`, en s) ; 0 ou moins = pas de surveillance.
+
+    On ne borne pas la durée de travail d'un rôle — un montage animé dure des heures — mais le silence :
+    tant que Claude travaille, le flux porte des événements (`tool`, `agent_stream`, `task_progress`, y
+    compris pour les tâches de fond). Le plus long silence légitime est celui d'une commande Bash au premier
+    plan, qui n'émet rien avant de rendre la main et que `BASH_MAX_TIMEOUT_MS` plafonne à 30 min.
+    """
+    value = env_float("STUDIO_STALL_TIMEOUT_S", STALL_TIMEOUT_DEFAULT_S)
     return value if value > 0 else None
 
 
@@ -178,8 +192,8 @@ def build_env(
     # le délai propre à chaque commande Bash (variables ci-dessus au premier plan ; une commande passée en
     # tâche de fond garde le sien, plafonné à 2 h). Ce qui ne le borne PAS : `run_ffmpeg(timeout_s=…)`, que
     # seul l'encodage par clip de `studio/render.py` renseigne, et `--max-turns`, qui compte des tours et non
-    # du temps. Il n'y a donc plus de plafond au niveau de la session (`CLAUDE_STUDIO_TIMEOUT_S=0`) : une
-    # création réellement bloquée garde son lease et occupe le créneau de la chaîne jusqu'à un « Arrêter ».
+    # du temps. Il n'y a donc plus de plafond au niveau de la session (`CLAUDE_STUDIO_TIMEOUT_S=0`) : c'est
+    # `_stall_timeout()` qui rattrape un blocage réel, en coupant la session sur un silence prolongé du flux.
     env.setdefault("CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS", str(BG_WAIT_CEILING_MS))
     return env
 
@@ -346,6 +360,17 @@ def error_detail(parser: StreamParser) -> str:
     return str(result.get("result") or "; ".join(map(str, result.get("errors") or [])) or parser.limit_message or "")
 
 
+class _StalledSession(Exception):
+    """Silence prolongé du flux, levé par `_pump` et traduit en `ClaudeRunError(stalled=True)`.
+
+    Distincte de `TimeoutError` pour ne pas être confondue avec le délai global `CLAUDE_STUDIO_TIMEOUT_S`.
+    """
+
+    def __init__(self, seconds: float) -> None:
+        super().__init__(f"aucune activité depuis {seconds:.0f}s")
+        self.seconds = seconds
+
+
 class ClaudeRunError(RuntimeError):
     def __init__(
         self,
@@ -354,11 +379,14 @@ class ClaudeRunError(RuntimeError):
         result: dict[str, Any] | None = None,
         rate_limit: dict[str, Any] | None = None,
         limit_message: str | None = None,
+        stalled: bool = False,
     ) -> None:
         super().__init__(message)
         self.result = result
         self.rate_limit = rate_limit
         self.limit_message = limit_message
+        # Session coupée sur un silence prolongé : reprenable, contrairement à une erreur de Claude.
+        self.stalled = stalled
 
     @property
     def no_turn_played(self) -> bool:
@@ -406,8 +434,17 @@ async def run_claude(
         try:
             async def _pump() -> None:
                 assert proc.stdout is not None
+                stall_s = _stall_timeout()
                 with log_path.open("a", encoding="utf-8") as log_fh:
-                    async for raw in proc.stdout:
+                    while True:
+                        # `readline()` sous délai plutôt que `async for` : chaque lecture mesure le silence
+                        # écoulé depuis la ligne précédente, et toute ligne reçue réarme le compteur.
+                        try:
+                            raw = await asyncio.wait_for(proc.stdout.readline(), timeout=stall_s)
+                        except TimeoutError:
+                            raise _StalledSession(stall_s or 0.0) from None
+                        if not raw:
+                            break
                         line = raw.decode("utf-8", errors="replace")
                         log_fh.write(line)
                         try:
@@ -421,6 +458,17 @@ async def run_claude(
                 await proc.wait()
 
             await asyncio.wait_for(_pump(), timeout=cfg.timeout_s)
+        except _StalledSession as exc:
+            # Le groupe de processus entier est tué : outils, ffmpeg et Chromium compris.
+            await terminate_proc(proc)
+            raise ClaudeRunError(
+                f"session Claude sans activité depuis {exc.seconds:.0f}s : tenue pour bloquée",
+                # Propagés comme sur les autres sorties sans résultat : une limite d'usage atteinte juste
+                # avant le silence doit rester reconnaissable, sinon on reprend au lieu de mettre en pause.
+                rate_limit=parser.rate_limit,
+                limit_message=parser.limit_message,
+                stalled=True,
+            ) from exc
         except TimeoutError as exc:
             await terminate_proc(proc)
             raise ClaudeRunError(f"session Claude interrompue après {cfg.timeout_s:.0f}s") from exc

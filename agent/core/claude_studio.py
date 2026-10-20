@@ -413,6 +413,13 @@ class ClaudeStudioRunner:
                 await recorder.close_dangling("interrupted", studio_resume.INTERRUPTED_MESSAGE)
                 raise
             limit_until = studio_resume.usage_limit_reset(exc) if isinstance(exc, ClaudeRunError) else None
+            if isinstance(exc, ClaudeRunError) and exc.stalled and not limit_until:
+                # Silence prolongé : le travail en cours est perdu mais le run dir et la session restent
+                # intacts, donc la création reprend là où elle en était au lieu d'échouer. Une limite d'usage
+                # atteinte juste avant le silence prime : elle mérite une pause jusqu'au reset, pas une
+                # reprise immédiate qui la heurterait à nouveau.
+                await recorder.close_dangling("interrupted", studio_resume.STALL_MESSAGE)
+                raise studio_resume.StudioInterrupted(reason=studio_resume.STALL_MESSAGE) from exc
             if limit_until and subscription:
                 # Limite d'usage : session et run dir gardés, reprise au reset (ou abandon au plafond de pauses).
                 await self._pause(limit_until, session_state, config_dir, recorder=recorder)  # NoReturn

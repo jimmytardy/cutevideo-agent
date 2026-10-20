@@ -90,6 +90,13 @@ async def test_recorder_collects_killed_background_tasks() -> None:
     assert recorder.killed_tasks == {"bg1": "Montage itération 1", "bg2": ""}
 
 
+def test_studio_interrupted_carries_its_reason() -> None:
+    """Le message part dans `Project.error_message` : il doit dire pourquoi, pas supposer un plafond du CLI."""
+    stalled = studio_resume.StudioInterrupted(reason=studio_resume.STALL_MESSAGE)
+    assert str(stalled) == studio_resume.STALL_MESSAGE
+    assert studio_resume.KILLED_TASK_MESSAGE not in str(stalled)
+
+
 def test_studio_interrupted_names_the_killed_tasks() -> None:
     interrupted = studio_resume.StudioInterrupted(["Montage itération 1", "", "animate-template"])
     assert interrupted.tasks == ["Montage itération 1", "animate-template"]
@@ -277,6 +284,16 @@ def test_worker_restart_resumes_creation(tmp_path: Path) -> None:
     killed_resumed = facts["killed_bg_resumed"]
     assert killed_resumed["status"] == "approved" and killed_resumed["session"] is None
     assert _successes(killed_resumed["runs"], *EARLY_STEPS) == _successes(killed["runs"], *EARLY_STEPS)
+
+    # Silence prolongé : traité comme une interruption reprenable, pas comme un échec.
+    stalled = facts["stalled"]
+    assert stalled["status"] == "running" and studio_resume.STALL_MESSAGE in (stalled["error"] or "")
+    assert ["editor_agent", "interrupted", 1] in stalled["runs"]
+    assert stalled["session"]["session_id"] and stalled["transcripts"] == 1 and stalled["voice_kept"]
+    assert facts["stalled_resume"] == {"reconciled": 1, "payload_resume": True, "error": None}
+    stalled_resumed = facts["stalled_resumed"]
+    assert stalled_resumed["status"] == "approved" and stalled_resumed["session"] is None
+    assert _successes(stalled_resumed["runs"], *EARLY_STEPS) == _successes(stalled["runs"], *EARLY_STEPS)
 
     limit = facts["limit"]
     paused = limit["paused"]

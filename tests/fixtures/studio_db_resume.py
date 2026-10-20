@@ -189,6 +189,24 @@ async def main() -> dict:
         facts["killed_bg_resume"] = await _resume_like_new_worker(pid4)
         facts["killed_bg_resumed"] = {**await _project(pid4), "runs": await _runs(pid4)}
 
+        # 5. Silence prolongé du flux → watchdog d'inactivité, reprise plutôt qu'échec.
+        pid5, uid5 = await _setup()
+        os.environ["FAKE_CLAUDE_HANG_IN"] = "monteur"   # lance le monteur puis se tait
+        # 60 s et non 20 : chaque silence du faux CLI est un `python -m studio.tools …` complet
+        # (interpréteur neuf + imports) plus ffmpeg, qui peut dépasser 20 s sur une machine chargée.
+        os.environ["STUDIO_STALL_TIMEOUT_S"] = "60"
+        try:
+            await Orchestrator().run_pipeline(pid5)
+            facts["stalled"] = {**await _project(pid5), "runs": await _runs(pid5),
+                                "transcripts": _transcripts(uid5, pid5),
+                                "voice_kept": (default_runs_dir() / str(pid5) / "voice.wav").is_file()}
+        finally:
+            # Sans ce finally, un échec ferait fuiter le blocage et le seuil vers le scénario suivant.
+            os.environ.pop("FAKE_CLAUDE_HANG_IN", None)
+            os.environ.pop("STUDIO_STALL_TIMEOUT_S", None)
+        facts["stalled_resume"] = await _resume_like_new_worker(pid5)
+        facts["stalled_resumed"] = {**await _project(pid5), "runs": await _runs(pid5)}
+
         facts["limit"] = await _usage_limit_cases()
     return facts
 

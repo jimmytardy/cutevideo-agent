@@ -12,8 +12,10 @@ vidéo : la critique 1 demande une reprise au monteur, la critique 2 approuve.
 Reprise après interruption : `--session-id` enregistre une fausse transcription
 dans `CLAUDE_CONFIG_DIR/projects/`, `--resume` la réclame (« No conversation
 found » sinon, comme le vrai CLI) ; les étapes dont les fichiers existent déjà
-sont sautées. `FAKE_CLAUDE_HANG_IN=<rôle>` lance ce sous-agent puis bloque (le
-test interrompt alors le worker en pleine étape) ; jamais lors d'une reprise.
+sont sautées. `FAKE_CLAUDE_HANG_IN=<rôle>` lance ce sous-agent puis bloque sans
+plus rien émettre, jamais lors d'une reprise : le test interrompt alors le
+worker en pleine étape, ou laisse le watchdog d'inactivité trancher
+(`STUDIO_STALL_TIMEOUT_S` court).
 `FAKE_CLAUDE_LIMIT_IN=<rôle>` simule la limite d'usage de l'abonnement pendant ce
 rôle (`rate_limit_event` refusé, reset dans 3 s, session en erreur), une seule fois
 par run dir. `FAKE_CLAUDE_KILL_BG_IN=<rôle>` simule le plafond d'attente des tâches

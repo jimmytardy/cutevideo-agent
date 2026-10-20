@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -10,11 +11,14 @@ from studio.launcher import (
     ALLOWED_TOOLS,
     REPO_ROOT,
     LaunchConfig,
+    ClaudeRunError,
     StreamParser,
+    _stall_timeout,
     background_tasks_stopped,
     build_command,
     build_env,
     prepare_run_dir,
+    run_claude,
 )
 
 
@@ -134,6 +138,118 @@ def test_background_tasks_stopped_reads_the_cli_announcement(tmp_path: Path) -> 
         encoding="utf-8",
     )
     assert background_tasks_stopped(tmp_path)
+
+
+class _FakeStdout:
+    """`StreamReader` minimal : rend les lignes une à une après `delay`, puis se tait ou se ferme."""
+
+    def __init__(self, lines: list[str], delay: float, never_ends: bool) -> None:
+        self._lines = list(lines)
+        self._delay = delay
+        self._never_ends = never_ends
+
+    async def readline(self) -> bytes:
+        await asyncio.sleep(self._delay)
+        if self._lines:
+            return self._lines.pop(0).encode("utf-8")
+        if self._never_ends:
+            await asyncio.sleep(3600)  # silence : c'est au watchdog de trancher
+        return b""
+
+
+class _FakeProc:
+    def __init__(self, lines: list[str], *, delay: float = 0.0, never_ends: bool = False) -> None:
+        self.stdout = _FakeStdout(lines, delay, never_ends)
+        self.returncode: int | None = None
+        self.pid = 4242
+
+    async def wait(self) -> int:
+        self.returncode = 0
+        return 0
+
+
+def _fake_cli(monkeypatch: pytest.MonkeyPatch, proc: _FakeProc) -> list[_FakeProc]:
+    """Branche `run_claude` sur `proc` et renvoie la liste des process effectivement tués."""
+    terminated: list[_FakeProc] = []
+
+    async def _terminate(target, **_kwargs) -> None:
+        terminated.append(target)
+
+    async def _spawn(*_args, **_kwargs) -> _FakeProc:
+        return proc
+
+    monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/claude")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _spawn)
+    monkeypatch.setattr("agent.core.subprocess_registry.terminate_proc", _terminate)
+    return terminated
+
+
+def _result_line(turns: int = 3) -> str:
+    return json.dumps({"type": "result", "subtype": "success", "is_error": False, "num_turns": turns}) + "\n"
+
+
+@pytest.mark.asyncio
+async def test_pump_raises_on_prolonged_silence(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Un flux muet doit couper la session : sinon une création bloquée garde le créneau de sa chaîne."""
+    monkeypatch.setenv("STUDIO_STALL_TIMEOUT_S", "0.05")
+    proc = _FakeProc([], never_ends=True)
+    terminated = _fake_cli(monkeypatch, proc)
+
+    with pytest.raises(ClaudeRunError) as excinfo:
+        await run_claude(tmp_path, cfg=LaunchConfig(claude_bin="claude"))
+
+    assert excinfo.value.stalled
+    assert "sans activité" in str(excinfo.value)
+    assert terminated == [proc]  # tout le groupe de processus est tué
+
+
+@pytest.mark.asyncio
+async def test_pump_silence_counter_is_rearmed_by_each_line(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Le seuil mesure le silence entre deux lignes, pas la durée totale : un flux lent mais vivant passe."""
+    monkeypatch.setenv("STUDIO_STALL_TIMEOUT_S", "0.3")
+    # 6 lignes espacées de 0,1 s : 0,6 s au total, soit bien plus que le seuil, mais jamais 0,3 s de
+    # silence d'affilée.
+    proc = _FakeProc([_result_line()] * 6, delay=0.1)
+    _fake_cli(monkeypatch, proc)
+
+    assert (await run_claude(tmp_path, cfg=LaunchConfig(claude_bin="claude")))["num_turns"] == 3
+
+
+@pytest.mark.asyncio
+async def test_pump_without_stall_timeout_waits_indefinitely(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`STUDIO_STALL_TIMEOUT_S=0` désactive la surveillance, comme `CLAUDE_STUDIO_TIMEOUT_S=0`.
+
+    Le défaut est rabaissé à 0,01 s : si le `0` n'était pas honoré, ce défaut couperait la session, donc
+    le test prouve bien la désactivation et pas seulement qu'un flux lent passe.
+    """
+    monkeypatch.setattr("studio.launcher.STALL_TIMEOUT_DEFAULT_S", 0.01)
+    monkeypatch.setenv("STUDIO_STALL_TIMEOUT_S", "0")
+    assert _stall_timeout() is None
+    proc = _FakeProc([_result_line(turns=1)], delay=0.15)
+    _fake_cli(monkeypatch, proc)
+
+    assert (await run_claude(tmp_path, cfg=LaunchConfig(claude_bin="claude")))["num_turns"] == 1
+
+
+@pytest.mark.asyncio
+async def test_session_timeout_is_not_reported_as_a_stall(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Les deux délais ne doivent pas être confondus : le délai global n'est pas une inactivité reprenable."""
+    monkeypatch.setenv("STUDIO_STALL_TIMEOUT_S", "0")  # seule la limite de session peut se déclencher
+    proc = _FakeProc([], never_ends=True)
+    terminated = _fake_cli(monkeypatch, proc)
+
+    with pytest.raises(ClaudeRunError) as excinfo:
+        await run_claude(tmp_path, cfg=LaunchConfig(claude_bin="claude", timeout_s=0.05))
+
+    assert not excinfo.value.stalled  # sinon la création serait reprise au lieu d'échouer
+    assert "interrompue après" in str(excinfo.value)
+    assert terminated == [proc]
 
 
 def test_build_command_keeps_prompt_before_variadic_flags() -> None:
