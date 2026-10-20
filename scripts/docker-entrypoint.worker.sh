@@ -3,8 +3,8 @@ set -e
 
 sh /app/scripts/wait-for-redis.sh
 
-# Entrypoint worker PROD : exécute le pipeline_worker sans hot-reload.
-# (La variante .worker.dev.sh utilise watchfiles pour le développement.)
+# Entrypoint du worker (dev comme prod) : exécute le pipeline_worker sans hot reload — un watcher tuerait
+# la création en cours à chaque fichier .py modifié. Redéploiement : `scripts/deploy_prod_container.sh worker`.
 
 echo "Applying database migrations..."
 alembic upgrade head

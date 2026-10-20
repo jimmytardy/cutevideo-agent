@@ -62,6 +62,8 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     entrypoint: ["./scripts/docker-entrypoint.worker.sh"]
+    # Arrêt propre (SIGTERM → Claude/ffmpeg tués, étapes marquées `interrupted`, lease libéré) avant le SIGKILL.
+    stop_grace_period: 30s
     restart: unless-stopped
     depends_on:
       shared-postgres:
@@ -122,6 +124,8 @@ services:
 
   worker-dev:
     # Scale dev : `docker compose up -d --scale worker-dev=2` (sans container_name fixe)
+    # Pas de hot reload : un pipeline en cours serait tué à chaque fichier .py modifié. Après un changement de
+    # code ou de .env, redéployer avec `scripts/deploy_prod_container.sh worker`.
     image: cutevideo-dev:local
     build:
       context: .
@@ -148,7 +152,8 @@ services:
       - local-network
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    entrypoint: ["./scripts/docker-entrypoint.worker.dev.sh"]
+    entrypoint: ["sh", "./scripts/docker-entrypoint.worker.sh"]
+    stop_grace_period: 30s
     depends_on:
       shared-postgres:
         condition: service_healthy

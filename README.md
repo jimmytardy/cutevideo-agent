@@ -124,7 +124,9 @@ docker compose up -d
 ```
 
 Les migrations Alembic s'appliquent automatiquement au démarrage du conteneur (`app-dev`, `worker-dev`).
-Après un `git pull` avec de nouvelles migrations : `docker compose restart app-dev worker-dev`, ou manuellement :
+Le worker n'a pas de hot reload (il tuerait la création en cours) : après une modification de `agent/`, `api/`,
+`studio/` ou `.env`, `scripts/deploy_prod_container.sh worker` le recrée (refus si une création tourne, `FORCE=1` passe outre).
+Après un `git pull` avec de nouvelles migrations : `docker compose restart app-dev` puis `scripts/deploy_prod_container.sh worker`, ou manuellement :
 `docker compose run --rm --no-deps --entrypoint alembic app-dev upgrade head`.
 Au premier run, Whisper télécharge le modèle `STUDIO_WHISPER_MODEL` (défaut `small`) — le premier run peut être long.
 
