@@ -174,8 +174,9 @@ def build_env(
     # Le tour du producteur se termine dès qu'il a lancé un rôle : les 10 min pendant lesquelles Claude Code
     # attend ensuite ses tâches de fond deviennent le budget du rôle, et un montage qui rend ses animations
     # une par une (sandbox séquentiel) se fait tuer en plein travail. On retire la limite : un rôle prend le
-    # temps qu'il faut. Un blocage reste borné plus bas — 300 s par job de sandbox, `timeout_s` de
-    # `run_ffmpeg`, `BASH_MAX_TIMEOUT_MS` par commande et `--max-turns` pour la session.
+    # temps qu'il faut. Un blocage reste borné plus bas : 300 s par job de sandbox, `timeout_s` de
+    # `run_ffmpeg`, le délai propre à chaque commande Bash (les variables ci-dessus au premier plan ; une
+    # commande passée en tâche de fond garde le sien, plafonné à 2 h) et `--max-turns` pour la session.
     env.setdefault("CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS", str(BG_WAIT_CEILING_MS))
     return env
 
