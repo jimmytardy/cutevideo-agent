@@ -90,7 +90,7 @@ class Settings(BaseSettings):
 
     # Config pipeline
     config_path: str = "./data/agent_config.json"
-    pipeline_min_free_disk_bytes: int = 10 * 1024 * 1024 * 1024
+    pipeline_min_free_disk_bytes: int = 5 * 1024 * 1024 * 1024
     pipeline_queue_dequeue_max_attempts: int = 50
     pipeline_queue_blocked_backoff_seconds: int = 30
 

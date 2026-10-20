@@ -4,7 +4,7 @@
     "visual_style": "animation"
   },
   "pipeline": {
-    "min_free_disk_bytes": 10737418240,
+    "min_free_disk_bytes": 5368709120,
     "queue_dequeue_max_attempts": 50,
     "queue_blocked_backoff_seconds": 30,
     "lease_ttl_seconds": 60,
