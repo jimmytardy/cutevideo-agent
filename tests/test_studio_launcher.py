@@ -108,14 +108,14 @@ def test_stream_parser_names_killed_task_from_later_notification() -> None:
     })]
 
 
-def test_build_env_lets_background_tasks_run_past_the_cli_ceiling(tmp_path: Path) -> None:
-    """Sans ce plafond relevé, un montage qui rend ses animations une par une est tué à 10 min.
+def test_build_env_removes_the_cli_wait_ceiling_on_background_tasks(tmp_path: Path) -> None:
+    """Un rôle prend le temps qu'il faut : sans cela, le montage est tué à 10 min en plein travail.
 
-    Jamais `0` (attente infinie) : `CLAUDE_STUDIO_TIMEOUT_S` valant 0 en prod, ce plafond reste le dernier
-    garde-fou contre une tâche réellement bloquée.
+    `0` = sans limite côté CLI ; les blocages restent bornés par les délais des outils (sandbox, ffmpeg,
+    `BASH_MAX_TIMEOUT_MS`) et par `--max-turns`.
     """
-    ceiling = build_env(tmp_path)["CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"]
-    assert int(ceiling) == BG_WAIT_CEILING_MS > 600_000
+    assert BG_WAIT_CEILING_MS == 0
+    assert build_env(tmp_path)["CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"] == "0"
 
 
 def test_build_env_background_ceiling_stays_overridable(

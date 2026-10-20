@@ -44,8 +44,8 @@ ALLOWED_TOOLS = ("Bash(python -m studio.tools:*)", "Read", "Write", "Edit", "Glo
 DISALLOWED_TOOLS: tuple[str, ...] = ()
 # Événements `system` qui décrivent les tâches de fond de Claude Code (cf. `StreamParser._on_background`).
 _BACKGROUND_SUBTYPES = ("background_tasks_changed", "task_started", "task_updated", "task_notification")
-# Attente des tâches de fond après la fin du tour (défaut du CLI : 10 min, trop court pour un montage animé).
-BG_WAIT_CEILING_MS = 6 * 3600 * 1000
+# Attente des tâches de fond après la fin du tour. `0` = sans limite : un rôle prend le temps qu'il faut.
+BG_WAIT_CEILING_MS = 0
 # Message du CLI quand ce plafond est atteint et qu'il tue ses tâches de fond.
 _BG_CEILING_MARKER = "Background tasks still running"
 # Ligne stream-json max (les tool_result peuvent contenir de gros JSON).
@@ -171,11 +171,11 @@ def build_env(
     # Rendus et transcriptions dépassent les 2 min par défaut du Bash de Claude Code.
     env.setdefault("BASH_DEFAULT_TIMEOUT_MS", "1200000")
     env.setdefault("BASH_MAX_TIMEOUT_MS", "1800000")
-    # Claude Code n'attend ses tâches de fond (sous-agents, Bash longs) que 10 min après la fin du tour,
-    # puis les tue et sort sans result.json ; un montage qui rend ses animations une par une (sandbox
-    # séquentiel) dépasse ce plafond. On le repousse loin au-delà d'une passe légitime sans le retirer
-    # (`0` = attente infinie) : `CLAUDE_STUDIO_TIMEOUT_S` vaut 0 en prod, ce plafond est donc le dernier
-    # garde-fou contre un Chromium ou un ffmpeg bloqué, qui sinon garderait son lease et coincerait la chaîne.
+    # Le tour du producteur se termine dès qu'il a lancé un rôle : les 10 min pendant lesquelles Claude Code
+    # attend ensuite ses tâches de fond deviennent le budget du rôle, et un montage qui rend ses animations
+    # une par une (sandbox séquentiel) se fait tuer en plein travail. On retire la limite : un rôle prend le
+    # temps qu'il faut. Un blocage reste borné plus bas — 300 s par job de sandbox, `timeout_s` de
+    # `run_ffmpeg`, `BASH_MAX_TIMEOUT_MS` par commande et `--max-turns` pour la session.
     env.setdefault("CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS", str(BG_WAIT_CEILING_MS))
     return env
 
