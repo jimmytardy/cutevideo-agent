@@ -77,6 +77,27 @@ def test_claude_run_error_no_turn_played() -> None:
     assert not ClaudeRunError("x").no_turn_played
 
 
+@pytest.mark.asyncio
+async def test_recorder_collects_killed_background_tasks() -> None:
+    """Le runner s'appuie sur ces libellés pour décider d'une reprise plutôt que d'un échec."""
+    from agent.core.claude_studio import _ProgressRecorder
+
+    recorder = _ProgressRecorder(uuid.uuid4())
+    await recorder("task_killed", {"id": "bg1", "label": "Montage itération 1"})
+    await recorder("task_killed", {"id": "bg2", "label": ""})
+    # Un libellé arrivé plus tard ne doit pas être écrasé par une réémission vide.
+    await recorder("task_killed", {"id": "bg1", "label": ""})
+    assert recorder.killed_tasks == {"bg1": "Montage itération 1", "bg2": ""}
+
+
+def test_studio_interrupted_names_the_killed_tasks() -> None:
+    interrupted = studio_resume.StudioInterrupted(["Montage itération 1", "", "animate-template"])
+    assert interrupted.tasks == ["Montage itération 1", "animate-template"]
+    assert studio_resume.KILLED_TASK_MESSAGE in str(interrupted)
+    assert "Montage itération 1" in str(interrupted)
+    assert str(studio_resume.StudioInterrupted()) == studio_resume.KILLED_TASK_MESSAGE
+
+
 def _successes(runs: list[list], *names: str) -> list[int]:
     """Nombre d'étapes réussies par rôle (une reprise ne doit pas refaire les étapes déjà faites)."""
     done = [name for name, status, _ in runs if status == "success"]
@@ -246,6 +267,16 @@ def test_worker_restart_resumes_creation(tmp_path: Path) -> None:
     give_up = facts["give_up"]
     assert give_up["status"] == "failed" and "abandonnée" in (give_up["error"] or "")
     assert give_up["reconciled_after"] == 0
+
+    # Tâche de fond tuée par le CLI : traité comme une interruption, pas comme un échec.
+    killed = facts["killed_bg"]
+    assert killed["status"] == "running" and studio_resume.KILLED_TASK_MESSAGE in (killed["error"] or "")
+    assert ["editor_agent", "interrupted", 1] in killed["runs"]
+    assert killed["session"]["session_id"] and killed["transcripts"] == 1 and killed["scenario_kept"]
+    assert facts["killed_bg_resume"] == {"reconciled": 1, "payload_resume": True, "error": None}
+    killed_resumed = facts["killed_bg_resumed"]
+    assert killed_resumed["status"] == "approved" and killed_resumed["session"] is None
+    assert _successes(killed_resumed["runs"], *EARLY_STEPS) == _successes(killed["runs"], *EARLY_STEPS)
 
     limit = facts["limit"]
     paused = limit["paused"]

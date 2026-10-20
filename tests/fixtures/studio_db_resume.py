@@ -176,6 +176,19 @@ async def main() -> dict:
 
         facts["give_up"]["reconciled_after"] = await reconcile_orphan_running_projects(worker_id="test")
 
+        # 4. Tâche de fond tuée par le CLI : session « réussie » sans result.json → reprise, pas échec.
+        from agent.core.orchestrator import Orchestrator
+
+        pid4, uid4 = await _setup()
+        os.environ["FAKE_CLAUDE_KILL_BG_IN"] = "monteur"
+        await Orchestrator().run_pipeline(pid4)
+        facts["killed_bg"] = {**await _project(pid4), "runs": await _runs(pid4),
+                              "transcripts": _transcripts(uid4, pid4),
+                              "scenario_kept": (default_runs_dir() / str(pid4) / "scenario.json").is_file()}
+        os.environ.pop("FAKE_CLAUDE_KILL_BG_IN")
+        facts["killed_bg_resume"] = await _resume_like_new_worker(pid4)
+        facts["killed_bg_resumed"] = {**await _project(pid4), "runs": await _runs(pid4)}
+
         facts["limit"] = await _usage_limit_cases()
     return facts
 

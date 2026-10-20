@@ -25,7 +25,12 @@ from agent.core.database import (
     User,
 )
 from agent.core.pipeline_cancel import is_worker_shutdown
-from agent.core.studio_resume import INTERRUPTED_MESSAGE, LIMIT_MESSAGE, StudioPaused
+from agent.core.studio_resume import (
+    INTERRUPTED_MESSAGE,
+    LIMIT_MESSAGE,
+    StudioInterrupted,
+    StudioPaused,
+)
 from agent.core.queue import queue
 
 logger = logging.getLogger(__name__)
@@ -155,6 +160,19 @@ class Orchestrator:
             await stop_running_agent_runs(project_id)
             logger.info("Pipeline annulé pour le projet %s", project_id)
             raise
+        except StudioInterrupted as interrupted:
+            # Le CLI a tué ses tâches de fond : comme à l'arrêt du worker, le projet reste `running` et
+            # `pipeline_reconcile` le remet en file pour que la création reprenne (studio_resume).
+            # Un « Arrêter » concurrent prime : sans ce garde-fou on repasserait `stopped` à `running`.
+            if await queue.is_pipeline_cancel_requested(str(project_id)):
+                async with AsyncSessionFactory() as session:
+                    await self._update_project_status(session, project_id, "stopped", "Arrêté manuellement")
+                await stop_running_agent_runs(project_id)
+                logger.info("Pipeline arrêté manuellement pendant une interruption du CLI (%s)", project_id)
+                return
+            async with AsyncSessionFactory() as session:
+                await self._update_project_status(session, project_id, "running", str(interrupted))
+            logger.warning("Pipeline interrompu par le CLI pour le projet %s : %s", project_id, interrupted)
         except StudioPaused as paused:
             # Limite d'usage de l'abonnement Claude : le worker reprendra la création après le reset.
             local = paused.until.astimezone(ZoneInfo("Europe/Paris"))

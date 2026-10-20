@@ -8,9 +8,11 @@ import pytest
 from studio.contracts import Brief
 from studio.launcher import (
     ALLOWED_TOOLS,
+    BG_WAIT_CEILING_MS,
     REPO_ROOT,
     LaunchConfig,
     StreamParser,
+    background_tasks_stopped,
     build_command,
     build_env,
     prepare_run_dir,
@@ -59,6 +61,80 @@ def test_stream_parser_tolerates_odd_messages() -> None:
     result = parser.feed(_line({"type": "result", "subtype": "success", "is_error": False}))
     assert result[0][0] == "result"
     assert parser.result is not None
+
+
+def test_stream_parser_reports_killed_background_tasks() -> None:
+    """Claude Code tue ses tâches de fond au plafond d'attente puis sort « avec succès » : seul
+    `task_updated`/`killed` fait foi, les autres événements ne servent qu'à nommer la tâche."""
+    parser = StreamParser()
+    assert parser.feed(_line({
+        "type": "system", "subtype": "background_tasks_changed",
+        "tasks": [{"task_id": "bg1", "task_type": "local_agent", "subagent_type": "monteur",
+                   "description": "Montage itération 1"}],
+    })) == []
+    assert parser.killed_tasks == {}
+
+    killed = parser.feed(_line({
+        "type": "system", "subtype": "task_updated", "task_id": "bg1", "patch": {"status": "killed"},
+    }))
+    assert killed == [("task_killed", {"id": "bg1", "label": "Montage itération 1"})]
+    assert parser.killed_tasks == {"bg1": "Montage itération 1"}
+
+    # `task_started` nomme aussi une tâche (`background_tasks_changed` peut être coalescé par le CLI).
+    parser.feed(_line({"type": "system", "subtype": "task_started",
+                       "task": {"task_id": "bg3", "subagent_type": "voix"}}))
+    assert parser.feed(_line({
+        "type": "system", "subtype": "task_updated", "task_id": "bg3", "patch": {"status": "killed"},
+    })) == [("task_killed", {"id": "bg3", "label": "voix"})]
+
+    # Une tâche qui se termine normalement n'est pas signalée.
+    assert parser.feed(_line({
+        "type": "system", "subtype": "task_updated", "task_id": "bg2", "patch": {"status": "completed"},
+    })) == []
+    assert "bg2" not in parser.killed_tasks
+
+
+def test_stream_parser_names_killed_task_from_later_notification() -> None:
+    """Le libellé arrive parfois après la mise à mort (`task_notification`) : il doit l'enrichir."""
+    parser = StreamParser()
+    parser.feed(_line({"type": "system", "subtype": "task_updated", "task_id": "bg1", "patch": {"status": "killed"}}))
+    assert parser.killed_tasks == {"bg1": ""}
+    events = parser.feed(_line({
+        "type": "system", "subtype": "task_notification", "task_id": "bg1", "status": "stopped",
+        "summary": "python -m studio.tools animate-template --template paradox",
+    }))
+    assert events == [("task_killed", {
+        "id": "bg1", "label": "python -m studio.tools animate-template --template paradox",
+    })]
+
+
+def test_build_env_lets_background_tasks_run_past_the_cli_ceiling(tmp_path: Path) -> None:
+    """Sans ce plafond relevé, un montage qui rend ses animations une par une est tué à 10 min.
+
+    Jamais `0` (attente infinie) : `CLAUDE_STUDIO_TIMEOUT_S` valant 0 en prod, ce plafond reste le dernier
+    garde-fou contre une tâche réellement bloquée.
+    """
+    ceiling = build_env(tmp_path)["CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"]
+    assert int(ceiling) == BG_WAIT_CEILING_MS > 600_000
+
+
+def test_build_env_background_ceiling_stays_overridable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS", "900000")
+    assert build_env(tmp_path)["CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"] == "900000"
+
+
+def test_background_tasks_stopped_reads_the_cli_announcement(tmp_path: Path) -> None:
+    """Discriminant d'une session coupée en plein travail : seul ce message du CLI la caractérise."""
+    assert not background_tasks_stopped(tmp_path)  # pas de stderr du tout
+    (tmp_path / "claude_stderr.log").write_text("rien d'anormal\n", encoding="utf-8")
+    assert not background_tasks_stopped(tmp_path)
+    (tmp_path / "claude_stderr.log").write_text(
+        'Background tasks still running 10m after the last turn (subagent "monteur"); stopping them.\n',
+        encoding="utf-8",
+    )
+    assert background_tasks_stopped(tmp_path)
 
 
 def test_build_command_keeps_prompt_before_variadic_flags() -> None:

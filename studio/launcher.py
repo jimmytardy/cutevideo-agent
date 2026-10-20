@@ -42,6 +42,12 @@ SUBAGENT_TOOLS = ("Agent", "Task")
 WEB_TOOLS = ("WebSearch", "WebFetch")
 ALLOWED_TOOLS = ("Bash(python -m studio.tools:*)", "Read", "Write", "Edit", "Glob", *WEB_TOOLS, *SUBAGENT_TOOLS)
 DISALLOWED_TOOLS: tuple[str, ...] = ()
+# Événements `system` qui décrivent les tâches de fond de Claude Code (cf. `StreamParser._on_background`).
+_BACKGROUND_SUBTYPES = ("background_tasks_changed", "task_started", "task_updated", "task_notification")
+# Attente des tâches de fond après la fin du tour (défaut du CLI : 10 min, trop court pour un montage animé).
+BG_WAIT_CEILING_MS = 6 * 3600 * 1000
+# Message du CLI quand ce plafond est atteint et qu'il tue ses tâches de fond.
+_BG_CEILING_MARKER = "Background tasks still running"
 # Ligne stream-json max (les tool_result peuvent contenir de gros JSON).
 _STREAM_LIMIT = 16 * 1024 * 1024
 
@@ -165,6 +171,12 @@ def build_env(
     # Rendus et transcriptions dépassent les 2 min par défaut du Bash de Claude Code.
     env.setdefault("BASH_DEFAULT_TIMEOUT_MS", "1200000")
     env.setdefault("BASH_MAX_TIMEOUT_MS", "1800000")
+    # Claude Code n'attend ses tâches de fond (sous-agents, Bash longs) que 10 min après la fin du tour,
+    # puis les tue et sort sans result.json ; un montage qui rend ses animations une par une (sandbox
+    # séquentiel) dépasse ce plafond. On le repousse loin au-delà d'une passe légitime sans le retirer
+    # (`0` = attente infinie) : `CLAUDE_STUDIO_TIMEOUT_S` vaut 0 en prod, ce plafond est donc le dernier
+    # garde-fou contre un Chromium ou un ffmpeg bloqué, qui sinon garderait son lease et coincerait la chaîne.
+    env.setdefault("CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS", str(BG_WAIT_CEILING_MS))
     return env
 
 
@@ -185,6 +197,10 @@ class StreamParser:
         # Texte du message d'erreur synthétique de Claude Code sur une limite (`error: "rate_limit"`),
         # ex. « You've hit your session limit · resets 3:45pm » : le `result` final peut être vide.
         self.limit_message: str | None = None
+        # Tâches de fond tuées par Claude Code au plafond d'attente : la session se termine « avec succès »
+        # sans avoir fini le travail. `task_id → libellé`, le libellé arrivant parfois après la mise à mort.
+        self.killed_tasks: dict[str, str] = {}
+        self.task_labels: dict[str, str] = {}
 
     def feed(self, line: str) -> list[tuple[str, dict[str, Any]]]:
         line = line.strip()
@@ -226,11 +242,38 @@ class StreamParser:
             ]
         if mtype == "system" and msg.get("subtype") == "permission_denied":
             return [("denied", {"role": self.agents.get(parent, "producteur"), "name": msg.get("tool_name", "")})]
+        if mtype == "system" and msg.get("subtype") in _BACKGROUND_SUBTYPES:
+            return self._on_background(msg)
         if mtype == "result":
             self.result = msg
             return [("result", msg)]
         if mtype == "rate_limit_event" and isinstance(msg.get("rate_limit_info"), dict):
             self.rate_limit = msg["rate_limit_info"]
+        return []
+
+    def _on_background(self, msg: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+        """Nomme les tâches de fond et repère celles que Claude Code tue (`task_updated` + `killed`).
+
+        `task_started`, `background_tasks_changed` et `task_notification` ne servent qu'au libellé. Ces
+        libellés enrichissent le message d'interruption ; c'est `background_tasks_stopped()` qui décide
+        si la session s'est arrêtée en plein travail.
+        """
+        described = [*(msg.get("tasks") or []), msg.get("task")]
+        for task in described:
+            if isinstance(task, dict) and (label := str(task.get("description") or task.get("subagent_type") or "")):
+                self.task_labels[str(task.get("task_id") or "")] = label
+        task_id = str(msg.get("task_id") or "")
+        if not task_id:
+            return []
+        if summary := msg.get("summary"):
+            self.task_labels.setdefault(task_id, str(summary)[:200])
+        if (msg.get("patch") or {}).get("status") == "killed":
+            self.killed_tasks[task_id] = self.task_labels.get(task_id, "")
+        if task_id in self.killed_tasks:
+            # Le libellé peut arriver après la mise à mort : on réémet pour l'enrichir.
+            label = self.killed_tasks[task_id] or self.task_labels.get(task_id, "")
+            self.killed_tasks[task_id] = label
+            return [("task_killed", {"id": task_id, "label": label})]
         return []
 
     def _on_tool_use(self, block: dict[str, Any], parent: str) -> tuple[str, dict[str, Any]]:
@@ -276,6 +319,20 @@ def _tool_result_text(content: Any) -> str:
     return "\n".join(
         line for line in lines if not line.startswith(_TRAILER_PREFIXES) and line != "</usage>"
     ).strip()
+
+
+def background_tasks_stopped(run_dir: Path) -> bool:
+    """Le CLI a annoncé sur stderr avoir tué ses tâches de fond au plafond d'attente.
+
+    Discriminant volontairement étroit : seules ces sessions-là se sont arrêtées en plein travail et
+    méritent une reprise. Une tâche de fond tuée pour une autre raison (pression mémoire) reste un échec
+    normal, et un message du CLI qui changerait de formulation nous ramène simplement à ce comportement.
+    """
+    try:
+        stderr = (run_dir / "claude_stderr.log").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return _BG_CEILING_MARKER in stderr
 
 
 def error_detail(parser: StreamParser) -> str:

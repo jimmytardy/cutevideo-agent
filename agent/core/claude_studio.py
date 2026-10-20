@@ -50,7 +50,13 @@ from studio.contracts import (
     resolve_in_run_dir,
     write_json,
 )
-from studio.launcher import ClaudeRunError, default_runs_dir, prepare_run_dir, run_claude
+from studio.launcher import (
+    ClaudeRunError,
+    background_tasks_stopped,
+    default_runs_dir,
+    prepare_run_dir,
+    run_claude,
+)
 from studio.render import RENDER_DIR
 
 if TYPE_CHECKING:
@@ -129,6 +135,8 @@ class _ProgressRecorder:
         # ensuite mise en pause (`mark_limit_interrupted`), sinon elles restent des échecs.
         self.limit_failures: list[uuid.UUID] = []
         self.result: dict[str, Any] | None = None
+        # Tâches de fond tuées par Claude Code (`task_id → libellé`) : la session s'arrête en plein travail.
+        self.killed_tasks: dict[str, str] = {}
 
     async def __call__(self, kind: str, data: dict[str, Any]) -> None:
         if kind == "agent_start":
@@ -137,6 +145,8 @@ class _ProgressRecorder:
             await self._end(data)
         elif kind == "agent_stream":
             self._stream(data)
+        elif kind == "task_killed":
+            self.killed_tasks[data["id"]] = data.get("label") or self.killed_tasks.get(data["id"], "")
         elif kind == "result":
             self.result = data
 
@@ -412,6 +422,12 @@ class ClaudeStudioRunner:
             await recorder.close_dangling("stopped" if not isinstance(exc, Exception) else "failed", str(exc)[:500])
             await self._discard_session(config_dir)  # plus de session à reprendre : état effacé comme en succès
             raise exc
+        if not (self.run_dir / "result.json").exists() and background_tasks_stopped(self.run_dir):
+            # Claude Code a tué ses tâches de fond au plafond d'attente puis terminé la session « avec succès »
+            # sans écrire result.json. Session et run dir sont intacts : la création reprend où elle en était
+            # (état de session déjà enregistré avant le lancement) au lieu d'être perdue.
+            await recorder.close_dangling("interrupted", studio_resume.KILLED_TASK_MESSAGE)
+            raise studio_resume.StudioInterrupted(sorted(recorder.killed_tasks.values()))
         await recorder.close_dangling("failed", "sous-agent non terminé")
         self._forget_session(config_dir)
 
