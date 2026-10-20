@@ -8,7 +8,6 @@ import pytest
 from studio.contracts import Brief
 from studio.launcher import (
     ALLOWED_TOOLS,
-    BG_WAIT_CEILING_MS,
     REPO_ROOT,
     LaunchConfig,
     StreamParser,
@@ -114,7 +113,7 @@ def test_build_env_removes_the_cli_wait_ceiling_on_background_tasks(tmp_path: Pa
     `0` = sans limite côté CLI ; les blocages restent bornés par les délais des outils (sandbox, ffmpeg,
     `BASH_MAX_TIMEOUT_MS`) et par `--max-turns`.
     """
-    assert BG_WAIT_CEILING_MS == 0
+    # `0` est ce que le CLI lit comme « attendre indéfiniment » : c'est la valeur posée qui compte.
     assert build_env(tmp_path)["CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"] == "0"
 
 

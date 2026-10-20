@@ -171,12 +171,15 @@ def build_env(
     # Rendus et transcriptions dépassent les 2 min par défaut du Bash de Claude Code.
     env.setdefault("BASH_DEFAULT_TIMEOUT_MS", "1200000")
     env.setdefault("BASH_MAX_TIMEOUT_MS", "1800000")
-    # Le tour du producteur se termine dès qu'il a lancé un rôle : les 10 min pendant lesquelles Claude Code
-    # attend ensuite ses tâches de fond deviennent le budget du rôle, et un montage qui rend ses animations
-    # une par une (sandbox séquentiel) se fait tuer en plein travail. On retire la limite : un rôle prend le
-    # temps qu'il faut. Un blocage reste borné plus bas : 300 s par job de sandbox, `timeout_s` de
-    # `run_ffmpeg`, le délai propre à chaque commande Bash (les variables ci-dessus au premier plan ; une
-    # commande passée en tâche de fond garde le sien, plafonné à 2 h) et `--max-turns` pour la session.
+    # Ce plafond compte l'attente *inactive* et repart à chaque tour de Claude ; or le producteur devient
+    # inactif dès qu'il a lancé un rôle, si bien que ses 10 min devenaient le budget du rôle — un montage qui
+    # rend ses animations une par une (sandbox séquentiel) s'y faisait tuer en plein travail. On retire la
+    # limite : un rôle prend le temps qu'il faut. Ce qui borne encore un blocage : 300 s par job de sandbox et
+    # le délai propre à chaque commande Bash (variables ci-dessus au premier plan ; une commande passée en
+    # tâche de fond garde le sien, plafonné à 2 h). Ce qui ne le borne PAS : `run_ffmpeg(timeout_s=…)`, que
+    # seul l'encodage par clip de `studio/render.py` renseigne, et `--max-turns`, qui compte des tours et non
+    # du temps. Il n'y a donc plus de plafond au niveau de la session (`CLAUDE_STUDIO_TIMEOUT_S=0`) : une
+    # création réellement bloquée garde son lease et occupe le créneau de la chaîne jusqu'à un « Arrêter ».
     env.setdefault("CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS", str(BG_WAIT_CEILING_MS))
     return env
 
