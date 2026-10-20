@@ -54,7 +54,7 @@ export const AI_PLANS: (Option & { family: string })[] = [
   { value: 'off', label: 'Désactivé', family: '' },
   { value: 'flux_schnell', label: 'Flux Schnell (budget)', family: 'Flux' },
   { value: 'flux_2_dev', label: 'FLUX 2 Dev (bon rapport qualité/prix)', family: 'Flux' },
-  { value: 'flux_pro', label: 'Flux 1.1 Pro (standard)', family: 'Flux' },
+  { value: 'flux_pro', label: 'FLUX.2 Pro (standard)', family: 'Flux' },
   { value: 'flux_ultra', label: 'Flux Pro Ultra (qualité max)', family: 'Flux' },
   { value: 'imagen3_fast', label: 'Imagen 3 Fast (budget Google)', family: 'Google Imagen 3' },
   { value: 'imagen3', label: 'Imagen 3 (standard Google)', family: 'Google Imagen 3' },

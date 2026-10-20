@@ -15,7 +15,7 @@ erreur indique les modèles disponibles.
 | `imagen3_fast` | 0,018 € | photo réaliste simple (Google, compte de service GCP) |
 | `flux_2_dev` | 0,024 € | bon rapport qualité/prix pour la plupart des plans |
 | `imagen3` | 0,037 € | scène photo réaliste avec personnes ou décor complexe |
-| `flux_pro` | 0,05 € | rendu soigné, composition précise, illustration |
+| `flux_pro` | 0,042 € | rendu soigné, composition précise, illustration ; bon choix pour le photoréalisme à prix moyen (prix donné pour un 1080×1920) |
 | `flux_ultra` | 0,07 € | photoréalisme brut (textures, peau, matières) : fond de miniature héro |
 
 Prends le modèle le moins cher qui suffit pour ce plan. Si un modèle échoue (clé refusée, prompt bloqué), réessaie

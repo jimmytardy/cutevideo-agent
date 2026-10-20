@@ -11,6 +11,7 @@ import pytest
 from PIL import Image
 
 from agent.skills.media_sources.ai.base import ImageGenerationRequest, ImageGenerationResult
+from agent.skills.media_sources.ai.flux_common import _flux_model_for_plan
 from agent.skills.media_sources.ai.registry import generate_with_plan, models_up_to, provider_family
 
 
@@ -33,10 +34,33 @@ def _mock_fal(mock_session_cls: MagicMock, image_url: str) -> MagicMock:
     return mock_session
 
 
+# Charge utile attendue de chaque plan, **figée en dur** d'après les schémas publiés par fal : aucun
+# endpoint n'accepte les mêmes champs, et fal ignore en silence ceux qu'il ne connaît pas. Dériver ces
+# attentes du code rejouerait sa logique au lieu de la confronter aux schémas réels.
+# À noter : l'ultra se dimensionne par `aspect_ratio` (défaut 16:9) et n'a pas d'`image_size` — lui envoyer
+# un `image_size` renvoyait du paysage pour un Short vertical.
+EXPECTED_PAYLOADS: dict[str, dict] = {
+    "flux_pro": {  # fal-ai/flux-2-pro
+        "output_format": "jpeg", "image_size": {"width": 1080, "height": 1920},
+        "enable_safety_checker": True, "safety_tolerance": "2",
+    },
+    "flux_2_dev": {  # fal-ai/flux-2
+        "output_format": "jpeg", "image_size": {"width": 1080, "height": 1920},
+        "enable_safety_checker": True, "guidance_scale": 2.5,
+    },
+    "flux_ultra": {  # fal-ai/flux-pro/v1.1-ultra
+        "output_format": "jpeg", "aspect_ratio": "9:16", "safety_tolerance": "2", "raw": True,
+    },
+}
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("plan", ["flux_pro", "flux_2_dev", "flux_ultra"])
 async def test_flux_success_sends_prompt_as_is(tmp_path: Path, plan: str) -> None:
-    request = ImageGenerationRequest(prompt="a cat on a sofa", output_dir=tmp_path, fal_api_key="test-fal-key")
+    request = ImageGenerationRequest(
+        prompt="a cat on a sofa", output_dir=tmp_path, fal_api_key="test-fal-key",
+        aspect_ratio="9:16", image_width=1080, image_height=1920,
+    )
     with patch("aiohttp.ClientSession") as mock_session_cls:
         session = _mock_fal(mock_session_cls, "https://fal.ai/fake.jpg")
         result = await generate_with_plan(plan, request)
@@ -47,6 +71,11 @@ async def test_flux_success_sends_prompt_as_is(tmp_path: Path, plan: str) -> Non
     payload = session.post.call_args.kwargs["json"]
     assert payload["prompt"] == "a cat on a sofa"
     assert ("raw" in payload) == (plan == "flux_ultra")
+
+    # L'endpoint réellement appelé, et la charge utile complète : fal ignore les champs inconnus, donc une
+    # charge utile fausse ne lèverait pas — seules ces assertions peuvent la détecter.
+    assert session.post.call_args.args[0] == f"https://fal.run/{_flux_model_for_plan(plan)}"
+    assert {k: v for k, v in payload.items() if k != "prompt"} == EXPECTED_PAYLOADS[plan]
 
 
 @pytest.mark.asyncio

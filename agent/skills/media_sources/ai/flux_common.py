@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from typing import Any
 
 import aiohttp
 
@@ -16,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 FLUX_ATTRIBUTIONS: dict[str, str] = {
     "flux_schnell": "Image générée par IA (Flux Schnell via fal.ai)",
-    "flux_pro": "Image générée par IA (Flux 1.1 Pro via fal.ai)",
+    "flux_pro": "Image générée par IA (FLUX.2 Pro via fal.ai)",
     "flux_ultra": "Image générée par IA (Flux 1.1 Pro Ultra via fal.ai)",
     "flux_2_dev": "Image générée par IA (FLUX 2 Dev via fal.ai)",
 }
@@ -26,26 +27,43 @@ def _flux_model_for_plan(plan_id: str) -> str | None:
     cfg = ai_fallback_config().get("flux", {})
     mapping = {
         "flux_schnell": str(cfg.get("schnell_model", "fal-ai/flux/schnell")),
-        "flux_pro": str(cfg.get("pro_model", "fal-ai/flux-pro/v1.1")),
+        "flux_pro": str(cfg.get("pro_model", "fal-ai/flux-2-pro")),
         "flux_ultra": str(cfg.get("ultra_model", "fal-ai/flux-pro/v1.1-ultra")),
         "flux_2_dev": str(cfg.get("dev_model", "fal-ai/flux-2")),
     }
     return mapping.get(plan_id)
 
 
-def _payload(plan_id: str, request: ImageGenerationRequest) -> dict:
-    payload: dict = {
-        "prompt": request.prompt,
-        "image_size": {"width": request.image_width, "height": request.image_height},
-        "num_images": 1,
-        "output_format": "jpeg",
-    }
-    if plan_id == "flux_2_dev":
-        payload.update(enable_safety_checker=True, guidance_scale=2.5)
+# Paramètres propres à chaque endpoint, d'après les schémas publiés par fal. Aucun n'accepte exactement
+# les mêmes champs, et fal **ignore en silence** ceux qu'il ne connaît pas (vérifié : un champ inventé ne
+# lève rien) — un paramètre envoyé au mauvais endpoint est donc un réglage perdu sans la moindre erreur.
+# Une table par modèle, et non un branchement par famille ou par id de plan : changer le modèle d'un plan
+# dans `data/agent_config.json` lui donne ainsi d'emblée les bons paramètres.
+_FLUX_EXTRAS: dict[str, dict[str, Any]] = {
+    "fal-ai/flux/schnell": {"enable_safety_checker": True},
+    "fal-ai/flux-2": {"enable_safety_checker": True, "guidance_scale": 2.5},
+    "fal-ai/flux-2-pro": {"enable_safety_checker": True, "safety_tolerance": "2"},
+    "fal-ai/flux-pro/v1.1": {"safety_tolerance": "2"},
+    "fal-ai/flux-pro/v1.1-ultra": {"safety_tolerance": "2", "raw": True},
+}
+# Endpoints dimensionnés par `aspect_ratio` et non par `image_size`. L'ultra est dans ce cas et son défaut
+# est `16:9` : sans ce traitement, un Short vertical revenait en paysage, puis était rogné au montage.
+_ASPECT_RATIO_MODELS = frozenset({"fal-ai/flux-pro/v1.1-ultra"})
+
+
+def _payload(model: str, request: ImageGenerationRequest) -> dict:
+    """Charge utile d'un modèle Flux, dérivée du **modèle** et de son schéma (cf. `_FLUX_EXTRAS`).
+
+    `num_images` n'est pas envoyé : son défaut vaut 1 partout où il existe, et il est absent du schéma de
+    `flux-2-pro`. `output_format` l'est en revanche, car le défaut du dev est `png`.
+    """
+    payload: dict[str, Any] = {"prompt": request.prompt, "output_format": "jpeg"}
+    if model in _ASPECT_RATIO_MODELS:
+        payload["aspect_ratio"] = request.aspect_ratio
     else:
-        payload["safety_tolerance"] = "2"
-    if plan_id == "flux_ultra":
-        payload["raw"] = True
+        payload["image_size"] = {"width": request.image_width, "height": request.image_height}
+    # Modèle inconnu (config modifiée à chaud) : rien de plus, plutôt qu'un champ peut-être non supporté.
+    payload.update(_FLUX_EXTRAS.get(model, {}))
     return payload
 
 
@@ -71,7 +89,7 @@ class FluxProvider:
                 async with session.post(
                     f"https://fal.run/{model}",
                     headers=headers,
-                    json=_payload(plan_id, request),
+                    json=_payload(model, request),
                     timeout=aiohttp.ClientTimeout(total=120),
                 ) as resp:
                     if resp.status != 200:

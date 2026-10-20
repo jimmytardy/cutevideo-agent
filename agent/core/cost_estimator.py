@@ -41,7 +41,7 @@ PLAN_LABELS: dict[str, str] = {
     "off": "Désactivé",
     "flux_schnell": "Flux Schnell",
     "flux_2_dev": "FLUX 2 Dev",
-    "flux_pro": "Flux 1.1 Pro",
+    "flux_pro": "FLUX.2 Pro",
     "flux_ultra": "Flux Pro Ultra",
     "imagen3_fast": "Imagen 3 Fast",
     "imagen3": "Imagen 3",

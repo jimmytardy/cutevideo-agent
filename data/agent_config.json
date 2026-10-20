@@ -48,7 +48,7 @@
       "plan_pricing_eur": {
         "flux_schnell": 0.003,
         "flux_2_dev": 0.024,
-        "flux_pro": 0.05,
+        "flux_pro": 0.042,
         "flux_ultra": 0.07,
         "imagen3_fast": 0.018,
         "imagen3": 0.037
@@ -56,7 +56,7 @@
       "flux": {
         "schnell_model": "fal-ai/flux/schnell",
         "dev_model": "fal-ai/flux-2",
-        "pro_model": "fal-ai/flux-pro/v1.1",
+        "pro_model": "fal-ai/flux-2-pro",
         "ultra_model": "fal-ai/flux-pro/v1.1-ultra"
       },
       "imagen3": {
