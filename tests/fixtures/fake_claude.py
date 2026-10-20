@@ -20,7 +20,8 @@ worker en pleine étape, ou laisse le watchdog d'inactivité trancher
 rôle (`rate_limit_event` refusé, reset dans 3 s, session en erreur), une seule fois
 par run dir. `FAKE_CLAUDE_KILL_BG_IN=<rôle>` simule le plafond d'attente des tâches
 de fond : sous-agent tué (`task_updated`/`killed`), session « réussie » mais sans
-result.json, une seule fois par run dir.
+result.json, une seule fois par run dir ; avec `FAKE_CLAUDE_KILL_BG_STDERR_ONLY=1`,
+seule l'annonce stderr est émise, sans les événements de flux (signal forgeable).
 
 Seuls le contenu « créatif » (script, critique) et les médias sources sont
 synthétiques : la voix est un signal ffmpeg et les médias des mires, pour que le
@@ -327,17 +328,23 @@ def hit_usage_limit(role: str) -> None:
 
 def kill_background_task(role: str) -> None:
     """Plafond d'attente des tâches de fond atteint : Claude Code tue le sous-agent et sort « avec succès »
-    sans écrire result.json (observé avec le CLI 2.1.296, `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS`)."""
+    sans écrire result.json (observé avec le CLI 2.1.296, `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS`).
+
+    `FAKE_CLAUDE_KILL_BG_STDERR_ONLY=1` n'émet que l'annonce stderr, sans les événements de flux : c'est ce
+    qu'un agent hostile pourrait fabriquer en écrivant lui-même dans `claude_stderr.log`, et le runner doit
+    alors conclure à un échec, pas à une reprise.
+    """
     (RUN_DIR / ".fake_kill_bg_hit").write_text(role, encoding="utf-8")
     agent = Subagent(role.split("_")[0], 1)
     task_id = f"bg_{role}"
-    emit({"type": "system", "subtype": "background_tasks_changed", "tasks": [
-        {"task_id": task_id, "run_id": "r1", "task_type": "local_agent",
-         "subagent_type": role.split("_")[0], "description": f"Tâche de fond {role}"}]})
-    emit({"type": "system", "subtype": "task_updated", "task_id": task_id, "run_id": "r1",
-          "patch": {"status": "killed", "end_time": int(time.time() * 1000)}})
-    emit({"type": "system", "subtype": "task_notification", "task_id": task_id, "run_id": "r1",
-          "tool_use_id": agent.id, "status": "stopped", "summary": f"Tâche de fond {role}"})
+    if os.environ.get("FAKE_CLAUDE_KILL_BG_STDERR_ONLY") != "1":
+        emit({"type": "system", "subtype": "background_tasks_changed", "tasks": [
+            {"task_id": task_id, "run_id": "r1", "task_type": "local_agent",
+             "subagent_type": role.split("_")[0], "description": f"Tâche de fond {role}"}]})
+        emit({"type": "system", "subtype": "task_updated", "task_id": task_id, "run_id": "r1",
+              "patch": {"status": "killed", "end_time": int(time.time() * 1000)}})
+        emit({"type": "system", "subtype": "task_notification", "task_id": task_id, "run_id": "r1",
+              "tool_use_id": agent.id, "status": "stopped", "summary": f"Tâche de fond {role}"})
     print(
         f'Background tasks still running 10m after the last turn (subagent "{role}"); stopping them.',
         file=sys.stderr,

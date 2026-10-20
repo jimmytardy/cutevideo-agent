@@ -85,6 +85,7 @@ _MAX_LOGGED_CHARS = 4000
 LOG_FLUSH_INTERVAL_S = 1.5
 # Reprise après un redémarrage du worker (cf. agent/core/studio_resume.py).
 RESUME_FILE = "resume.json"
+RESULT_FILE = "result.json"
 RESUME_PROMPT = (
     "La session a été interrompue par un redémarrage du serveur. Reprends la production là où elle en était "
     "(section « Reprise » de /make-video, `resume.json`) : ne refais pas ce qui est déjà produit et valide, "
@@ -412,14 +413,15 @@ class ClaudeStudioRunner:
                 # Reprise au redémarrage : on garde la session et le run dir.
                 await recorder.close_dangling("interrupted", studio_resume.INTERRUPTED_MESSAGE)
                 raise
-            limit_until = studio_resume.usage_limit_reset(exc) if isinstance(exc, ClaudeRunError) else None
-            if isinstance(exc, ClaudeRunError) and exc.stalled and not limit_until:
+            run_error = exc if isinstance(exc, ClaudeRunError) else None
+            limit_until = studio_resume.usage_limit_reset(run_error) if run_error else None
+            if run_error and run_error.stalled and not limit_until:
                 # Silence prolongé : le travail en cours est perdu mais le run dir et la session restent
                 # intacts, donc la création reprend là où elle en était au lieu d'échouer. Une limite d'usage
                 # atteinte juste avant le silence prime : elle mérite une pause jusqu'au reset, pas une
                 # reprise immédiate qui la heurterait à nouveau.
                 await recorder.close_dangling("interrupted", studio_resume.STALL_MESSAGE)
-                raise studio_resume.StudioInterrupted(reason=studio_resume.STALL_MESSAGE) from exc
+                raise studio_resume.StudioInterrupted(studio_resume.STALL_MESSAGE) from exc
             if limit_until and subscription:
                 # Limite d'usage : session et run dir gardés, reprise au reset (ou abandon au plafond de pauses).
                 await self._pause(limit_until, session_state, config_dir, recorder=recorder)  # NoReturn
@@ -429,17 +431,30 @@ class ClaudeStudioRunner:
             await recorder.close_dangling("stopped" if not isinstance(exc, Exception) else "failed", str(exc)[:500])
             await self._discard_session(config_dir)  # plus de session à reprendre : état effacé comme en succès
             raise exc
-        if not (self.run_dir / "result.json").exists() and background_tasks_stopped(self.run_dir):
+        if (
+            not (self.run_dir / RESULT_FILE).exists()
+            and background_tasks_stopped(self.run_dir)
+            # Deux signaux exigés : l'annonce du CLI sur stderr vit dans le run dir, où l'agent a Write et
+            # Edit, donc il pourrait la forger pour s'offrir une reprise. Une tâche tuée vue sur le flux
+            # stream-json, elle, non : aucun outil de mise à mort ne lui est approuvé (`DISALLOWED_TOOLS`).
+            # Et exiger l'annonce écarte les tâches tuées pour une autre raison (pression mémoire), qui
+            # restent des échecs normaux.
+            and recorder.killed_tasks
+        ):
             # Claude Code a tué ses tâches de fond au plafond d'attente puis terminé la session « avec succès »
             # sans écrire result.json. Session et run dir sont intacts : la création reprend où elle en était
             # (état de session déjà enregistré avant le lancement) au lieu d'être perdue.
             await recorder.close_dangling("interrupted", studio_resume.KILLED_TASK_MESSAGE)
-            raise studio_resume.StudioInterrupted(sorted(recorder.killed_tasks.values()))
+            raise studio_resume.StudioInterrupted(
+                studio_resume.KILLED_TASK_MESSAGE, sorted(set(recorder.killed_tasks.values()))
+            )
         await recorder.close_dangling("failed", "sous-agent non terminé")
-        self._forget_session(config_dir)
+        # `_discard_session` et non `_forget_session` : une session sans result.json est un échec définitif,
+        # donc rien ne doit rester de reprenable en base — comme sur tous les autres chemins d'échec.
+        await self._discard_session(config_dir)
 
         try:
-            result = load_contract(self.run_dir / "result.json", StudioResult)
+            result = load_contract(self.run_dir / RESULT_FILE, StudioResult)
         except ContractError as exc:
             raise ClaudeRunError(f"Claude Studio n'a pas produit de résultat exploitable : {exc}") from exc
         if result.status == "failed" or not result.final_video:

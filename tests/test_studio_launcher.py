@@ -6,12 +6,15 @@ from pathlib import Path
 
 import pytest
 
+from agent.core import studio_resume
 from studio.contracts import Brief
 from studio.launcher import (
     ALLOWED_TOOLS,
+    DISALLOWED_TOOLS,
     REPO_ROOT,
-    LaunchConfig,
+    STALL_TIMEOUT_DEFAULT_S,
     ClaudeRunError,
+    LaunchConfig,
     StreamParser,
     _stall_timeout,
     background_tasks_stopped,
@@ -75,17 +78,18 @@ def test_stream_parser_reports_killed_background_tasks() -> None:
         "tasks": [{"task_id": "bg1", "task_type": "local_agent", "subagent_type": "monteur",
                    "description": "Montage itération 1"}],
     })) == []
-    assert parser.killed_tasks == {}
+    assert parser.killed_task_ids == set()
 
     killed = parser.feed(_line({
         "type": "system", "subtype": "task_updated", "task_id": "bg1", "patch": {"status": "killed"},
     }))
     assert killed == [("task_killed", {"id": "bg1", "label": "Montage itération 1"})]
-    assert parser.killed_tasks == {"bg1": "Montage itération 1"}
+    assert parser.killed_task_ids == {"bg1"}
 
     # `task_started` nomme aussi une tâche (`background_tasks_changed` peut être coalescé par le CLI).
-    parser.feed(_line({"type": "system", "subtype": "task_started",
-                       "task": {"task_id": "bg3", "subagent_type": "voix"}}))
+    # Forme réelle du CLI, vérifiée dans son bundle : le libellé est à la racine, pas sous une clé `task`.
+    parser.feed(_line({"type": "system", "subtype": "task_started", "task_id": "bg3",
+                       "description": "", "subagent_type": "voix"}))
     assert parser.feed(_line({
         "type": "system", "subtype": "task_updated", "task_id": "bg3", "patch": {"status": "killed"},
     })) == [("task_killed", {"id": "bg3", "label": "voix"})]
@@ -94,14 +98,14 @@ def test_stream_parser_reports_killed_background_tasks() -> None:
     assert parser.feed(_line({
         "type": "system", "subtype": "task_updated", "task_id": "bg2", "patch": {"status": "completed"},
     })) == []
-    assert "bg2" not in parser.killed_tasks
+    assert "bg2" not in parser.killed_task_ids
 
 
 def test_stream_parser_names_killed_task_from_later_notification() -> None:
     """Le libellé arrive parfois après la mise à mort (`task_notification`) : il doit l'enrichir."""
     parser = StreamParser()
     parser.feed(_line({"type": "system", "subtype": "task_updated", "task_id": "bg1", "patch": {"status": "killed"}}))
-    assert parser.killed_tasks == {"bg1": ""}
+    assert parser.killed_task_ids == {"bg1"}
     events = parser.feed(_line({
         "type": "system", "subtype": "task_notification", "task_id": "bg1", "status": "stopped",
         "summary": "python -m studio.tools animate-template --template paradox",
@@ -111,19 +115,15 @@ def test_stream_parser_names_killed_task_from_later_notification() -> None:
     })]
 
 
-def test_build_env_removes_the_cli_wait_ceiling_on_background_tasks(tmp_path: Path) -> None:
-    """Un rôle prend le temps qu'il faut : sans cela, le montage est tué à 10 min en plein travail.
-
-    `0` = sans limite côté CLI ; les blocages restent bornés par les délais des outils (sandbox, ffmpeg,
-    `BASH_MAX_TIMEOUT_MS`) et par `--max-turns`.
-    """
-    # `0` est ce que le CLI lit comme « attendre indéfiniment » : c'est la valeur posée qui compte.
-    assert build_env(tmp_path)["CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"] == "0"
-
-
-def test_build_env_background_ceiling_stays_overridable(
+def test_build_env_removes_the_cli_wait_ceiling_on_background_tasks(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """Un rôle prend le temps qu'il faut : sans cela, le montage est tué à 10 min en plein travail.
+
+    `0` est ce que le CLI lit comme « attendre indéfiniment » ; c'est le watchdog d'inactivité qui
+    rattrape un blocage réel (`--max-turns` compte des tours, pas du temps). Reste surchargeable.
+    """
+    assert build_env(tmp_path)["CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"] == "0"
     monkeypatch.setenv("CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS", "900000")
     assert build_env(tmp_path)["CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"] == "900000"
 
@@ -169,7 +169,11 @@ class _FakeProc:
 
 
 def _fake_cli(monkeypatch: pytest.MonkeyPatch, proc: _FakeProc) -> list[_FakeProc]:
-    """Branche `run_claude` sur `proc` et renvoie la liste des process effectivement tués."""
+    """Branche `run_claude` sur `proc` et renvoie la liste des process effectivement tués.
+
+    Le patch vise `agent.core.subprocess_registry.terminate_proc` parce que `run_claude` l'importe à
+    l'intérieur de la fonction : remonter cet import en tête de module casserait ce test en silence.
+    """
     terminated: list[_FakeProc] = []
 
     async def _terminate(target, **_kwargs) -> None:
@@ -185,7 +189,7 @@ def _fake_cli(monkeypatch: pytest.MonkeyPatch, proc: _FakeProc) -> list[_FakePro
 
 
 def _result_line(turns: int = 3) -> str:
-    return json.dumps({"type": "result", "subtype": "success", "is_error": False, "num_turns": turns}) + "\n"
+    return _line({"type": "result", "subtype": "success", "is_error": False, "num_turns": turns})
 
 
 @pytest.mark.asyncio
@@ -201,6 +205,26 @@ async def test_pump_raises_on_prolonged_silence(monkeypatch: pytest.MonkeyPatch,
     assert excinfo.value.stalled
     assert "sans activité" in str(excinfo.value)
     assert terminated == [proc]  # tout le groupe de processus est tué
+
+
+@pytest.mark.asyncio
+async def test_stall_error_carries_the_usage_limit_seen_before_the_silence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Sans cette propagation, une limite atteinte juste avant le silence donnerait une reprise immédiate
+    au lieu d'une pause jusqu'au reset — et chaque reprise la heurterait à nouveau."""
+    monkeypatch.setenv("STUDIO_STALL_TIMEOUT_S", "0.05")
+    rate_limit = {"status": "rejected", "resetsAt": 1792600000, "rateLimitType": "five_hour"}
+    proc = _FakeProc([_line({"type": "rate_limit_event", "rate_limit_info": rate_limit})], never_ends=True)
+    _fake_cli(monkeypatch, proc)
+
+    with pytest.raises(ClaudeRunError) as excinfo:
+        await run_claude(tmp_path, cfg=LaunchConfig(claude_bin="claude"))
+
+    assert excinfo.value.stalled
+    assert excinfo.value.rate_limit == rate_limit
+    # Ce qui compte en aval : la limite redevient reconnaissable, donc le runner mettra en pause.
+    assert studio_resume.usage_limit_reset(excinfo.value) is not None
 
 
 @pytest.mark.asyncio
@@ -223,10 +247,11 @@ async def test_pump_without_stall_timeout_waits_indefinitely(
 ) -> None:
     """`STUDIO_STALL_TIMEOUT_S=0` désactive la surveillance, comme `CLAUDE_STUDIO_TIMEOUT_S=0`.
 
-    Le défaut est rabaissé à 0,01 s : si le `0` n'était pas honoré, ce défaut couperait la session, donc
-    le test prouve bien la désactivation et pas seulement qu'un flux lent passe.
+    Le contraste avec le défaut est vérifié d'abord : variable absente → seuil actif, `0` → désarmé. Sans
+    ce premier assert, le test passerait aussi pour un défaut qui se trouverait être inoffensif.
     """
-    monkeypatch.setattr("studio.launcher.STALL_TIMEOUT_DEFAULT_S", 0.01)
+    monkeypatch.delenv("STUDIO_STALL_TIMEOUT_S", raising=False)
+    assert _stall_timeout() == STALL_TIMEOUT_DEFAULT_S
     monkeypatch.setenv("STUDIO_STALL_TIMEOUT_S", "0")
     assert _stall_timeout() is None
     proc = _FakeProc([_result_line(turns=1)], delay=0.15)
@@ -262,7 +287,12 @@ def test_build_command_keeps_prompt_before_variadic_flags() -> None:
     assert cmd[allowed_end].startswith("--")
     # Recherche web autorisée (le scénariste vérifie ses faits ; restreinte par le frontmatter des rôles).
     assert {"WebSearch", "WebFetch"} <= set(cmd[cmd.index("--allowedTools") + 1:allowed_end])
-    assert "--disallowedTools" not in cmd
+    # Refus explicites : sans outil de mise à mort, l'agent ne peut pas faire déclarer une de ses tâches
+    # `killed` et forger ainsi le signal de reprise (cf. `background_tasks_stopped`).
+    denied_start = cmd.index("--disallowedTools") + 1
+    denied_end = denied_start + len(DISALLOWED_TOOLS)
+    assert cmd[denied_start:denied_end] == list(DISALLOWED_TOOLS)
+    assert cmd[denied_end].startswith("--")  # l'option variadique n'avale pas la suivante
 
 
 def test_build_env_strips_inherited_secrets_and_injects_user_keys(
@@ -327,5 +357,9 @@ def test_session_timeout_zero_means_unlimited(monkeypatch) -> None:
     assert LaunchConfig().timeout_s is None
     monkeypatch.setenv("CLAUDE_STUDIO_TIMEOUT_S", "7200")
     assert LaunchConfig().timeout_s == 7200.0
+    # Sans limite par défaut : un plafond absolu couperait un montage animé en `failed` non reprenable,
+    # et s'il tombait sous le seuil d'inactivité il se déclencherait toujours le premier, rendant le
+    # watchdog inatteignable.
     monkeypatch.delenv("CLAUDE_STUDIO_TIMEOUT_S")
-    assert LaunchConfig().timeout_s == 3600.0
+    assert LaunchConfig().timeout_s is None
+    assert STALL_TIMEOUT_DEFAULT_S > 0  # le relais du plafond retiré

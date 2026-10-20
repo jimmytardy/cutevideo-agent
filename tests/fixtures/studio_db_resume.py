@@ -123,6 +123,7 @@ def _transcripts(user_id: uuid.UUID, pid: uuid.UUID) -> int:
 
 
 async def main() -> dict:
+    from agent.core.orchestrator import Orchestrator
     from agent.core.queue import queue
     from studio.launcher import default_runs_dir
 
@@ -177,15 +178,16 @@ async def main() -> dict:
         facts["give_up"]["reconciled_after"] = await reconcile_orphan_running_projects(worker_id="test")
 
         # 4. Tâche de fond tuée par le CLI : session « réussie » sans result.json → reprise, pas échec.
-        from agent.core.orchestrator import Orchestrator
-
         pid4, uid4 = await _setup()
         os.environ["FAKE_CLAUDE_KILL_BG_IN"] = "monteur"
-        await Orchestrator().run_pipeline(pid4)
-        facts["killed_bg"] = {**await _project(pid4), "runs": await _runs(pid4),
-                              "transcripts": _transcripts(uid4, pid4),
-                              "scenario_kept": (default_runs_dir() / str(pid4) / "scenario.json").is_file()}
-        os.environ.pop("FAKE_CLAUDE_KILL_BG_IN")
+        try:
+            await Orchestrator().run_pipeline(pid4)
+            facts["killed_bg"] = {**await _project(pid4), "runs": await _runs(pid4),
+                                  "transcripts": _transcripts(uid4, pid4),
+                                  "scenario_kept": (default_runs_dir() / str(pid4) / "scenario.json").is_file()}
+        finally:
+            # Comme au cas 5 : un échec ferait fuiter le mode de panne vers les scénarios suivants.
+            os.environ.pop("FAKE_CLAUDE_KILL_BG_IN", None)
         facts["killed_bg_resume"] = await _resume_like_new_worker(pid4)
         facts["killed_bg_resumed"] = {**await _project(pid4), "runs": await _runs(pid4)}
 
@@ -206,6 +208,28 @@ async def main() -> dict:
             os.environ.pop("STUDIO_STALL_TIMEOUT_S", None)
         facts["stalled_resume"] = await _resume_like_new_worker(pid5)
         facts["stalled_resumed"] = {**await _project(pid5), "runs": await _runs(pid5)}
+
+        # 6. Annonce stderr SANS événement de flux : signal forgeable, donc échec et non reprise.
+        pid6, _ = await _setup()
+        os.environ["FAKE_CLAUDE_KILL_BG_IN"] = "monteur"
+        os.environ["FAKE_CLAUDE_KILL_BG_STDERR_ONLY"] = "1"
+        error = None
+        try:
+            await Orchestrator().run_pipeline(pid6)
+        except Exception as exc:
+            error = str(exc)
+        finally:
+            os.environ.pop("FAKE_CLAUDE_KILL_BG_IN", None)
+            os.environ.pop("FAKE_CLAUDE_KILL_BG_STDERR_ONLY", None)
+        from studio.launcher import background_tasks_stopped
+
+        facts["forged_stderr"] = {
+            **await _project(pid6),
+            "raised": error,
+            # Preuve que le premier signal était bien là : sans elle, un échec pour une autre cause
+            # (annonce jamais écrite) passerait pour une validation du garde-fou.
+            "announcement_written": background_tasks_stopped(default_runs_dir() / str(pid6)),
+        }
 
         facts["limit"] = await _usage_limit_cases()
     return facts

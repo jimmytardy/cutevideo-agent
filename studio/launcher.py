@@ -41,15 +41,22 @@ SUBAGENT_TOOLS = ("Agent", "Task")
 # vérifier ses faits. Le Bash reste limité aux outils Studio et l'environnement est purgé de ses secrets.
 WEB_TOOLS = ("WebSearch", "WebFetch")
 ALLOWED_TOOLS = ("Bash(python -m studio.tools:*)", "Read", "Write", "Edit", "Glob", *WEB_TOOLS, *SUBAGENT_TOOLS)
-DISALLOWED_TOOLS: tuple[str, ...] = ()
+# Explicite ce que le mode headless refuserait de toute façon faute d'approbation : sans outil de mise à
+# mort, l'agent ne peut pas faire déclarer une de ses tâches `killed` et forger le signal de reprise
+# (cf. `background_tasks_stopped`). `KillShell` et `KillBash` sont les deux alias de `TaskStop` : on les
+# nomme tous, rien ne garantissant qu'un refus sur l'outil couvre ses alias. `--disallowedTools` n'est passé
+# que si ce tuple est non vide.
+DISALLOWED_TOOLS: tuple[str, ...] = ("TaskStop", "KillShell", "KillBash")
 # Événements `system` qui décrivent les tâches de fond de Claude Code (cf. `StreamParser._on_background`).
 _BACKGROUND_SUBTYPES = ("background_tasks_changed", "task_started", "task_updated", "task_notification")
-# Attente des tâches de fond après la fin du tour. `0` = sans limite : un rôle prend le temps qu'il faut.
-BG_WAIT_CEILING_MS = 0
 # Message du CLI quand ce plafond est atteint et qu'il tue ses tâches de fond.
 _BG_CEILING_MARKER = "Background tasks still running"
+# Journal stderr du CLI : écrit par `run_claude()`, relu par `background_tasks_stopped()`.
+_STDERR_LOG = "claude_stderr.log"
 # Silence du flux stream-json au-delà duquel la session est tenue pour bloquée (cf. `_stall_timeout`).
 STALL_TIMEOUT_DEFAULT_S = 3600.0
+# Libellé de tâche de fond : tronqué, il finit dans `Project.error_message` affiché au dashboard.
+_LABEL_MAX = 200
 # Ligne stream-json max (les tool_result peuvent contenir de gros JSON).
 _STREAM_LIMIT = 16 * 1024 * 1024
 
@@ -78,8 +85,14 @@ def prepare_run_dir(run_dir: Path, brief: Brief) -> Path:
 
 
 def _session_timeout() -> float | None:
-    """Durée max de la session Claude (`CLAUDE_STUDIO_TIMEOUT_S`, en s) ; 0 ou moins = pas de limite."""
-    value = env_float("CLAUDE_STUDIO_TIMEOUT_S", 3600.0)
+    """Durée max de la session Claude (`CLAUDE_STUDIO_TIMEOUT_S`, en s) ; 0 ou moins = pas de limite.
+
+    Sans limite par défaut : un rôle prend le temps qu'il faut, et c'est `_stall_timeout()` qui rattrape un
+    blocage réel. Un plafond absolu couperait un montage animé en plein travail, en `failed` non reprenable.
+    Si vous en reposez un, gardez-le **nettement supérieur** au seuil d'inactivité, sinon il se déclenche le
+    premier et le watchdog ne peut jamais agir.
+    """
+    value = env_float("CLAUDE_STUDIO_TIMEOUT_S", 0.0)
     return value if value > 0 else None
 
 
@@ -87,9 +100,12 @@ def _stall_timeout() -> float | None:
     """Silence toléré sur le flux (`STUDIO_STALL_TIMEOUT_S`, en s) ; 0 ou moins = pas de surveillance.
 
     On ne borne pas la durée de travail d'un rôle — un montage animé dure des heures — mais le silence :
-    tant que Claude travaille, le flux porte des événements (`tool`, `agent_stream`, `task_progress`, y
-    compris pour les tâches de fond). Le plus long silence légitime est celui d'une commande Bash au premier
-    plan, qui n'émet rien avant de rendre la main et que `BASH_MAX_TIMEOUT_MS` plafonne à 30 min.
+    tant qu'un sous-agent travaille, le flux porte des événements (`tool`, `agent_stream`, `task_progress`).
+
+    Limite connue : une commande Bash passée en tâche de fond, elle, n'émet rien pendant son exécution
+    (mesuré sur un run réel) et peut aller jusqu'à 2 h. Un rôle qui en lance une seule et attend pourrait
+    donc être coupé en plein travail légitime ; relever le seuil au-delà de 2 h si le cas se présente. Le
+    coût d'un faux positif reste borné à une reprise, pas à un échec.
     """
     value = env_float("STUDIO_STALL_TIMEOUT_S", STALL_TIMEOUT_DEFAULT_S)
     return value if value > 0 else None
@@ -194,7 +210,7 @@ def build_env(
     # seul l'encodage par clip de `studio/render.py` renseigne, et `--max-turns`, qui compte des tours et non
     # du temps. Il n'y a donc plus de plafond au niveau de la session (`CLAUDE_STUDIO_TIMEOUT_S=0`) : c'est
     # `_stall_timeout()` qui rattrape un blocage réel, en coupant la session sur un silence prolongé du flux.
-    env.setdefault("CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS", str(BG_WAIT_CEILING_MS))
+    env.setdefault("CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS", "0")
     return env
 
 
@@ -217,7 +233,7 @@ class StreamParser:
         self.limit_message: str | None = None
         # Tâches de fond tuées par Claude Code au plafond d'attente : la session se termine « avec succès »
         # sans avoir fini le travail. `task_id → libellé`, le libellé arrivant parfois après la mise à mort.
-        self.killed_tasks: dict[str, str] = {}
+        self.killed_task_ids: set[str] = set()
         self.task_labels: dict[str, str] = {}
 
     def feed(self, line: str) -> list[tuple[str, dict[str, Any]]]:
@@ -276,23 +292,26 @@ class StreamParser:
         libellés enrichissent le message d'interruption ; c'est `background_tasks_stopped()` qui décide
         si la session s'est arrêtée en plein travail.
         """
-        described = [*(msg.get("tasks") or []), msg.get("task")]
-        for task in described:
-            if isinstance(task, dict) and (label := str(task.get("description") or task.get("subagent_type") or "")):
-                self.task_labels[str(task.get("task_id") or "")] = label
+        # `background_tasks_changed` liste ses tâches dans `tasks`, tandis que `task_started` porte
+        # `description` / `subagent_type` à la racine du message : `msg` est donc lui-même un porteur.
+        for task in (*(msg.get("tasks") or []), msg):
+            if not isinstance(task, dict):
+                continue
+            label = str(task.get("description") or task.get("subagent_type") or "")[:_LABEL_MAX]
+            if label and (task_id := str(task.get("task_id") or "")):
+                self.task_labels[task_id] = label
         task_id = str(msg.get("task_id") or "")
         if not task_id:
             return []
         if summary := msg.get("summary"):
-            self.task_labels.setdefault(task_id, str(summary)[:200])
+            # Repli moins précis qu'une `description` : il ne doit jamais l'écraser.
+            self.task_labels.setdefault(task_id, str(summary)[:_LABEL_MAX])
         if (msg.get("patch") or {}).get("status") == "killed":
-            self.killed_tasks[task_id] = self.task_labels.get(task_id, "")
-        if task_id in self.killed_tasks:
-            # Le libellé peut arriver après la mise à mort : on réémet pour l'enrichir.
-            label = self.killed_tasks[task_id] or self.task_labels.get(task_id, "")
-            self.killed_tasks[task_id] = label
-            return [("task_killed", {"id": task_id, "label": label})]
-        return []
+            self.killed_task_ids.add(task_id)
+        if task_id not in self.killed_task_ids:
+            return []
+        # Le libellé peut arriver après la mise à mort : on réémet l'événement pour l'enrichir.
+        return [("task_killed", {"id": task_id, "label": self.task_labels.get(task_id, "")})]
 
     def _on_tool_use(self, block: dict[str, Any], parent: str) -> tuple[str, dict[str, Any]]:
         """Lancement d'un sous-agent (rôle) ou appel d'outil attribué au rôle qui l'a fait."""
@@ -347,7 +366,7 @@ def background_tasks_stopped(run_dir: Path) -> bool:
     normal, et un message du CLI qui changerait de formulation nous ramène simplement à ce comportement.
     """
     try:
-        stderr = (run_dir / "claude_stderr.log").read_text(encoding="utf-8", errors="replace")
+        stderr = (run_dir / _STDERR_LOG).read_text(encoding="utf-8", errors="replace")
     except OSError:
         return False
     return _BG_CEILING_MARKER in stderr
@@ -358,17 +377,6 @@ def error_detail(parser: StreamParser) -> str:
     Claude Code sur une limite d'usage (`result` est alors vide)."""
     result = parser.result or {}
     return str(result.get("result") or "; ".join(map(str, result.get("errors") or [])) or parser.limit_message or "")
-
-
-class _StalledSession(Exception):
-    """Silence prolongé du flux, levé par `_pump` et traduit en `ClaudeRunError(stalled=True)`.
-
-    Distincte de `TimeoutError` pour ne pas être confondue avec le délai global `CLAUDE_STUDIO_TIMEOUT_S`.
-    """
-
-    def __init__(self, seconds: float) -> None:
-        super().__init__(f"aucune activité depuis {seconds:.0f}s")
-        self.seconds = seconds
 
 
 class ClaudeRunError(RuntimeError):
@@ -415,7 +423,7 @@ async def run_claude(
     if shutil.which(cfg.claude_bin) is None:
         raise ClaudeRunError(f"CLI Claude introuvable : {cfg.claude_bin} (npm i -g @anthropic-ai/claude-code)")
     log_path = run_dir / "claude_stream.jsonl"
-    stderr_path = run_dir / "claude_stderr.log"
+    stderr_path = run_dir / _STDERR_LOG
     parser = StreamParser(str(run_dir))
 
     with stderr_path.open("wb") as stderr_fh:
@@ -442,7 +450,19 @@ async def run_claude(
                         try:
                             raw = await asyncio.wait_for(proc.stdout.readline(), timeout=stall_s)
                         except TimeoutError:
-                            raise _StalledSession(stall_s or 0.0) from None
+                            # `stalled` = reprenable, contrairement au délai global de session, dont le
+                            # `TimeoutError` est levé un cran plus haut par `wait_for(_pump())`. Le
+                            # `except BaseException` de sortie tue tout le groupe de processus (outils,
+                            # ffmpeg, Chromium). `stall_s` est forcément un seuil réel ici : `None`
+                            # désarmerait `wait_for`, qui n'expirerait alors jamais.
+                            raise ClaudeRunError(
+                                f"session Claude sans activité depuis {stall_s:.0f}s : tenue pour bloquée",
+                                # Une limite d'usage atteinte juste avant le silence doit rester
+                                # reconnaissable, sinon on reprend au lieu de mettre en pause.
+                                rate_limit=parser.rate_limit,
+                                limit_message=parser.limit_message,
+                                stalled=True,
+                            ) from None
                         if not raw:
                             break
                         line = raw.decode("utf-8", errors="replace")
@@ -458,17 +478,6 @@ async def run_claude(
                 await proc.wait()
 
             await asyncio.wait_for(_pump(), timeout=cfg.timeout_s)
-        except _StalledSession as exc:
-            # Le groupe de processus entier est tué : outils, ffmpeg et Chromium compris.
-            await terminate_proc(proc)
-            raise ClaudeRunError(
-                f"session Claude sans activité depuis {exc.seconds:.0f}s : tenue pour bloquée",
-                # Propagés comme sur les autres sorties sans résultat : une limite d'usage atteinte juste
-                # avant le silence doit rester reconnaissable, sinon on reprend au lieu de mettre en pause.
-                rate_limit=parser.rate_limit,
-                limit_message=parser.limit_message,
-                stalled=True,
-            ) from exc
         except TimeoutError as exc:
             await terminate_proc(proc)
             raise ClaudeRunError(f"session Claude interrompue après {cfg.timeout_s:.0f}s") from exc

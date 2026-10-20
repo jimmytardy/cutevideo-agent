@@ -161,6 +161,8 @@ class Orchestrator:
             logger.info("Pipeline annulé pour le projet %s", project_id)
             raise
         except StudioInterrupted as interrupted:
+            from agent.core.storage import cleanup_local_videos_for_project
+
             # Session coupée en plein travail (tâche de fond tuée par le CLI, ou silence prolongé) : comme
             # à l'arrêt du worker, le projet reste `running` et `pipeline_reconcile` le remet en file pour
             # que la création reprenne (studio_resume).
@@ -169,6 +171,9 @@ class Orchestrator:
                 async with AsyncSessionFactory() as session:
                     await self._update_project_status(session, project_id, "stopped", "Arrêté manuellement")
                 await stop_running_agent_runs(project_id)
+                # Comme sur le chemin `CancelledError` : le projet ne reprendra jamais, ses vidéos locales
+                # n'ont donc pas à attendre la purge planifiée.
+                await cleanup_local_videos_for_project(project_id)
                 logger.info("Pipeline arrêté manuellement pendant une interruption (%s)", project_id)
                 return
             async with AsyncSessionFactory() as session:

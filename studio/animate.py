@@ -79,7 +79,13 @@ async def _finish(
     run_dir: Path, name: str, work: Path, fps: int, duration: float, credit: dict, warnings: list[str] | None = None
 ) -> dict[str, Any]:
     out = run_dir / "media" / f"anim_{name}.mp4"
-    await _encode(work / "frames", fps, duration, out)
+    # Écriture atomique : la reprise réutilise les animations déjà présentes dans `media/` et
+    # `render._validate_inputs()` ne revérifie que les images, donc un .mp4 tronqué par une mise à mort du
+    # groupe de processus — devenue un cas de routine avec le watchdog — serait réutilisé tel quel.
+    tmp_out = work / f"anim_{name}.tmp.mp4"
+    await _encode(work / "frames", fps, duration, tmp_out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    tmp_out.replace(out)
     rel = str(out.relative_to(run_dir))
     record_credit(run_dir, rel, {
         "source": "animation", "license": "original", "author": "Claude Studio",

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -76,8 +77,8 @@ class StudioInterrupted(Exception):
     `STUDIO_MAX_RESUMES` de `decide()` empêche la boucle si la reprise ne progresse pas.
     """
 
-    def __init__(self, tasks: list[str] | None = None, *, reason: str = KILLED_TASK_MESSAGE) -> None:
-        self.tasks = [t for t in (tasks or []) if t]
+    def __init__(self, reason: str, tasks: Sequence[str] = ()) -> None:
+        self.tasks = [t for t in tasks if t]
         detail = f" ({', '.join(self.tasks)})" if self.tasks else ""
         super().__init__(f"{reason}{detail}")
 

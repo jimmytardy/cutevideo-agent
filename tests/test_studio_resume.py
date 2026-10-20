@@ -79,7 +79,8 @@ def test_claude_run_error_no_turn_played() -> None:
 
 @pytest.mark.asyncio
 async def test_recorder_collects_killed_background_tasks() -> None:
-    """Le runner s'appuie sur ces libellés pour décider d'une reprise plutôt que d'un échec."""
+    """Le runner décide sur la *présence* d'identifiants ; ces libellés ne servent qu'à nommer la
+    tâche dans le message d'interruption."""
     from agent.core.claude_studio import _ProgressRecorder
 
     recorder = _ProgressRecorder(uuid.uuid4())
@@ -92,17 +93,22 @@ async def test_recorder_collects_killed_background_tasks() -> None:
 
 def test_studio_interrupted_carries_its_reason() -> None:
     """Le message part dans `Project.error_message` : il doit dire pourquoi, pas supposer un plafond du CLI."""
-    stalled = studio_resume.StudioInterrupted(reason=studio_resume.STALL_MESSAGE)
+    stalled = studio_resume.StudioInterrupted(studio_resume.STALL_MESSAGE)
     assert str(stalled) == studio_resume.STALL_MESSAGE
     assert studio_resume.KILLED_TASK_MESSAGE not in str(stalled)
 
 
 def test_studio_interrupted_names_the_killed_tasks() -> None:
-    interrupted = studio_resume.StudioInterrupted(["Montage itération 1", "", "animate-template"])
-    assert interrupted.tasks == ["Montage itération 1", "animate-template"]
+    interrupted = studio_resume.StudioInterrupted(
+        studio_resume.KILLED_TASK_MESSAGE, ["Montage itération 1", "", "animate-template"]
+    )
+    assert interrupted.tasks == ["Montage itération 1", "animate-template"]  # les vides sont écartés
     assert studio_resume.KILLED_TASK_MESSAGE in str(interrupted)
     assert "Montage itération 1" in str(interrupted)
-    assert str(studio_resume.StudioInterrupted()) == studio_resume.KILLED_TASK_MESSAGE
+    # Sans tâche nommée, le message reste la seule raison.
+    assert str(studio_resume.StudioInterrupted(studio_resume.KILLED_TASK_MESSAGE)) == (
+        studio_resume.KILLED_TASK_MESSAGE
+    )
 
 
 def _successes(runs: list[list], *names: str) -> list[int]:
@@ -249,7 +255,8 @@ def test_worker_restart_resumes_creation(tmp_path: Path) -> None:
     assert migrate.returncode == 0, migrate.stderr[-3000:]
     proc = subprocess.run(
         [sys.executable, str(REPO_ROOT / "tests" / "fixtures" / "studio_db_resume.py")],
-        cwd=REPO_ROOT, env=env, capture_output=True, text=True, timeout=1500,
+        # 6 créations complètes désormais, dont une qui attend 60 s d'inactivité.
+        cwd=REPO_ROOT, env=env, capture_output=True, text=True, timeout=3000,
     )
     assert proc.returncode == 0, proc.stderr[-3000:]
     facts = json.loads(proc.stdout.strip().splitlines()[-1])
@@ -294,6 +301,13 @@ def test_worker_restart_resumes_creation(tmp_path: Path) -> None:
     stalled_resumed = facts["stalled_resumed"]
     assert stalled_resumed["status"] == "approved" and stalled_resumed["session"] is None
     assert _successes(stalled_resumed["runs"], *EARLY_STEPS) == _successes(stalled["runs"], *EARLY_STEPS)
+
+    # L'annonce stderr seule est forgeable par l'agent : elle ne doit pas suffire à obtenir une reprise.
+    forged = facts["forged_stderr"]
+    assert forged["announcement_written"]  # le premier signal était présent : seul le second manquait
+    assert forged["status"] == "failed"
+    assert "result.json introuvable" in (forged["error"] or "")
+    assert forged["session"] is None  # aucune session gardée pour une reprise
 
     limit = facts["limit"]
     paused = limit["paused"]

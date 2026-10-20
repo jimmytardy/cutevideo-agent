@@ -283,16 +283,11 @@ async def render_timeline(run_dir: Path, timeline_path: Path, output_path: Path)
         voice, music, audio, music_volume=timeline.music_volume, sfx_events=sfx_events, work=work
     )
     vf_args = _subtitle_filter_args(run_dir, timeline, work)
-    # Écriture atomique, comme le cache de segments : `renders/vN.mp4` signale à la reprise que le montage de
-    # l'itération est fait (cf. make-video.md), donc un fichier tronqué par une mise à mort du groupe de
-    # processus ferait critiquer un rendu corrompu.
+    # Écriture atomique via `work/`, déjà recréé à chaque rendu et laissé en place pour diagnostic :
+    # `renders/vN.mp4` signale à la reprise que le montage de l'itération est fait (cf. make-video.md),
+    # donc un fichier tronqué par une mise à mort du groupe de processus ferait critiquer un rendu corrompu.
     mux_tmp = work / "mux.mp4"
-    try:
-        await _mux(video_only, audio, vf_args, mux_tmp)
-    except BaseException:
-        mux_tmp.unlink(missing_ok=True)
-        raise
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    await _mux(video_only, audio, vf_args, mux_tmp)
     mux_tmp.replace(output_path)
     shutil.rmtree(work, ignore_errors=True)
 
