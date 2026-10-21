@@ -133,18 +133,33 @@ def write_json(rel: str, data: object) -> None:
 
 
 class Subagent:
+    """Sous-agent lancé en tâche de fond, comme le fait le vrai CLI.
+
+    L'ordre est celui d'un run réel : `task_started` annonce la tâche **avant** l'accusé de lancement
+    que rend aussitôt l'outil `Task`, et `task_notification` `completed` porte le vrai rapport en fin de
+    travail. Clore l'étape sur l'accusé donnait des `AgentRun` de durée nulle qui gonflaient le compteur
+    de progrès dont dépend le plafond `STUDIO_MAX_RESUMES`.
+    """
+
     def __init__(self, role: str, iteration: int) -> None:
         self.role = role
         self.id = _next_id(f"task_{role}")
+        self.task_id = _next_id(f"bg_{role}")
         emit({"type": "assistant", "parent_tool_use_id": None, "message": {"content": [{
             "type": "tool_use", "id": self.id, "name": "Task",
             "input": {"subagent_type": role, "description": f"{role} itération {iteration}",
                       "prompt": f"Itération {iteration}"}}]}})
-
-    def done(self, report: str) -> None:
+        emit({"type": "system", "subtype": "task_started", "task_id": self.task_id,
+              "tool_use_id": self.id, "subagent_type": role,
+              "description": f"{role} itération {iteration}"})
         emit({"type": "user", "parent_tool_use_id": None, "message": {"content": [{
             "type": "tool_result", "tool_use_id": self.id,
-            "content": [{"type": "text", "text": f"Rapport.\nThe report follows:\n  {report}\nagentId: x"}]}]}})
+            "content": [{"type": "text", "text": "Async agent launched successfully."}]}]}})
+
+    def done(self, report: str) -> None:
+        emit({"type": "system", "subtype": "task_notification", "task_id": self.task_id,
+              "tool_use_id": self.id, "status": "completed",
+              "summary": f"Rapport.\nThe report follows:\n  {report}\nagentId: x"})
 
 
 def scenariste(brief: dict, attempt: int = 1) -> None:
@@ -336,7 +351,7 @@ def kill_background_task(role: str) -> None:
     """
     (RUN_DIR / ".fake_kill_bg_hit").write_text(role, encoding="utf-8")
     agent = Subagent(role.split("_")[0], 1)
-    task_id = f"bg_{role}"
+    task_id = agent.task_id
     if os.environ.get("FAKE_CLAUDE_KILL_BG_STDERR_ONLY") != "1":
         emit({"type": "system", "subtype": "background_tasks_changed", "tasks": [
             {"task_id": task_id, "run_id": "r1", "task_type": "local_agent",

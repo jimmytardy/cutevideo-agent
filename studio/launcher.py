@@ -235,6 +235,13 @@ class StreamParser:
         # sans avoir fini le travail. `task_id → libellé`, le libellé arrivant parfois après la mise à mort.
         self.killed_task_ids: set[str] = set()
         self.task_labels: dict[str, str] = {}
+        # Sous-agents exécutés en tâche de fond : leur `tool_result` arrive aussitôt et ne dit rien de
+        # leur travail. `task_started` les annonce avant cet accusé, ce qui permet de l'ignorer.
+        self.background_agents: set[str] = set()
+        # Accusés mis de côté : si le CLI cessait d'émettre ses notifications, ils reprennent du service
+        # comme fin d'étape (cf. `_reconcile_background_agents`).
+        self.background_acks: dict[str, str] = {}
+        self.saw_task_notification = False
 
     def feed(self, line: str) -> list[tuple[str, dict[str, Any]]]:
         line = line.strip()
@@ -270,9 +277,10 @@ class StreamParser:
             return [self._on_tool_use(b, parent) for b in blocks if b.get("type") == "tool_use"]
         if mtype == "user":
             return [
-                self._on_agent_end(b)
+                event
                 for b in blocks
                 if b.get("type") == "tool_result" and b.get("tool_use_id", "") in self.agents
+                if (event := self._on_agent_tool_result(b)) is not None
             ]
         if mtype == "system" and msg.get("subtype") == "permission_denied":
             return [("denied", {"role": self.agents.get(parent, "producteur"), "name": msg.get("tool_name", "")})]
@@ -280,18 +288,44 @@ class StreamParser:
             return self._on_background(msg)
         if mtype == "result":
             self.result = msg
-            return [("result", msg)]
+            return [*self._reconcile_background_agents(), ("result", msg)]
         if mtype == "rate_limit_event" and isinstance(msg.get("rate_limit_info"), dict):
             self.rate_limit = msg["rate_limit_info"]
         return []
 
     def _on_background(self, msg: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
-        """Nomme les tâches de fond et repère celles que Claude Code tue (`task_updated` + `killed`).
+        """Suit le cycle de vie des tâches de fond du CLI.
 
-        `task_started`, `background_tasks_changed` et `task_notification` ne servent qu'au libellé. Ces
-        libellés enrichissent le message d'interruption ; c'est `background_tasks_stopped()` qui décide
-        si la session s'est arrêtée en plein travail.
+        Deux rôles. D'abord la fin réelle d'un sous-agent : `task_started` l'annonce (avec son
+        `tool_use_id`) **avant** l'accusé de lancement, et `task_notification` `completed` porte son vrai
+        rapport — sans quoi l'étape serait close dès le lancement, avec une durée nulle.
+        Les deux signaux de clôture sont exclusifs : `background_agents` décide lequel vaut pour un
+        sous-agent donné, de sorte qu'il en reçoive toujours exactement un. Un statut autre que
+        `completed` (`stopped` sur une tâche tuée) n'en est pas un : l'étape reste ouverte et c'est
+        `close_dangling()` qui la clôt avec le statut que le contexte impose.
+        Ensuite le libellé des tâches tuées (`task_updated` + `killed`), qui enrichit le message
+        d'interruption ; c'est `background_tasks_stopped()` qui décide si la session s'est arrêtée en
+        plein travail.
         """
+        events: list[tuple[str, dict[str, Any]]] = []
+        if msg.get("subtype") == "task_notification":
+            self.saw_task_notification = True
+        tool_use_id = str(msg.get("tool_use_id") or "")
+        if tool_use_id in self.agents:
+            if msg.get("subtype") == "task_started":
+                self.background_agents.add(tool_use_id)
+            elif (
+                msg.get("subtype") == "task_notification"
+                and msg.get("status") == "completed"
+                and tool_use_id in self.background_agents
+            ):
+                self.background_acks.pop(tool_use_id, None)
+                events.append(("agent_end", {
+                    "id": tool_use_id,
+                    "role": self.agents[tool_use_id],
+                    "is_error": False,
+                    "output": _tool_result_text(msg.get("summary")),
+                }))
         # `background_tasks_changed` liste ses tâches dans `tasks`, tandis que `task_started` porte
         # `description` / `subagent_type` à la racine du message : `msg` est donc lui-même un porteur.
         for task in (*(msg.get("tasks") or []), msg):
@@ -302,16 +336,17 @@ class StreamParser:
                 self.task_labels[task_id] = label
         task_id = str(msg.get("task_id") or "")
         if not task_id:
-            return []
+            return events
         if summary := msg.get("summary"):
             # Repli moins précis qu'une `description` : il ne doit jamais l'écraser.
             self.task_labels.setdefault(task_id, str(summary)[:_LABEL_MAX])
         if (msg.get("patch") or {}).get("status") == "killed":
             self.killed_task_ids.add(task_id)
         if task_id not in self.killed_task_ids:
-            return []
+            return events
         # Le libellé peut arriver après la mise à mort : on réémet l'événement pour l'enrichir.
-        return [("task_killed", {"id": task_id, "label": self.task_labels.get(task_id, "")})]
+        events.append(("task_killed", {"id": task_id, "label": self.task_labels.get(task_id, "")}))
+        return events
 
     def _on_tool_use(self, block: dict[str, Any], parent: str) -> tuple[str, dict[str, Any]]:
         """Lancement d'un sous-agent (rôle) ou appel d'outil attribué au rôle qui l'a fait."""
@@ -327,6 +362,47 @@ class StreamParser:
                 "prompt": tool_input.get("prompt", ""),
             })
         return ("tool", {"role": self.agents.get(parent, "producteur"), "name": name, "input": tool_input})
+
+    def _on_agent_tool_result(self, block: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
+        """Fin d'un sous-agent telle que la rend l'outil `Task`, ou `None` si ce n'est qu'un accusé.
+
+        En tâche de fond, le `tool_result` d'un succès arrive aussitôt et ne dit rien du travail : le vrai
+        rapport viendra par `task_notification` (cf. `_on_background`). Une **erreur**, elle, n'arrive que
+        par ce `tool_result` — c'est le seul porteur du message d'échec, dont dépend la détection d'une
+        limite d'usage (`_ProgressRecorder.limit_failures`) : la filtrer la rendrait muette.
+        """
+        tool_id = block["tool_use_id"]
+        if tool_id in self.background_agents and not block.get("is_error"):
+            self.background_acks[tool_id] = _tool_result_text(block.get("content"))
+            return None
+        self.background_acks.pop(tool_id, None)
+        return self._on_agent_end(block)
+
+    def _reconcile_background_agents(self) -> list[tuple[str, dict[str, Any]]]:
+        """Repli de fin de session si le CLI n'a émis aucune notification de tâche.
+
+        Les accusés mis de côté ne sont repris que dans ce cas précis : le mécanisme s'est tu pour tout le
+        monde, donc le contrat du CLI a changé. On revient alors à l'ancien comportement — des étapes de
+        durée nulle — plutôt que de laisser `close_dangling()` marquer en échec les étapes d'une création
+        réussie, et surtout plutôt que de laisser le compteur de progrès à zéro, ce qui ferait abandonner
+        au plafond `STUDIO_MAX_RESUMES` une création qui avance.
+
+        Une seule notification reçue suffit à écarter ce repli : une étape restée ouverte malgré un
+        mécanisme qui fonctionne n'a réellement pas fini (tâche tuée, notifiée `stopped`), et c'est
+        `close_dangling()` qui doit la clore.
+        """
+        if self.saw_task_notification or not self.background_acks:
+            return []
+        logger.warning(
+            "Claude Code n'a notifié aucune tâche de fond : %d étape(s) closes sur leur accusé de lancement",
+            len(self.background_acks),
+        )
+        acks, self.background_acks = self.background_acks, {}
+        return [
+            ("agent_end", {"id": tool_id, "role": self.agents[tool_id], "is_error": False, "output": ack})
+            for tool_id, ack in acks.items()
+            if tool_id in self.agents
+        ]
 
     def _on_agent_end(self, block: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         tool_id = block["tool_use_id"]

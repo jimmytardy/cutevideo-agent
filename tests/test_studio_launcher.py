@@ -57,6 +57,110 @@ def test_stream_parser_tracks_subagents_and_tools() -> None:
     assert events == [("agent_end", {"id": "t1", "role": "monteur", "is_error": False, "output": "ok"})]
 
 
+def test_stream_parser_closes_a_background_agent_on_its_real_completion() -> None:
+    """Un sous-agent lancé en tâche de fond rend un `tool_result` immédiat qui n'est qu'un accusé.
+
+    Clore l'étape dessus donnait des `AgentRun` de durée nulle portant « Async agent launched… » comme
+    rapport — et, plus grave, gonflait le compteur de progrès dont dépend le plafond `STUDIO_MAX_RESUMES`.
+    Formes et ordre repris d'un run réel : `task_started` précède l'accusé, `task_notification` suit.
+    """
+    parser = StreamParser()
+    assert parser.feed(_assistant([{
+        "type": "tool_use", "id": "t1", "name": "Task",
+        "input": {"subagent_type": "monteur", "description": "Montage itération 1", "prompt": "…"},
+    }]))[0][0] == "agent_start"
+
+    parser.feed(_line({"type": "system", "subtype": "task_started", "task_id": "bg1",
+                       "tool_use_id": "t1", "subagent_type": "monteur", "description": "Montage itération 1"}))
+    # L'accusé de lancement ne doit rien clore.
+    assert parser.feed(_line({
+        "type": "user",
+        "message": {"content": [{"type": "tool_result", "tool_use_id": "t1",
+                                 "content": [{"type": "text", "text": "Async agent launched successfully."}]}]},
+    })) == []
+
+    done = parser.feed(_line({"type": "system", "subtype": "task_notification", "task_id": "bg1",
+                              "tool_use_id": "t1", "status": "completed",
+                              "summary": "J'ai écrit timeline.json et rendu renders/v1.mp4"}))
+    assert done == [("agent_end", {"id": "t1", "role": "monteur", "is_error": False,
+                                   "output": "J'ai écrit timeline.json et rendu renders/v1.mp4"})]
+
+
+def _start_background(parser: StreamParser, tool_id: str, role: str) -> None:
+    """Lance un sous-agent en tâche de fond et consomme son accusé, comme le fait le vrai CLI."""
+    parser.feed(_assistant([{"type": "tool_use", "id": tool_id, "name": "Task",
+                             "input": {"subagent_type": role, "description": role, "prompt": "…"}}]))
+    parser.feed(_line({"type": "system", "subtype": "task_started", "task_id": f"bg_{tool_id}",
+                       "tool_use_id": tool_id, "subagent_type": role, "description": role}))
+    assert parser.feed(_line({
+        "type": "user",
+        "message": {"content": [{"type": "tool_result", "tool_use_id": tool_id,
+                                 "content": [{"type": "text", "text": "Async agent launched successfully."}]}]},
+    })) == []
+
+
+def test_stream_parser_reports_a_background_agent_error_from_its_tool_result() -> None:
+    """L'échec d'un sous-agent de fond n'arrive que par son `tool_result` : le filtrer rendrait muet.
+
+    C'est le seul porteur du message d'erreur, donc de la détection d'une limite d'usage
+    (`_ProgressRecorder.limit_failures`) ; sans lui l'étape resterait ouverte jusqu'à `close_dangling()`,
+    qui la clôrait sur un motif générique en perdant la vraie cause.
+    """
+    parser = StreamParser()
+    _start_background(parser, "t1", "monteur")
+    assert parser.feed(_line({
+        "type": "user",
+        "message": {"content": [{"type": "tool_result", "tool_use_id": "t1", "is_error": True,
+                                 "content": [{"type": "text", "text": "Claude AI usage limit reached"}]}]},
+    })) == [("agent_end", {"id": "t1", "role": "monteur", "is_error": True,
+                           "output": "Claude AI usage limit reached"})]
+
+
+def test_stream_parser_leaves_a_task_stopped_mid_work_open() -> None:
+    """Une tâche tuée est notifiée `stopped` : l'étape doit rester ouverte pour `close_dangling()`.
+
+    La clore en succès referait du travail perdu un « progrès », ce qui désarmait `STUDIO_MAX_RESUMES` ;
+    la clore en échec priverait la reprise de son statut `interrupted`.
+    """
+    parser = StreamParser()
+    _start_background(parser, "t1", "monteur")
+    assert parser.feed(_line({"type": "system", "subtype": "task_notification", "task_id": "bg_t1",
+                              "tool_use_id": "t1", "status": "stopped", "summary": "Tâche de fond"})) == []
+    # Une notification reçue prouve que le mécanisme fonctionne : pas de repli sur l'accusé.
+    assert parser.feed(_line({"type": "result", "subtype": "success"})) == [
+        ("result", {"type": "result", "subtype": "success"})
+    ]
+
+
+def test_stream_parser_falls_back_to_the_ack_when_the_cli_notifies_nothing() -> None:
+    """Si le CLI cessait de notifier ses tâches, les accusés reprennent du service en fin de session.
+
+    Image inversée du bug corrigé : sans ce repli, toutes les étapes d'une création réussie seraient
+    closes en échec par `close_dangling()`, et le compteur de progrès resté à zéro ferait abandonner au
+    plafond `STUDIO_MAX_RESUMES` une création qui avance.
+    """
+    parser = StreamParser()
+    _start_background(parser, "t1", "monteur")
+    assert parser.feed(_line({"type": "result", "subtype": "success"})) == [
+        ("agent_end", {"id": "t1", "role": "monteur", "is_error": False,
+                       "output": "Async agent launched successfully."}),
+        ("result", {"type": "result", "subtype": "success"}),
+    ]
+
+
+def test_stream_parser_still_closes_a_foreground_agent_on_its_tool_result() -> None:
+    """Sans `task_started`, le `tool_result` porte bien le rapport : il doit continuer à clore l'étape."""
+    parser = StreamParser()
+    parser.feed(_assistant([{"type": "tool_use", "id": "t9", "name": "Task",
+                             "input": {"subagent_type": "voix", "description": "Voix", "prompt": "…"}}]))
+    events = parser.feed(_line({
+        "type": "user",
+        "message": {"content": [{"type": "tool_result", "tool_use_id": "t9",
+                                 "content": [{"type": "text", "text": "voice.wav écrit"}]}]},
+    }))
+    assert events == [("agent_end", {"id": "t9", "role": "voix", "is_error": False, "output": "voice.wav écrit"})]
+
+
 def test_stream_parser_tolerates_odd_messages() -> None:
     parser = StreamParser()
     assert parser.feed("not json") == []
