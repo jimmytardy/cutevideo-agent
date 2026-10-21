@@ -32,7 +32,7 @@ import PersonIcon from '@mui/icons-material/Person'
 import LogoutIcon from '@mui/icons-material/Logout'
 import MenuIcon from '@mui/icons-material/Menu'
 import Link from 'next/link'
-import { usePathname, useRouter } from 'next/navigation'
+import { usePathname } from 'next/navigation'
 import { ThemeToggle } from '@/components/layout'
 import { clearAuthToken, type AuthUser } from '@/lib/api'
 import { useMe } from '@/lib/hooks'
@@ -214,7 +214,6 @@ function NavContent({
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
-  const router = useRouter()
   const theme = useTheme()
   const isDesktop = useMediaQuery(theme.breakpoints.up('md'))
   const { data: me } = useMe()
@@ -227,7 +226,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const handleLogout = () => {
     setUserMenuAnchor(null)
     clearAuthToken()
-    router.push('/login')
+    // Navigation complète, et non `router.push` : une page qui sonde (projet, scheduler) a des requêtes
+    // en vol qui reviendront en 401 sans jeton et déclencheraient de toute façon la déconnexion forcée,
+    // donc un rechargement — autant qu'il soit voulu et non surprenant. Il vide au passage les caches
+    // SWR en mémoire, qui tiennent encore les données du compte qu'on quitte.
+    window.location.replace('/login')
   }
 
   const drawerPaperSx = {

@@ -33,12 +33,15 @@ let sessionExpired = false
  * `loginWithTotp`) utilisent `fetch` directement et ne passent pas par ici, donc un code TOTP erroné
  * ne déclenche aucune boucle.
  *
- * `sentToken` est le jeton que la requête portait réellement. Un 401 n'est la preuve d'une session
- * morte que s'il concerne le jeton **courant** : une requête partie sans jeton (`AuthGuard` s'en
- * charge déjà) ou portant un jeton remplacé depuis ne dit rien de la session en cours. Sans cette
- * comparaison, une requête encore en vol au moment d'un « Déconnexion » transformait une transition
- * SPA en rechargement complet, et un 401 attardé dans un onglet effaçait la session qu'un autre
- * onglet venait d'ouvrir — `getMediaToken` se protège déjà exactement ainsi.
+ * `sentToken` est le jeton que la requête portait réellement, et on n'agit que s'il correspond encore
+ * à l'état courant — même jeton, ou aucun jeton de part et d'autre. Un jeton **remplacé depuis** ne
+ * dit rien de la session en cours : sans cette comparaison, un 401 attardé dans un onglet effaçait la
+ * session qu'un autre onglet venait d'ouvrir (`getMediaToken` se protège déjà exactement ainsi).
+ *
+ * Un 401 **sans jeton** compte en revanche, dès lors qu'il n'y en a toujours pas : c'est le cas d'un
+ * onglet laissé ouvert pendant qu'on se déconnecte dans un autre. `localStorage` est partagé, cet
+ * onglet continue de sonder sans en-tête, et `AuthGuard` ne vérifie le jeton qu'à son montage — il
+ * resterait donc bloqué pour toujours sur l'erreur que ce correctif existe pour supprimer.
  *
  * `location.replace` plutôt que le routeur Next : cette fonction n'a pas accès au routeur et l'entrée
  * morte ne reste pas dans l'historique. Un `beforeunload` en cours (formulaire non enregistré) peut
@@ -47,7 +50,7 @@ let sessionExpired = false
  */
 function handleExpiredSession(sentToken: string | null): void {
   if (typeof window === 'undefined') return
-  if (!sentToken || getAuthToken() !== sentToken) return
+  if (getAuthToken() !== sentToken) return
   clearAuthToken()
   // Armé dans la seule branche qui redirige vraiment : l'armer sans rechargement — un 401 attardé alors
   // qu'on est déjà sur /login, par exemple juste après « Déconnexion » — le laisserait vrai pour toute la
