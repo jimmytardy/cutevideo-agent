@@ -49,17 +49,15 @@ function handleExpiredSession(sentToken: string | null): void {
   if (typeof window === 'undefined') return
   if (!sentToken || getAuthToken() !== sentToken) return
   clearAuthToken()
-  // Le drapeau ne sert qu'à dédoublonner la redirection : ne l'armer que lorsqu'on redirige vraiment.
-  // L'armer sans rechargement — un 401 attardé alors qu'on est déjà sur /login, par exemple juste après
-  // « Déconnexion » — le laisserait vrai pour toute la vie du module, et la session suivante ne serait
-  // plus gardée du tout.
+  // Armé dans la seule branche qui redirige vraiment : l'armer sans rechargement — un 401 attardé alors
+  // qu'on est déjà sur /login, par exemple juste après « Déconnexion » — le laisserait vrai pour toute la
+  // vie du module, et la session suivante ne serait plus gardée du tout.
   if (sessionExpired || window.location.pathname === LOGIN_PATH) return
   sessionExpired = true
   window.location.replace(LOGIN_PATH)
 }
 
-function authHeaders(): HeadersInit {
-  const token = getAuthToken()
+function authHeaders(token: string | null): HeadersInit {
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
@@ -310,12 +308,13 @@ const MAX_FETCH_RETRIES = 3
 
 async function fetchWithRetry(url: string, init?: RequestInit): Promise<Response> {
   let lastError: unknown
-  // Capturé avant l'envoi : c'est ce jeton-là qu'un éventuel 401 concerne, pas celui du moment.
+  // Lu une fois, avant l'envoi : le jeton que la requête porte est aussi celui qu'un éventuel 401
+  // concerne, pas celui du moment où la réponse arrive.
   const sentToken = getAuthToken()
   const mergedInit: RequestInit = {
     ...init,
     headers: {
-      ...authHeaders(),
+      ...authHeaders(sentToken),
       ...(init?.headers ?? {}),
     },
   }
