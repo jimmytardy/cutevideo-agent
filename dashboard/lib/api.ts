@@ -9,11 +9,53 @@ export function getAuthToken(): string | null {
 export function setAuthToken(token: string): void {
   localStorage.setItem(AUTH_TOKEN_KEY, token)
   mediaToken = null
+  // Nouvelle session : la garde se réarme, même si la redirection précédente n'a pas rechargé la page.
+  sessionExpired = false
 }
 
 export function clearAuthToken(): void {
   localStorage.removeItem(AUTH_TOKEN_KEY)
   mediaToken = null
+}
+
+const LOGIN_PATH = '/login'
+/** Une seule redirection, même si vingt requêtes parallèles tombent en 401 ensemble. */
+let sessionExpired = false
+
+/** Session refusée par l'API : on déconnecte et on renvoie vers la connexion.
+ *
+ * Le JWT de session vit 7 jours et rien ne le renouvelle. Sans cela, le jeton périmé restait dans
+ * `localStorage`, chaque appel repartait avec et échouait, et l'utilisateur restait bloqué sur un
+ * « Impossible de charger… » qui ne disait pas que la seule issue était de se reconnecter.
+ *
+ * Seul un **401** compte : un 403 veut dire « pas les droits », la session est valide et déconnecter
+ * serait faux. Les appels du flux de connexion (`getGoogleLoginUrl`, `getTotpEnabled`,
+ * `loginWithTotp`) utilisent `fetch` directement et ne passent pas par ici, donc un code TOTP erroné
+ * ne déclenche aucune boucle.
+ *
+ * `sentToken` est le jeton que la requête portait réellement. Un 401 n'est la preuve d'une session
+ * morte que s'il concerne le jeton **courant** : une requête partie sans jeton (`AuthGuard` s'en
+ * charge déjà) ou portant un jeton remplacé depuis ne dit rien de la session en cours. Sans cette
+ * comparaison, une requête encore en vol au moment d'un « Déconnexion » transformait une transition
+ * SPA en rechargement complet, et un 401 attardé dans un onglet effaçait la session qu'un autre
+ * onglet venait d'ouvrir — `getMediaToken` se protège déjà exactement ainsi.
+ *
+ * `location.replace` plutôt que le routeur Next : cette fonction n'a pas accès au routeur et l'entrée
+ * morte ne reste pas dans l'historique. Un `beforeunload` en cours (formulaire non enregistré) peut
+ * faire annuler la navigation par l'utilisateur ; la page reste alors sans jeton et il faut la
+ * recharger à la main, ce qui est le moins mauvais sort pour une session de toute façon finie.
+ */
+function handleExpiredSession(sentToken: string | null): void {
+  if (typeof window === 'undefined') return
+  if (!sentToken || getAuthToken() !== sentToken) return
+  clearAuthToken()
+  // Le drapeau ne sert qu'à dédoublonner la redirection : ne l'armer que lorsqu'on redirige vraiment.
+  // L'armer sans rechargement — un 401 attardé alors qu'on est déjà sur /login, par exemple juste après
+  // « Déconnexion » — le laisserait vrai pour toute la vie du module, et la session suivante ne serait
+  // plus gardée du tout.
+  if (sessionExpired || window.location.pathname === LOGIN_PATH) return
+  sessionExpired = true
+  window.location.replace(LOGIN_PATH)
 }
 
 function authHeaders(): HeadersInit {
@@ -268,6 +310,8 @@ const MAX_FETCH_RETRIES = 3
 
 async function fetchWithRetry(url: string, init?: RequestInit): Promise<Response> {
   let lastError: unknown
+  // Capturé avant l'envoi : c'est ce jeton-là qu'un éventuel 401 concerne, pas celui du moment.
+  const sentToken = getAuthToken()
   const mergedInit: RequestInit = {
     ...init,
     headers: {
@@ -278,6 +322,7 @@ async function fetchWithRetry(url: string, init?: RequestInit): Promise<Response
   for (let attempt = 0; attempt < MAX_FETCH_RETRIES; attempt++) {
     try {
       const response = await fetch(url, mergedInit)
+      if (response.status === 401) handleExpiredSession(sentToken)
       if (response.ok || (response.status < 500 && response.status !== 408)) {
         return response
       }
