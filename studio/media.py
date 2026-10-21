@@ -9,6 +9,8 @@ droits de chaque fichier téléchargé sont tenus dans `media/credits.json`.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import fcntl
 import importlib
 import inspect
 import json
@@ -17,6 +19,7 @@ import math
 import os
 import re
 import shutil
+from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -26,7 +29,16 @@ from agent.core.concurrency import bounded_gather
 from agent.skills.media.rights_check import filter_publishable
 from agent.skills.video.ffmpeg_runtime import filter_thread_args, measure_loudness, run_ffmpeg, thread_args
 from studio.assets import FONT_FILE, IMAGE_EXTENSIONS, SHEET_COLS, TILE_H, TILE_W, ai_models, max_ai_images
-from studio.contracts import ContractError, read_json, write_json
+from studio.contracts import (
+    AI_CACHE_DIR,
+    AI_DIR,
+    AI_LOCK_FILE,
+    AI_USAGE_FILE,
+    ContractError,
+    cache_key,
+    read_json,
+    write_json,
+)
 from studio.user_keys import FAL_KEY, GCP_CREDENTIALS_JSON, GCP_LOCATION, user_key
 
 if TYPE_CHECKING:
@@ -267,11 +279,102 @@ def _user_gcp_credentials() -> GcpCredentials | None:
     return GcpCredentials(project_id=project_id, location=location, credentials_json=credentials_json)
 
 
+def _billed_generations(run_dir: Path) -> int:
+    """Nombre d'appels payants au fournisseur d'images depuis le début de la création.
+
+    Un registre illisible lève plutôt que de repartir de zéro : remettre le compteur à zéro rouvrirait
+    le plafond, et c'est l'argent du propriétaire de la chaîne.
+    """
+    path = run_dir / AI_USAGE_FILE
+    try:
+        return max(0, int(read_json(path, {}).get("billed", 0)))
+    except (ValueError, TypeError, AttributeError, OverflowError) as exc:
+        raise RuntimeError(
+            f"registre de dépense des images IA illisible ({exc}) : n'y touche pas et ne réessaie pas, "
+            "illustre ce plan avec une banque d'images ou une animation du kit"
+        ) from exc
+
+
+def _write_billed(run_dir: Path, count: int) -> None:
+    """Écrit le registre de façon atomique : un processus tué ne laisse jamais de compteur tronqué."""
+    path = run_dir / AI_USAGE_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        tmp.write_text(json.dumps({"billed": count}), encoding="utf-8")
+        tmp.replace(path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+@contextlib.contextmanager
+def _ai_budget_lock(run_dir: Path) -> Iterator[None]:
+    """Sérialise « vérifier le plafond → générer → compter » entre les sous-processus `studio.tools`.
+
+    Chaque commande est un processus distinct et Claude peut en lancer plusieurs dans le même tour :
+    sans ce verrou, deux appels lancés à `plafond - 1` le franchiraient tous les deux et seraient tous
+    les deux facturés. Le verrou est relâché par le noyau si le processus meurt.
+
+    `flock` est bloquant, ce qui est sans conséquence ici : le seul appelant est `cmd_ai_image`, et
+    chaque commande `studio.tools` a son propre processus. Un second appel **dans le même processus**
+    s'interbloquerait — à revoir si un jour un outil enchaîne plusieurs générations.
+    """
+    lock_path = run_dir / AI_LOCK_FILE
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("w") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def _cached_ai_image(run_dir: Path, key: str) -> tuple[Path, dict[str, Any]] | None:
+    """Image déjà générée pour cette clé, ou `None` s'il faut repasser par le fournisseur.
+
+    Toute entrée douteuse — méta illisible, fichier absent ou image tronquée — est effacée et traitée
+    comme une absence : un cache abîmé coûte une génération, jamais une création ratée.
+    """
+    meta_path = run_dir / AI_CACHE_DIR / f"{key}.json"
+    path: Path | None = None
+    try:
+        meta = read_json(meta_path, None)
+        if not isinstance(meta, dict):
+            return None
+        path = meta_path.with_suffix(meta["suffix"])
+        verify_image(path)
+        return path, dict(meta["credit"])
+    except (ContractError, OSError, ValueError, TypeError, KeyError):
+        # Méta d'un format antérieur, tronquée, ou image abîmée : on régénère plutôt que de planter.
+        if path is not None:
+            path.unlink(missing_ok=True)
+        meta_path.unlink(missing_ok=True)
+        return None
+
+
+def _store_ai_image(run_dir: Path, key: str, src: Path, credit: dict[str, Any], meta: dict[str, Any]) -> None:
+    """Copie l'image dans le cache, méta écrite en dernier : une copie interrompue n'est jamais reprise."""
+    cache_dir = run_dir / AI_CACHE_DIR
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    suffix = src.suffix or ".png"
+    tmp = cache_dir / f".{key}.{os.getpid()}.tmp{suffix}"
+    try:
+        shutil.copy2(src, tmp)
+        tmp.replace(cache_dir / f"{key}{suffix}")
+        write_json(cache_dir / f"{key}.json", {**meta, "suffix": suffix, "credit": credit})
+    except OSError as exc:
+        # L'image est payée et valide : la rendre prime sur la mise en cache, qui n'est qu'une économie.
+        tmp.unlink(missing_ok=True)
+        logger.warning("Image IA non mise en cache (%s) : %s", key, exc)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
 async def generate_ai_image(
     run_dir: Path, prompt: str, name: str, aspect: str = "9:16", model: str | None = None
 ) -> dict[str, Any]:
-    from agent.skills.media_sources.ai_image import generate_image
-
     allowed = ai_models()
     if not allowed:
         raise RuntimeError(
@@ -281,23 +384,76 @@ async def generate_ai_image(
     model = model or allowed[0]
     if model not in allowed:
         raise RuntimeError(f"modèle {model} non autorisé pour cette chaîne : choisis parmi {', '.join(allowed)}")
-    credits = read_json(_credits_path(run_dir), {})
-    used = sum(1 for c in credits.values() if c.get("source") == "ai_image")
-    if used >= max_ai_images():
+    key = cache_key({"prompt": prompt, "model": model, "aspect": aspect})
+    # Le cache est consulté hors du verrou : rien n'est facturé, donc le plafond n'a pas à être consulté
+    # et relancer un prompt déjà généré reste possible même une fois les générations épuisées.
+    cached = _cached_ai_image(run_dir, key)
+    reused = cached is not None
+    if cached is None:
+        with _ai_budget_lock(run_dir):
+            # Un appel concurrent a pu produire l'image pendant qu'on attendait le verrou.
+            cached = _cached_ai_image(run_dir, key)
+            reused = cached is not None
+            if cached is None:
+                cached = await _generate_ai_image(
+                    run_dir, key, prompt=prompt, name=name, aspect=aspect, model=model, allowed=allowed
+                )
+    src, credit = cached
+    dest = run_dir / "media" / f"{name}{src.suffix or '.png'}"
+    shutil.copy2(src, dest)
+    rel = str(dest.relative_to(run_dir))
+    record_credit(run_dir, rel, credit)
+    return {"path": rel, **(await probe_media(dest)), "reused": reused}
+
+
+async def _generate_ai_image(
+    run_dir: Path, key: str, *, prompt: str, name: str, aspect: str, model: str, allowed: list[str]
+) -> tuple[Path, dict[str, Any]]:
+    """Appel payant au fournisseur, sous le verrou de budget. Rend l'image et son crédit.
+
+    La génération est **comptée d'avance** et seulement décomptée si le fournisseur confirme n'avoir
+    rien produit. C'est le sens de marche sûr : le groupe de processus est tué sans ménagement
+    (redéploiement du worker, surveillance d'inactivité) et un kill pendant les deux minutes de l'appel
+    laisserait sinon une image payée hors du compteur, que la reprise relancerait.
+    """
+    from agent.skills.media_sources.ai.base import ImageBilledButLost
+    from agent.skills.media_sources.ai_image import generate_image
+
+    billed = _billed_generations(run_dir)
+    if billed >= max_ai_images():
         raise RuntimeError(
-            f"quota d'images IA atteint ({used}/{max_ai_images()}) : utilise les banques d'images"
+            f"plafond d'images IA atteint ({billed}/{max_ai_images()} générations facturées) : "
+            "utilise les banques d'images, une animation du kit (anim/lib/studio.js), ou reprends "
+            "un prompt déjà généré"
         )
-    out_dir = run_dir / "media" / ".ai" / name
-    result = await generate_image(
-        prompt,
-        out_dir,
-        plan=model,
-        aspect_ratio=aspect,
-        # Clés du propriétaire de la chaîne, posées par le launcher.
-        fal_api_key=user_key(FAL_KEY),
-        gcp_credentials=_user_gcp_credentials() if model.startswith("imagen") else None,
-    )
+    _write_billed(run_dir, billed + 1)
+    try:
+        result = await generate_image(
+            prompt,
+            run_dir / AI_DIR / name,
+            plan=model,
+            aspect_ratio=aspect,
+            # Clés du propriétaire de la chaîne, posées par le launcher.
+            fal_api_key=user_key(FAL_KEY),
+            gcp_credentials=_user_gcp_credentials() if model.startswith("imagen") else None,
+        )
+    except ImageBilledButLost as exc:
+        # Le fournisseur avait accepté la requête : elle est payée, la réservation reste acquise.
+        raise RuntimeError(
+            f"génération {model} facturée mais image non récupérée ({exc}) : réessaie une fois, "
+            "sinon illustre ce plan avec une animation du kit ou une banque d'images"
+        ) from exc
+    except Exception:
+        # Panne que le fournisseur n'a pas su classer (jeton GCP expiré, bug) : il aurait levé
+        # `ImageBilledButLost` si l'image avait été produite, donc rien n'a été payé. Sans ce
+        # remboursement, quatre pannes de ce genre épuiseraient le plafond sans un centime dépensé.
+        # `BaseException` est volontairement exclu : un processus tué garde sa réservation.
+        _write_billed(run_dir, billed)
+        raise
     if not result:
+        # Refusée avant d'atteindre le modèle (clé invalide, prompt filtré) : rien n'est dû, on rend
+        # la réservation.
+        _write_billed(run_dir, billed)
         others = [m for m in allowed if m != model]
         hint = f"réessaie avec --model {others[0]} ou " if others else ""
         raise RuntimeError(
@@ -316,14 +472,13 @@ async def generate_ai_image(
     try:
         verify_image(src)
     except ContractError:
-        # Génération facturée : comptée dans le quota (crédit sous media/.ai, jamais utilisé par une timeline).
+        # Déjà comptée. Le crédit sous media/.ai garde la trace de la dépense et du modèle en cause ;
+        # il n'entre jamais dans l'attribution publiée, qui ne retient que les médias cités par la
+        # timeline (`_used_credits()` dans studio/render.py).
         record_credit(run_dir, str(src.relative_to(run_dir)), {**credit, "unusable": True})
         raise
-    dest = run_dir / "media" / f"{name}{src.suffix or '.png'}"
-    shutil.copy2(src, dest)
-    rel = str(dest.relative_to(run_dir))
-    record_credit(run_dir, rel, credit)
-    return {"path": rel, **(await probe_media(dest))}
+    _store_ai_image(run_dir, key, src, credit, {"prompt": prompt, "model": model, "aspect": aspect})
+    return src, credit
 
 
 async def fetch_music(run_dir: Path, mood: str) -> dict[str, Any]:

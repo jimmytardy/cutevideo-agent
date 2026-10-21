@@ -7,10 +7,12 @@ from typing import Any
 import aiohttp
 
 from agent.skills.media_sources.ai.base import (
+    ImageBilledButLost,
     ImageGenerationRequest,
     ImageGenerationResult,
     ai_fallback_config,
     ai_license_label,
+    post_generation,
 )
 
 logger = logging.getLogger(__name__)
@@ -83,41 +85,39 @@ class FluxProvider:
         if not model:
             return None
 
-        headers = {"Authorization": f"Key {fal_key}", "Content-Type": "application/json"}
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"https://fal.run/{model}",
-                    headers=headers,
-                    json=_payload(model, request),
-                    timeout=aiohttp.ClientTimeout(total=120),
-                ) as resp:
-                    if resp.status != 200:
-                        body = await resp.text()
-                        logger.warning("Flux API error %s (%s): %s", plan_id, resp.status, body[:200])
-                        return None
-                    data = await resp.json()
+        # Le code 200 de `fal.run` est la frontière de facturation ; `post_generation` classe les échecs
+        # de part et d'autre (`None` = rien à payer, `ImageBilledButLost` = image payée puis perdue).
+        data = await post_generation(
+            f"https://fal.run/{model}",
+            payload=_payload(model, request),
+            headers={"Authorization": f"Key {fal_key}", "Content-Type": "application/json"},
+            output_dir=request.output_dir,
+            provider="Flux",
+            plan_id=plan_id,
+            log=logger,
+        )
+        if data is None:
+            return None
 
+        # Passé le 200, l'image est produite et payée : tout échec de récupération est une image perdue.
+        try:
             images = data.get("images") or []
             image_url = images[0].get("url") if images else None
             if not image_url:
-                return None
-
-            request.output_dir.mkdir(parents=True, exist_ok=True)
+                raise ImageBilledButLost(f"{plan_id} : réponse sans image")
             dest = request.output_dir / f"ai_{uuid.uuid4().hex[:8]}.jpg"
             async with aiohttp.ClientSession() as session:
                 async with session.get(image_url, timeout=aiohttp.ClientTimeout(total=60)) as img_resp:
                     if img_resp.status != 200:
-                        return None
+                        raise ImageBilledButLost(f"{plan_id} : téléchargement en {img_resp.status}")
                     dest.write_bytes(await img_resp.read())
+        except (aiohttp.ClientError, TimeoutError, OSError, AttributeError, TypeError, IndexError, KeyError) as e:
+            raise ImageBilledButLost(f"{plan_id} : image perdue après facturation ({e})") from e
 
-            return ImageGenerationResult(
-                local_path=dest,
-                attribution=FLUX_ATTRIBUTIONS.get(plan_id, "Image générée par IA (Flux via fal.ai)"),
-                license=ai_license_label(),
-                title=request.prompt[:120],
-                provider_plan=plan_id,
-            )
-        except aiohttp.ClientError as e:
-            logger.warning("Génération Flux %s échouée : %s", plan_id, e)
-            return None
+        return ImageGenerationResult(
+            local_path=dest,
+            attribution=FLUX_ATTRIBUTIONS.get(plan_id, "Image générée par IA (Flux via fal.ai)"),
+            license=ai_license_label(),
+            title=request.prompt[:120],
+            provider_plan=plan_id,
+        )

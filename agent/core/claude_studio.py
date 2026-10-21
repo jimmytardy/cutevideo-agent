@@ -36,6 +36,7 @@ from agent.core import studio_resume
 from agent.skills.media_sources.ai.registry import models_up_to
 from studio.agent_stream import coalesce, encode, trim
 from studio.contracts import (
+    AI_DIR,
     PublishMetadata,
     VOICE_CACHE_DIR,
     Brief,
@@ -617,8 +618,14 @@ class ClaudeStudioRunner:
 
         await self._export_platforms(master_path, duration, result.iterations)
         await self._update_project_config(scenario, credits, result, session_result, critiques)
-        # Caches de travail (médias, segments de rendu, lignes de voix) : inutiles une fois la vidéo persistée.
-        for cache in (run_dir / "media" / ".cache", run_dir / RENDER_DIR, run_dir / VOICE_CACHE_DIR):
+        # Caches de travail (médias, images IA, segments de rendu, lignes de voix) : inutiles une fois la
+        # vidéo persistée.
+        for cache in (
+            run_dir / "media" / ".cache",
+            run_dir / AI_DIR,
+            run_dir / RENDER_DIR,
+            run_dir / VOICE_CACHE_DIR,
+        ):
             shutil.rmtree(cache, ignore_errors=True)
         return master
 

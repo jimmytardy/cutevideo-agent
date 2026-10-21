@@ -6,13 +6,13 @@ import logging
 import uuid
 from typing import TYPE_CHECKING
 
-import aiohttp
-
 from agent.skills.media_sources.ai.base import (
+    ImageBilledButLost,
     ImageGenerationRequest,
     ImageGenerationResult,
     ai_fallback_config,
     ai_license_label,
+    post_generation,
 )
 
 if TYPE_CHECKING:
@@ -73,12 +73,13 @@ class Imagen3Provider:
         self.plan_id = plan_id
 
     async def generate(self, request: ImageGenerationRequest) -> ImageGenerationResult | None:
+        plan_id = self.plan_id
         gcp = request.gcp_credentials
         if gcp is None:
             logger.warning("Credentials GCP de l'utilisateur absents — provider Imagen 3 ignoré")
             return None
 
-        model = _model_for_plan(self.plan_id)
+        model = _model_for_plan(plan_id)
         if not model:
             return None
 
@@ -91,58 +92,52 @@ class Imagen3Provider:
             f"/locations/{location}/publishers/google/models/{model}:predict"
         )
 
-        aspect = "9:16" if request.aspect_ratio == "9:16" else "16:9"
-
         payload = {
             "instances": [{"prompt": request.prompt}],
             "parameters": {
                 "sampleCount": 1,
-                "aspectRatio": aspect,
+                "aspectRatio": "9:16" if request.aspect_ratio == "9:16" else "16:9",
                 "personGeneration": "allow_adult",
                 "safetySetting": "block_medium_and_above",
             },
         }
-        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
+        # Le code 200 de Vertex est la frontière de facturation ; `post_generation` classe les échecs
+        # de part et d'autre (`None` = rien à payer, `ImageBilledButLost` = image payée puis perdue).
+        data = await post_generation(
+            endpoint,
+            payload=payload,
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            output_dir=request.output_dir,
+            provider="Imagen 3",
+            plan_id=plan_id,
+            log=logger,
+        )
+        if data is None:
+            return None
+
+        # Un 200 sans aucune prédiction est la façon dont Vertex signale une sortie écartée par ses
+        # filtres de sécurité : la génération n'a pas eu lieu, donc on ne consomme pas le plafond.
+        predictions = data.get("predictions") or []
+        if not predictions:
+            logger.warning("Imagen 3 %s : réponse sans prédiction (prompt probablement filtré)", plan_id)
+            return None
+
+        # Au-delà, l'image existe et a été facturée : un échec de décodage ou d'écriture est une image
+        # perdue, qui doit compter.
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    endpoint,
-                    headers=headers,
-                    json=payload,
-                    timeout=aiohttp.ClientTimeout(total=120),
-                ) as resp:
-                    if resp.status != 200:
-                        body = await resp.text()
-                        logger.warning(
-                            "Imagen 3 API error %s (%s): %s",
-                            self.plan_id,
-                            resp.status,
-                            body[:200],
-                        )
-                        return None
-                    data = await resp.json()
-
-            predictions = data.get("predictions") or []
-            if not predictions:
-                return None
             encoded = predictions[0].get("bytesBase64Encoded")
             if not encoded:
-                return None
-
-            request.output_dir.mkdir(parents=True, exist_ok=True)
+                raise ImageBilledButLost(f"{plan_id} : prédiction sans image")
             dest = request.output_dir / f"ai_{uuid.uuid4().hex[:8]}.jpg"
             dest.write_bytes(base64.b64decode(encoded))
+        except (ValueError, OSError, AttributeError, TypeError, KeyError, IndexError) as e:
+            raise ImageBilledButLost(f"{plan_id} : image perdue après facturation ({e})") from e
 
-            return ImageGenerationResult(
-                local_path=dest,
-                attribution=IMAGEN3_ATTRIBUTIONS.get(
-                    self.plan_id, "Image générée par IA (Google Imagen 3)"
-                ),
-                license=ai_license_label(),
-                title=request.prompt[:120],
-                provider_plan=self.plan_id,
-            )
-        except aiohttp.ClientError as e:
-            logger.warning("Génération Imagen 3 %s échouée : %s", self.plan_id, e)
-            return None
+        return ImageGenerationResult(
+            local_path=dest,
+            attribution=IMAGEN3_ATTRIBUTIONS.get(plan_id, "Image générée par IA (Google Imagen 3)"),
+            license=ai_license_label(),
+            title=request.prompt[:120],
+            provider_plan=plan_id,
+        )

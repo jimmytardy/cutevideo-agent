@@ -80,7 +80,8 @@ Polices : Poppins (déjà chargée). `window.renderFrame` est posé par la scèn
 ## Droits des médias
 - Seuls les médias obtenus via `search-media` + `download`, `ai-image`, `music`, `animate-template` ou `animate` sont
   autorisés (licences tracées dans `media/credits.json`). Les icônes du kit sont libres (Apache 2.0).
-- `ai-image` coûte de l'argent et est plafonné : dernier recours — mais « rien ne convient » inclut **une
+- `ai-image` coûte de l'argent et est plafonné (le plafond compte les générations facturées ; relancer un prompt
+  identique est repris du cache, gratuit) : dernier recours — mais « rien ne convient » inclut **une
   icône ou un média qui désigne autre chose** que le propos du plan (une main pour une pince, un flocon pour
   « l'eau bout »). Un contresens à l'écran coûte plus cher que l'image. Modèle et prompt : `docs/ai-images.md`.
 - Jamais de logo de marque, de visage de célébrité identifiable ni de texte incrusté illisible.
@@ -180,7 +181,7 @@ exige `lines` (numéros de ligne de `narration.txt`, 1 = première). La miniatur
 | `search-media --query "volcano eruption" [--type image\|video] [--sources pexels,pixabay,unsplash,coverr,wikimedia,nasa,europeana,internet_archive,gallica]` | requêtes **en anglais**, 2-4 mots concrets ; ids `cN` |
 | `preview --ids c1,c4,c7` | planche contact PNG (≤ 12) → **Read** avant de choisir |
 | `download --id c4 --name 03_lave` | → `media/03_lave.<ext>` + crédits |
-| `ai-image --prompt "…" --name 05_carte [--model flux_2_dev] [--aspect 16:9]` | image IA 9:16 (dernier recours ; modèles autorisés et écriture du prompt : `docs/ai-images.md`) |
+| `ai-image --prompt "…" --name 05_carte [--model flux_2_dev] [--aspect 16:9]` | image IA 9:16 (dernier recours ; un prompt déjà généré est repris du cache, gratuitement et hors plafond → `reused: true` ; modèles autorisés et écriture du prompt : `docs/ai-images.md`) |
 | `music --mood dramatique` | musique libre → `media/music/…` |
 | `tts --text-file narration.txt [--mood …] [--rate +8%] [--pitch -2Hz] [--max-pause 0.4]` | → `voice.wav` (Azure → Gemini → edge ; une synthèse par ligne, lignes inchangées reprises de `voice_cache/` ; silences > 0,4 s raccourcis ; préfixe de ligne `[rate=-4% pitch=+12Hz mood=dramatique style=whispering]` = réglage de cette ligne seule, voir le rôle voix) |
 | `transcribe --text-file subtitles.txt` | `voice.wav` → `words.json` (timings Whisper, orthographe du script) |

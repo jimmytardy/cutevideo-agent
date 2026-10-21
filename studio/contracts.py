@@ -270,6 +270,18 @@ def resolve_in_run_dir(run_dir: Path, rel: str, *, within: str | None = None) ->
 # Une synthèse par ligne de `narration.txt` (studio.tools tts) ; supprimé avec le run dir en fin de création.
 VOICE_CACHE_DIR = "voice_cache"
 
+# Tout ce que `studio.tools ai-image` écrit : images brutes par nom, cache et registre de dépense.
+# Supprimé en entier une fois la vidéo persistée.
+AI_DIR = "media/.ai"
+# Images déjà générées, clé = prompt + modèle + format : relancer un prompt identique entre deux
+# itérations ne repasse pas par le fournisseur, donc ne coûte rien.
+AI_CACHE_DIR = f"{AI_DIR}/.cache"
+# Compteur monotone des générations facturées, qui borne le plafond. Il ne peut pas se déduire de
+# `media/credits.json` : les crédits sont indexés par chemin, donc régénérer sous le même nom écrase
+# l'entrée et un comptage d'entrées sous-compterait les appels payants.
+AI_USAGE_FILE = f"{AI_DIR}/usage.json"
+AI_LOCK_FILE = f"{AI_DIR}/usage.lock"
+
 
 def cache_key(payload: dict[str, Any]) -> str:
     """Clé de cache stable d'un dict JSON-sérialisable (caches TTS par ligne et segments de rendu)."""

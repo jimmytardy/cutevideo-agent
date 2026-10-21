@@ -4,6 +4,15 @@
 banque (`search-media`) ni une animation du kit ne conviennent. Le prompt part **tel quel** au modèle : rien n'est
 ajouté derrière toi.
 
+Le plafond compte les **générations facturées**, pas les images présentes dans la vidéo. Une image déjà produite
+dans cette création est gardée en cache : relancer **exactement le même prompt**, avec le même modèle et le même
+format, la reprend sans rien payer et sans entamer le plafond — la sortie porte alors `"reused": true`. Deux
+conséquences pratiques :
+
+- Tu peux relancer un plan à l'identique entre deux itérations sans te pénaliser.
+- Reformuler un prompt pour « réessayer » coûte une génération. Si l'image convenait, reprends-la mot pour mot ;
+  ne change le prompt que si tu veux vraiment une autre image.
+
 ## « Ne convient pas » veut dire : ne veut pas dire la bonne chose
 
 Un média ou une icône ne convient pas seulement quand il manque : il ne convient pas non plus quand il **désigne
