@@ -4,6 +4,25 @@
 banque (`search-media`) ni une animation du kit ne conviennent. Le prompt part **tel quel** au modèle : rien n'est
 ajouté derrière toi.
 
+## « Ne convient pas » veut dire : ne veut pas dire la bonne chose
+
+Un média ou une icône ne convient pas seulement quand il manque : il ne convient pas non plus quand il **désigne
+autre chose** que le propos du plan. Le kit n'a que ~350 icônes, donc la plus proche est souvent fausse. Cas réels
+relevés en production :
+
+| Le plan dit | Choix par défaut | Ce que le spectateur lit |
+|---|---|---|
+| une pince de crevette | icône `hand` | une main humaine |
+| « pour appeler le serveur » | icône de cuisinier | un cuisinier, pas un serveur |
+| « l'eau bout à froid » | icône `snowflake` | du gel — **l'inverse du propos** |
+
+Quand le plan **désigne un objet, un rôle ou une action précis** et que ni les banques ni le kit ne le disent
+juste, une image IA à quelques centimes vaut mieux qu'un contresens à l'écran : c'est le lecteur qui paie l'à-peu-près.
+
+Cela **n'augmente pas le plafond** et ne s'applique pas aux ambiances, fonds ou textures, où une icône ou une image
+de banque approchante convient très bien. Vise la justesse, pas le volume : une image juste vaut mieux que trois
+images décoratives.
+
 ## Modèles
 `--model` n'accepte que les modèles autorisés pour la chaîne : le plan de la chaîne (le défaut) et ceux qui
 coûtent moins cher, pour lesquels le propriétaire a la clé. Sans `--model`, c'est le modèle de la chaîne. Une

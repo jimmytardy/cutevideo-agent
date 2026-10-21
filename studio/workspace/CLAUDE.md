@@ -80,7 +80,9 @@ Polices : Poppins (déjà chargée). `window.renderFrame` est posé par la scèn
 ## Droits des médias
 - Seuls les médias obtenus via `search-media` + `download`, `ai-image`, `music`, `animate-template` ou `animate` sont
   autorisés (licences tracées dans `media/credits.json`). Les icônes du kit sont libres (Apache 2.0).
-- `ai-image` coûte de l'argent et est plafonné : dernier recours. Modèle et prompt : lis `docs/ai-images.md` avant.
+- `ai-image` coûte de l'argent et est plafonné : dernier recours — mais « rien ne convient » inclut **une
+  icône ou un média qui désigne autre chose** que le propos du plan (une main pour une pince, un flocon pour
+  « l'eau bout »). Un contresens à l'écran coûte plus cher que l'image. Modèle et prompt : `docs/ai-images.md`.
 - Jamais de logo de marque, de visage de célébrité identifiable ni de texte incrusté illisible.
 
 ## Animations (selon `brief.json.animations`)

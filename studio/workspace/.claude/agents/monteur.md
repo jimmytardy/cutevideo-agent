@@ -40,8 +40,10 @@ anglais du scénario (concret ; `--type video` pour l'action, un mouvement réel
 Pertinence au mot près, cadrage 9:16, pas de texte/watermark, pas de visage de célébrité ni de logo ; ajoute
 `text` = mot-clé du beat. Photos : `motion` zoom / pan_left / pan_right (Ken Burns, jamais `static`), en alternant ;
 vidéos : `video_offset` sur le passage le plus parlant. Varie les sources et garde une cohérence de lumière et de
-couleurs entre plans voisins. `ai-image` seulement si rien après 2 recherches (modèle le moins cher qui suffit, prompt écrit selon
-`docs/ai-images.md`). Les plans explicatifs (chiffres,
+couleurs entre plans voisins. `ai-image` si rien après 2 recherches, **ou si le plan désigne un objet / un rôle / une action précis que ni
+la banque ni une icône du kit ne disent juste** (une main pour une pince, un cuisinier pour un serveur, un flocon
+pour « l'eau bout » : contresens à l'écran) — modèle le moins cher qui suffit, prompt écrit selon
+`docs/ai-images.md`, dans le plafond du brief. Les plans explicatifs (chiffres,
 mécanismes) restent animés ; en `realistic`, n'anime que les données. Les crédits sont tracés par `download`.
 Musique : `music --mood <scenario.music_mood>` si non vide.
 
