@@ -99,7 +99,7 @@ def test_channel_config_default_and_override() -> None:
 def test_build_brief_carries_channel_policy() -> None:
     from agent.core.claude_studio import build_brief
 
-    cfg = SimpleNamespace(content_language="fr", short_duration_s=45, tts_short=SimpleNamespace(voice="", engine=""),
+    cfg = SimpleNamespace(content_language="fr", short_duration_s=45, words_per_second=3.1, tts_short=SimpleNamespace(voice="", engine=""),
                           tts_voice="v", tts_engine="edge", min_critic_score=80,
                           min_scenario_score=90, max_scenario_iterations=5,
                           editorial_tone="", studio_animations="templates", studio_visual_style="mixed",

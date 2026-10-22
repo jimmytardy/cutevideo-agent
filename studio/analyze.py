@@ -28,7 +28,7 @@ import numpy as np
 
 from agent.skills.video.ffmpeg_runtime import filter_thread_args, run_ffmpeg, thread_args
 from studio.assets import FONT_FILE, SHEET_COLS, TILE_H, TILE_W
-from studio.contracts import read_json, write_json
+from studio.contracts import clamp_words_per_second, read_json, write_json
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +37,8 @@ SHEET_MAX_TILES = 16
 CUT_MIN_GAP_S = 0.4
 GEMINI_MODEL = os.getenv("STUDIO_GEMINI_MODEL", "gemini-2.5-flash")
 GEMINI_MAX_BYTES = 19 * 1024 * 1024  # envoi en ligne (< 20 Mo)
+# Écart (mots/s) au débit conseillé de la chaîne au-delà duquel le débit est signalé.
+WPS_FLAG_MARGIN = 0.7
 
 # Grille commune à Gemini, à la critique et aux comparaisons avant/après.
 GRID = {
@@ -51,6 +53,20 @@ GRID = {
 
 
 # ── utilitaires ───────────────────────────────────────────────────────────
+
+
+def _brief_words_per_second(run_dir: Path) -> float | None:
+    """Débit conseillé du brief ; None sans brief lisible (`studio.run` ancien, fichier abîmé)."""
+    try:
+        brief = read_json(run_dir / "brief.json", {})
+    except (OSError, ValueError):
+        return None
+    wps = brief.get("words_per_second") if isinstance(brief, dict) else None
+    return clamp_words_per_second(wps) if wps is not None else None
+
+
+def _fr(value: float) -> str:
+    return f"{value:g}".replace(".", ",")
 
 
 def _rel(run_dir: Path, path: Path) -> str:
@@ -322,7 +338,8 @@ def _plot_audio(series: dict[str, Any], words: list[dict[str, Any]], cuts: list[
 # ── alertes ───────────────────────────────────────────────────────────────
 
 
-def _flags(m: dict[str, Any]) -> list[str]:
+def _flags(m: dict[str, Any], words_per_second: float | None = None) -> list[str]:
+    """Alertes chiffrées ; le débit est jugé autour du conseil de la chaîne quand il est connu."""
     flags: list[str] = []
     v = m["visual"]
     if v["first_cut_s"] is None or v["first_cut_s"] > 2.5:
@@ -335,10 +352,15 @@ def _flags(m: dict[str, Any]) -> list[str]:
     if s.get("words"):
         if s["first_word_s"] > 0.6:
             flags.append(f"voix : premier mot à {s['first_word_s']} s (le hook doit partir tout de suite)")
-        if s["words_per_s"] < 2.4:
-            flags.append(f"voix : débit lent {s['words_per_s']} mots/s (viral ≈ 2,8-3,4)")
-        if s["words_per_s"] > 3.8:
-            flags.append(f"voix : débit très rapide {s['words_per_s']} mots/s")
+        if words_per_second is None:
+            slow, fast, hint = 2.4, 3.8, "viral ≈ 2,8-3,4"
+        else:
+            slow, fast = words_per_second - WPS_FLAG_MARGIN, words_per_second + WPS_FLAG_MARGIN
+            hint = f"conseil de la chaîne ≈ {_fr(words_per_second)}"
+        if s["words_per_s"] < slow:
+            flags.append(f"voix : débit lent {s['words_per_s']} mots/s ({hint})")
+        if s["words_per_s"] > fast:
+            flags.append(f"voix : débit très rapide {s['words_per_s']} mots/s ({hint})")
         if s["longest_pause_s"] > 1.0:
             flags.append(f"voix : pause de {s['longest_pause_s']} s")
     a = m.get("audio", {})
@@ -560,6 +582,9 @@ async def analyze_video(
     shutil.rmtree(work, ignore_errors=True)
 
     result: dict[str, Any] = {"video": _rel(run_dir, video), "duration_s": round(duration, 2), "grid": GRID}
+    wps = _brief_words_per_second(run_dir)
+    if wps is not None:
+        context = f"{context}\nDébit conseillé par la chaîne : environ {_fr(wps)} mots/s (repère, pas un défaut à lui seul).".strip()
     result.update(await _gemini_section(engine, video, context))
 
     # ── images ──
@@ -577,7 +602,7 @@ async def analyze_video(
     if info["has_audio"]:
         audio, audio_png = await _audio_section(video, work, out_dir, words_file, duration, cuts)
         result.update(audio)
-    result["flags"] = _flags(result)
+    result["flags"] = _flags(result, wps)
     result["read"] = {**sheets, "audio": _rel(run_dir, audio_png) if audio_png else None}
     shutil.rmtree(work, ignore_errors=True)
 

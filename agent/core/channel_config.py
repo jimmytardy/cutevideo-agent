@@ -14,7 +14,13 @@ from agent.core.editorial_formats import (
     resolve_format_rotation_config,
 )
 from agent.core.database import Channel
-from studio.contracts import VISUAL_STYLES
+from studio.contracts import (
+    DEFAULT_WORDS_PER_SECOND,
+    MAX_WORDS_PER_SECOND,
+    MIN_WORDS_PER_SECOND,
+    VISUAL_STYLES,
+    clamp_words_per_second,
+)
 
 if TYPE_CHECKING:
     from agent.core.subscription import SubscriptionLimits
@@ -91,6 +97,10 @@ class ChannelRuntimeConfig(BaseModel):
     # Planification (ContentPlannerAgent)
     production_mode: Literal["mixed", "long_only", "shorts_only"] = "mixed"
     short_duration_s: int = 90
+    # Débit de voix conseillé (production.words_per_second), transmis au brief Studio comme repère.
+    words_per_second: float = Field(
+        default=DEFAULT_WORDS_PER_SECOND, ge=MIN_WORDS_PER_SECOND, le=MAX_WORDS_PER_SECOND
+    )
     min_duration_tiktok: int = 60
     editorial_tone: str = ""
     editorial_formats: list[EditorialFormatDefinition] = Field(default_factory=list)
@@ -310,6 +320,7 @@ def resolve_channel_config(
         short_duration_s=int(
             production.get("short_duration_s", content_planning.get("default_short_duration_s", 60))
         ),
+        words_per_second=clamp_words_per_second(production.get("words_per_second")),
         min_duration_tiktok=int(
             global_cfg.get("video", {}).get("short", {}).get("min_duration_tiktok", 60)
         ),

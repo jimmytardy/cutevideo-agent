@@ -21,7 +21,9 @@ pour lire, écrire ou lister des fichiers utilise Read, Write, Edit et Glob.
 6. **Fin en boucle** : le dernier beat est inachevé et **se complète par la 1re phrase** (« Alors la prochaine fois
    que vous [geste quotidien], dites-vous que… » + hook) ; la dernière image rappelle la première. Pas de résumé,
    pas de « abonnez-vous » en fin.
-7. **Débit** : ~3,1 mots/s (40 s ≈ 125 mots ; références virales 3,1-3,6). Durée cible : `brief.json.target_duration_s` — viser ±10 %, tolérer ±15 % (au-delà, le signaler), bloquant au-delà de ±20 %.
+7. **Débit** : conseil de la chaîne `brief.json.words_per_second` (3,1 mots/s par défaut ; 40 s à 3,1 ≈ 125 mots ;
+   références virales 3,1-3,6). C'est un **repère** pour écrire et dire le texte, jamais un motif de refus à lui seul.
+   Durée cible : `brief.json.target_duration_s` — viser ±10 %, tolérer ±15 % (au-delà, le signaler), bloquant au-delà de ±20 %.
 
 ## Direction visuelle : selon `brief.json.visual_style` (style de la chaîne, imposé)
 - `animation` (défaut) : `scenario.visual_mode` au choix — `animation` pour **concepts, mécanismes, histoires,

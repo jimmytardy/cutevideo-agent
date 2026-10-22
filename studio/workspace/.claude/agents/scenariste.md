@@ -24,8 +24,9 @@ Pas de sujet « tiède » : si l'angle du brief est plat, trouve le détail éto
    que… » — phrase **inachevée** qui se complète grammaticalement par le hook (la vidéo reboucle). `cta` = "".
 
 ## 3. Écriture
-- 7 à 14 beats, 1-2 phrases courtes chacun, faciles à dire. Total ≈ **3,1 mots/s × target_duration_s**
-  (40 s ≈ 125 mots ; les références virales parlent à 3,1-3,6 mots/s). Compte les mots.
+- 7 à 14 beats, 1-2 phrases courtes chacun, faciles à dire. Repère de longueur ≈
+  **`brief.words_per_second` × target_duration_s** (débit conseillé par la chaîne, 3,1 par défaut : 40 s ≈ 125 mots).
+  Compte les mots ; un écart modéré est acceptable si le texte respire mieux.
 - Ton parlé, direct (« vous »), verbes forts, pas de subordonnées longues. Ponctuation expressive : « ? », « ! »,
   « … » avant une révélation (la voix les interprète).
 - Faits : uniquement ce qui est vérifié (section 4) ; chiffres arrondis honnêtes ; formule prudemment si besoin.

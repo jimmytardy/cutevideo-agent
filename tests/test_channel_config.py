@@ -55,3 +55,14 @@ def test_subscription_allows_ai_fallback_on_paid_plan() -> None:
     cfg = resolve_channel_config(channel, subscription_limits=limits)  # type: ignore[arg-type]
     # Plan payant : le choix de la chaîne (désactivé) est respecté.
     assert cfg.ai_fallback.enabled is False
+
+
+def test_words_per_second_defaults_and_clamps() -> None:
+    class _Channel(_FakeChannel):
+        config = {"production": {"words_per_second": 2.7}}
+
+    assert resolve_channel_config(_FakeChannel()).words_per_second == 3.1  # type: ignore[arg-type]
+    assert resolve_channel_config(_Channel()).words_per_second == 2.7  # type: ignore[arg-type]
+    for raw, expected in (("vite", 3.1), (None, 3.1), (9, 4.0), (0.5, 2.0), (float("nan"), 3.1)):
+        _Channel.config = {"production": {"words_per_second": raw}}
+        assert resolve_channel_config(_Channel()).words_per_second == expected  # type: ignore[arg-type]

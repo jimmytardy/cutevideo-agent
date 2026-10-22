@@ -105,6 +105,7 @@ def build_brief(ctx: PipelineContext) -> Brief:
         angle=str(plan.get("angle") or plan.get("hook") or ""),
         language=cfg.content_language or "fr",
         target_duration_s=max(15, min(int(ctx.target_duration_seconds or cfg.short_duration_s), 180)),
+        words_per_second=cfg.words_per_second,
         voice=cfg.tts_short.voice or cfg.tts_voice,
         tts_engine=cfg.tts_short.engine or cfg.tts_engine,
         max_iterations=max(1, min(ctx.max_critic_iterations or cfg.max_critic_iterations, 6)),

@@ -85,6 +85,23 @@ def test_analysis_flags_catch_slow_flat_voice() -> None:
         assert needle in flags
 
 
+def test_analysis_speech_rate_flags_follow_channel_advice(tmp_path) -> None:
+    m = {
+        "duration_s": 30.0, "loudness_lufs": -14.0,
+        "visual": {"first_cut_s": 1.0, "longest_shot_s": 3.0, "longest_shot_at": 0.0, "static_spans": []},
+        "speech": {"words": 60, "first_word_s": 0.0, "words_per_s": 2.2, "longest_pause_s": 0.3},
+    }
+    assert any("débit lent" in f for f in analyze._flags(m))                      # défaut : < 2,4
+    assert not any("débit" in f for f in analyze._flags(m, 2.6))                  # conseil 2,6 : dans la marge
+    assert any("conseil de la chaîne ≈ 3,1" in f for f in analyze._flags(m, 3.1))
+
+    assert analyze._brief_words_per_second(tmp_path) is None
+    (tmp_path / "brief.json").write_text('{"theme": "x", "words_per_second": 2.6}', encoding="utf-8")
+    assert analyze._brief_words_per_second(tmp_path) == 2.6
+    (tmp_path / "brief.json").write_text("{abîmé", encoding="utf-8")
+    assert analyze._brief_words_per_second(tmp_path) is None
+
+
 def test_templates_exist_and_use_the_kit() -> None:
     for name in TEMPLATES:
         html = (TEMPLATES_DIR / f"{name}.html").read_text(encoding="utf-8")

@@ -35,6 +35,12 @@ def test_build_brief_maps_channel_and_project() -> None:
     assert brief.min_score == 85
     assert brief.max_iterations == 3
     assert brief.editorial_tone == "drôle"
+    assert brief.words_per_second == 3.1
+
+
+def test_build_brief_carries_channel_words_per_second() -> None:
+    cfg = ChannelRuntimeConfig(words_per_second=2.7)
+    assert build_brief(_ctx(channel_config=cfg)).words_per_second == 2.7
 
 
 def test_build_brief_clamps_duration_and_iterations() -> None:

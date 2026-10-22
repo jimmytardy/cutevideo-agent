@@ -7,6 +7,7 @@ import MenuItem from '@mui/material/MenuItem'
 import TextField from '@mui/material/TextField'
 import Typography from '@mui/material/Typography'
 
+import { WORDS_PER_SECOND_RANGE, wordsPerSecond } from '@/lib/channelSettingsForm'
 import type { ChannelSettingsForm, UpdateChannelForm } from '@/lib/channelSettingsForm'
 import { ANIMATION_MODES, PLATFORMS, PRODUCTION_MODES, VISUAL_STYLES, YOUTUBE_CATEGORIES } from '@/lib/channelSettingsOptions'
 
@@ -16,6 +17,7 @@ interface Props {
 }
 
 export default function GeneralTab({ form, update }: Props) {
+  const wpsInvalid = String(form.words_per_second).trim() !== '' && wordsPerSecond(form) === null
   const togglePlatform = (platform: string, enabled: boolean) => {
     const current = form.enabled_platforms
     update({ enabled_platforms: enabled ? [...current, platform] : current.filter((p) => p !== platform) })
@@ -70,6 +72,13 @@ export default function GeneralTab({ form, update }: Props) {
         <TextField type="number" label="Durée short cible (s)" value={form.short_duration_s}
           helperText="Plafonnée par l'abonnement"
           onChange={(e) => update({ short_duration_s: e.target.value })} />
+        <TextField type="number" label="Débit conseillé (mots/s)" value={form.words_per_second}
+          placeholder="3.1" error={wpsInvalid}
+          helperText={wpsInvalid
+            ? 'Nombre attendu, par ex. 2.8'
+            : `Repère pour le script et la voix, de ${WORDS_PER_SECOND_RANGE.min} à ${WORDS_PER_SECOND_RANGE.max} (vide = défaut)`}
+          inputProps={{ step: 0.1, ...WORDS_PER_SECOND_RANGE }}
+          onChange={(e) => update({ words_per_second: e.target.value })} />
       </Box>
 
       <Typography variant="subtitle2" sx={{ mb: 1 }}>Plateformes actives</Typography>

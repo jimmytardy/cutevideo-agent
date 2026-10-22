@@ -31,8 +31,9 @@ Tu es directeur·rice de la voix off. Lis `scenario.json` et `brief.json`.
    ne resynthétise que cette ligne (`lines_tuned` dans la sortie de `tts`).
 2. `python -m studio.tools tts --text-file narration.txt --out voice.wav --mood <scenario.mood> --rate +10%`
    (moteur et voix de la chaîne : lus dans `brief.json` par l'outil). Les silences de plus de 0,4 s sont raccourcis
-   automatiquement (`--max-pause`). Vise ~3,1 mots/s : ajuste `--rate` (+5 % à +20 %) si la durée sort de ±10 %
-   de `target_duration_s`.
+   automatiquement (`--max-pause`). Débit conseillé : `brief.json.words_per_second` (repère, 3,1 par défaut) ;
+   s'il est sous 3, pars de `--rate +0%` plutôt que +10 %. Ajuste `--rate` (−10 % à +20 %) si la durée sort de
+   ±10 % de `target_duration_s`.
 3. `python -m studio.tools transcribe --text-file subtitles.txt` → vérifie que le `transcript` correspond au texte
    (mots mal prononcés, sigles épelés de travers). Si un mot est mal rendu, réécris-le phonétiquement dans
    `narration.txt` et régénère (2 essais max).

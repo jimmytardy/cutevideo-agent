@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from pathlib import Path
 from typing import Any, Literal, TypeVar
 
@@ -20,6 +21,22 @@ Motion = Literal["zoom", "pan_left", "pan_right", "static"]
 # Style visuel d'une chaîne (réglages → Général), imposé au scénario par `allowed_visual_modes()`.
 VisualStyle = Literal["animation", "mixed", "realistic"]
 VISUAL_STYLES: tuple[str, ...] = ("animation", "mixed", "realistic")
+# Débit de voix conseillé (mots/s), réglable par chaîne (`production.words_per_second`) : repère pour le
+# scénariste, la voix et les analyses, jamais un critère bloquant.
+DEFAULT_WORDS_PER_SECOND = 3.1
+MIN_WORDS_PER_SECOND = 2.0
+MAX_WORDS_PER_SECOND = 4.0
+
+
+def clamp_words_per_second(value: Any) -> float:
+    """Débit conseillé ramené dans ses bornes ; une valeur absente ou invalide donne le défaut."""
+    try:
+        wps = float(value)
+    except (TypeError, ValueError):
+        return DEFAULT_WORDS_PER_SECOND
+    if not math.isfinite(wps):
+        return DEFAULT_WORDS_PER_SECOND
+    return round(min(max(wps, MIN_WORDS_PER_SECOND), MAX_WORDS_PER_SECOND), 2)
 TextPosition = Literal["top", "center", "bottom"]
 Sfx = Literal["", "whoosh", "pop", "ding", "click", "riser", "impact"]
 
@@ -35,6 +52,8 @@ class Brief(BaseModel):
     angle: str = ""
     language: str = "fr"
     target_duration_s: int = Field(default=45, ge=10, le=180)
+    # Débit conseillé de la chaîne (mots/s) : repère, pas une contrainte.
+    words_per_second: float = Field(default=DEFAULT_WORDS_PER_SECOND, ge=MIN_WORDS_PER_SECOND, le=MAX_WORDS_PER_SECOND)
     voice: str = ""
     tts_engine: str = ""
     # Boucle vidéo (monteur ⇄ critique) : plafond et seuil de `critique_N.json`.

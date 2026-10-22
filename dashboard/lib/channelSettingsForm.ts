@@ -16,6 +16,8 @@ export interface ChannelSettingsForm {
   /** '' = hérite du défaut plateforme (data/agent_config.json → studio.visual_style). */
   visual_style: string
   short_duration_s: NumericInput
+  /** Débit conseillé (mots/s), simple repère pour les agents ; '' = défaut plateforme (3,1). */
+  words_per_second: NumericInput
   long_quota: NumericInput
   short_quota: NumericInput
   enabled_platforms: string[]
@@ -33,6 +35,18 @@ const DEFAULT_VOICE = 'fr-FR-Vivienne:DragonHDLatestNeural'
 
 /** Clés de Channel.config qui ne sont plus lues par le backend : retirées à l'enregistrement. */
 const LEGACY_CONFIG_KEYS = ['runway', 'media_validation', 'subtitles', 'engagement', 'media_library', 'quality']
+
+/** Bornes du débit conseillé (studio/contracts.py → MIN/MAX_WORDS_PER_SECOND). */
+export const WORDS_PER_SECOND_RANGE = { min: 2, max: 4 }
+
+/** Débit saisi (virgule acceptée), ramené dans ses bornes ; null s'il est vide ou illisible. */
+export function wordsPerSecond(form: ChannelSettingsForm): number | null {
+  const raw = String(form.words_per_second).trim().replace(',', '.')
+  if (raw === '') return null
+  const value = Number(raw)
+  if (!Number.isFinite(value)) return null
+  return Math.min(Math.max(value, WORDS_PER_SECOND_RANGE.min), WORDS_PER_SECOND_RANGE.max)
+}
 
 function section(config: Json, key: string): Json {
   return (config[key] as Json) || {}
@@ -70,6 +84,7 @@ export function channelToFormState(channel: Channel): ChannelSettingsForm {
     animations: String(section(cfg, 'studio').animations || ''),
     visual_style: String(section(cfg, 'studio').visual_style || ''),
     short_duration_s: Number(prod.short_duration_s || 60),
+    words_per_second: prod.words_per_second == null ? '' : Number(prod.words_per_second),
     long_quota: quotas.long ?? 1,
     short_quota: quotas.short ?? 3,
     enabled_platforms: (pub.enabled_platforms as string[]) || ['youtube', 'tiktok', 'instagram'],
@@ -85,6 +100,7 @@ function normalizeForCompare(form: ChannelSettingsForm): Json {
     ...form,
     creative_brief: form.creative_brief || null,
     short_duration_s: Number(form.short_duration_s),
+    words_per_second: wordsPerSecond(form),
     long_quota: Number(form.long_quota),
     short_quota: Number(form.short_quota),
     enabled_platforms: [...form.enabled_platforms].sort(),
@@ -119,7 +135,12 @@ export function buildChannelUpdatePayload(
   for (const key of LEGACY_CONFIG_KEYS) delete config[key]
 
   const { animations: _previousAnimations, visual_style: _previousVisualStyle, ...studio } = section(config, 'studio')
-  const { min_short_duration_s: _min, max_short_duration_s: _max, ...production } = section(config, 'production')
+  const {
+    min_short_duration_s: _min, max_short_duration_s: _max, words_per_second: _wps, ...production
+  } = section(config, 'production')
+  // Saisie illisible : on garde la valeur enregistrée plutôt que de revenir au défaut sans le dire.
+  const typed = String(form.words_per_second).trim() !== ''
+  const wps = wordsPerSecond(form) ?? (typed && typeof _wps === 'number' ? _wps : null)
   const { long: _long, style: _style, ...tts } = section(config, 'tts')
 
   return {
@@ -139,6 +160,7 @@ export function buildChannelUpdatePayload(
         ...production,
         mode: form.production_mode,
         short_duration_s: Number(form.short_duration_s),
+        ...(wps === null ? {} : { words_per_second: wps }),
       },
       publishing: {
         ...section(config, 'publishing'),
