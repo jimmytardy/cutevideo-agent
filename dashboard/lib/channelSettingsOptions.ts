@@ -24,7 +24,12 @@ export const VISUAL_STYLES: Option[] = [
   { value: 'animation', label: 'Animation : schémas et animations, photos réelles ponctuelles' },
   { value: 'mixed', label: 'Mixte : photos et vidéos réelles + animations pour les chiffres' },
   { value: 'realistic', label: 'Réaliste : images réelles sur presque tous les plans' },
+  { value: 'motion3d', label: 'Motion design 3D : plans clés en 3D, reste en animation (+20-60 min de création)' },
+  { value: 'auto', label: 'Au choix : Claude choisit le style selon le sujet de chaque vidéo' },
 ]
+
+/** Style réservé aux abonnements dont les limites ont `motion3d_allowed`. */
+export const MOTION3D_STYLE = 'motion3d'
 
 export const PRODUCTION_MODES: Option[] = [
   { value: 'mixed', label: 'Mixte (long + shorts)' },

@@ -15,7 +15,8 @@ on_screen_text) et `timeline.json`.
    toujours à la vidéo (même sujet, texte juste et lisible, fond présent dans la vidéo), **ne régénère rien** et
    passe directement à l'étape 6 (la fiche de publication est toujours due). Sinon refais-la (étapes 1-5).
 1. Choisis **un fond propre** (jamais un rendu avec sous-titres) : de préférence un média de `media/` utilisé
-   dans `timeline.json` ; en mode animation, une frame d'animation forte (`media/anim_01_hook.mp4@1.5`) ou une
+   dans `timeline.json` ; s'il y a des plans 3D, une frame 3D forte (souvent la plus « premium ») ; en mode
+   animation, une frame d'animation forte (`media/anim_01_hook.mp4@1.5`) ou une
    animation dédiée `anim/thumb.html` avec le kit — objet-héros énorme, sans titre — rendue par
    `animate --name thumb_bg`. Un sujet unique, lisible en tout petit, contrasté, émotion ou tension visible.
    Si aucun ne convient, cherche-en un dédié (`search-media` + `preview` + `download --name thumb_bg`) ou en

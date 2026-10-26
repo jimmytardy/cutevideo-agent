@@ -1,0 +1,45 @@
+<!doctype html>
+<!-- Modèle 3D « phone3d » : téléphone en 3D dont l'écran s'anime, caméra en orbite lente, anneau lumineux au sol.
+     PARAMS : title?, sub?, screen {kind: ring|counter|list|bars, header?, value? (0-1, ring), text?, to?, suffix?,
+     items? ([{text, value?}] pour list, [nombres] pour bars)}, caption?, theme?, accent?, floor? (gloss|mirror|grid|matte) -->
+<html><head><meta charset="utf-8"></head><body>
+<script src="lib/three.bundle.min.js"></script>
+<script src="lib/studio.js"></script>
+<script src="lib/studio3d.js"></script>
+<script>
+const P = /*PARAMS*/{};
+const D = P.duration || 4;
+const scr = P.screen || {kind: "ring", value: 0.84, header: "Objectif"};
+const s = Studio3D.scene({theme: P.theme || "night", accent: P.accent, floor: P.floor || "gloss", dof: 1, bloom: 0.3});
+const ui = Studio.scene({theme: P.theme || "night", accent: P.accent, transparent: true});
+if (P.title) ui.title(P.title, {sub: P.sub});
+if (P.caption) ui.tag(P.caption, {x: 540, y: 1150, at: Math.min(D * 0.55, 2), size: 44, fill: "accent"});
+
+const grow = (t, d) => Studio.ease.out(t / d);
+const screens = {
+  ring: (c, t, k) => {
+    const v = (scr.value === undefined ? 1 : scr.value) * grow(t, D * 0.7);
+    k.ring(c, 0.5, 0.36, 0.36, v, scr.text || `${Math.round(v * 100)} %`);
+    if (scr.items) k.rows(c, scr.items, grow(t - D * 0.3, D * 0.5), {y: 0.62});
+  },
+  counter: (c, t, k) => {
+    const v = (scr.to || 0) * grow(t, D * 0.7);
+    k.text(c, Math.round(v).toLocaleString("fr-FR").replace(/ | /g, " ") + (scr.suffix || ""), 0.5, 0.44,
+      {size: 0.17, align: "center", weight: 900, color: "accent"});
+    k.bars(c, [3, 5, 4, 7, 6, 9], grow(t, D * 0.8), {y: 0.85, h: 0.25});
+  },
+  list: (c, t, k) => k.rows(c, scr.items || [], grow(t, D * 0.75), {y: 0.24}),
+  bars: (c, t, k) => k.bars(c, scr.items || [2, 4, 3, 6, 8], grow(t, D * 0.75), {y: 0.82, h: 0.5}),
+};
+const draw = screens[scr.kind] || screens.ring;
+s.phone({enter: "none", screen: (c, t, k) => {
+  k.bg(c, "#0c0c11");
+  if (scr.header) k.text(c, scr.header, 0.08, 0.1, {size: 0.1});
+  draw(c, t, k);
+}});
+s.ring({r: 0.95, draw: Math.min(1.2, D * 0.35)});
+s.ring({r: 1.3, tube: 0.006, intensity: 3, at: 0.3, draw: Math.min(1.5, D * 0.4)});
+s.particles({count: 60});
+// Orbite lente (~6°/s) + légère poussée : le téléphone ne bouge pas lui-même, la caméra fait le mouvement.
+s.orbit({at: 0, dur: D, from: -14, to: 10, radius: 9.5, toRadius: 8.9, target: [0, 0.9, 0], ease: "inOut"});
+</script></body></html>

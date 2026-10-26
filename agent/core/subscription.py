@@ -24,6 +24,8 @@ class SubscriptionLimits(BaseModel):
     tts_allowed_engines: list[str] = Field(default_factory=lambda: ["edge"])
     whisper_model: str = "base"
     enable_ai_fallback: bool = False
+    # Motion design 3D (style motion3d, plans 3D en style auto) : rendu long, réservé aux plans payants.
+    motion3d_allowed: bool = False
     pipeline_queue_priority: int = 10
 
 
@@ -86,6 +88,7 @@ async def resolve_user_limits(session: AsyncSession, user: User) -> Subscription
             tts_allowed_engines=["edge", "azure", "gemini"],
             whisper_model="small",
             enable_ai_fallback=True,
+            motion3d_allowed=True,
             pipeline_queue_priority=100,
         )
     raw = plan.limits or {}
@@ -174,6 +177,13 @@ def apply_subscription_caps(
     whisper = dict(out.get("whisper") or {})
     whisper["model"] = limits.whisper_model
     out["whisper"] = whisper
+
+    # Style motion3d sans droit : rétrogradé en animation (le kit 2D). « auto » n'a rien à réécrire : sans droit, la
+    # 3D est simplement absente du brief (resolve_channel_config → studio_motion3d).
+    studio = dict(out.get("studio") or {})
+    if not limits.motion3d_allowed and studio.get("visual_style") == "motion3d":
+        studio["visual_style"] = "animation"
+        out["studio"] = studio
 
     media_sources = dict(out.get("media_sources") or {})
     media_sources["enable_ai_fallback"] = limits.enable_ai_fallback

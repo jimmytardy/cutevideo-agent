@@ -9,14 +9,21 @@ import Typography from '@mui/material/Typography'
 
 import { WORDS_PER_SECOND_RANGE, wordsPerSecond } from '@/lib/channelSettingsForm'
 import type { ChannelSettingsForm, UpdateChannelForm } from '@/lib/channelSettingsForm'
-import { ANIMATION_MODES, PLATFORMS, PRODUCTION_MODES, VISUAL_STYLES, YOUTUBE_CATEGORIES } from '@/lib/channelSettingsOptions'
+import { ANIMATION_MODES, MOTION3D_STYLE, PLATFORMS, PRODUCTION_MODES, VISUAL_STYLES, YOUTUBE_CATEGORIES } from '@/lib/channelSettingsOptions'
 
 interface Props {
   form: ChannelSettingsForm
   update: UpdateChannelForm
+  /** L'abonnement autorise la 3D (limite `motion3d_allowed`) ; `undefined` tant qu'il n'est pas chargé. */
+  motion3dAllowed?: boolean
 }
 
-export default function GeneralTab({ form, update }: Props) {
+export default function GeneralTab({ form, update, motion3dAllowed }: Props) {
+  const motion3dBlocked = motion3dAllowed === false
+  const visualStyleHelp = motion3dBlocked && form.visual_style === MOTION3D_STYLE
+    ? 'Votre abonnement n’inclut pas la 3D : les vidéos sont créées en style Animation.'
+    : 'Mixte / Réaliste : photos et vidéos libres (Pexels, Pixabay, Unsplash…) avec crédits ; Motion design 3D : '
+      + 'accroche et chiffres clés en 3D (abonnements payants) ; Au choix : Claude décide par vidéo.'
   const wpsInvalid = String(form.words_per_second).trim() !== '' && wordsPerSecond(form) === null
   const togglePlatform = (platform: string, enabled: boolean) => {
     const current = form.enabled_platforms
@@ -59,9 +66,11 @@ export default function GeneralTab({ form, update }: Props) {
       </TextField>
 
       <TextField select fullWidth label="Style visuel" value={form.visual_style} sx={{ mb: 2 }}
-        helperText="Mixte / Réaliste : photos et vidéos libres (Pexels, Pixabay, Unsplash…) avec crédits ; imposé au scénariste et au monteur."
+        helperText={visualStyleHelp} error={motion3dBlocked && form.visual_style === MOTION3D_STYLE}
         onChange={(e) => update({ visual_style: e.target.value })}>
-        {VISUAL_STYLES.map((m) => <MenuItem key={m.value} value={m.value}>{m.label}</MenuItem>)}
+        {VISUAL_STYLES.map((m) => (
+          <MenuItem key={m.value} value={m.value} disabled={motion3dBlocked && m.value === MOTION3D_STYLE}>{m.label}</MenuItem>
+        ))}
       </TextField>
 
       <Box sx={{ display: 'flex', gap: 2, mb: 2, flexWrap: 'wrap' }}>

@@ -172,11 +172,12 @@ def usable_ai_models(brief: Brief | None, keys: UserKeys | None) -> list[str]:
 
 
 def build_env(
-    run_dir: Path, keys: UserKeys | None = None, *, config_dir: Path | None = None
+    run_dir: Path, keys: UserKeys | None = None, *, config_dir: Path | None = None, policy: Brief | None = None
 ) -> dict[str, str]:
     """Environnement du CLI : aucune clé héritée, seulement celles de l'utilisateur (`keys`).
 
-    `config_dir` isole l'état du CLI (`CLAUDE_CONFIG_DIR`) par utilisateur.
+    `config_dir` isole l'état du CLI (`CLAUDE_CONFIG_DIR`) par utilisateur. `policy` : le brief recalculé
+    depuis la base (chaîne + abonnement) ; sans lui (`studio.run`), `brief.json` est relu.
     """
     env = {name: value for name, value in os.environ.items() if name not in INHERITED_SECRET_VARS}
     if keys is not None:
@@ -188,18 +189,24 @@ def build_env(
     env["PATH"] = f"{python_bin}{os.pathsep}{env.get('PATH', '')}"
     env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(REPO_ROOT), env.get("PYTHONPATH")]))
     env["STUDIO_RUN_DIR"] = str(run_dir)
-    # Politiques lues ici, avant que Claude ne puisse toucher brief.json : les outils
-    # (`animate*`, `ai-image`) ne font confiance qu'à ces variables.
-    brief = _read_brief(run_dir)
+    # Politiques que les outils (`animate*`, `ai-image`) lisent, à l'exclusion de brief.json. Elles viennent du
+    # brief recalculé par le runner : `brief.json` est modifiable par Claude, et une reprise (`--resume`) le
+    # relirait après coup — la 3D, réservée aux abonnements payants, ne doit pas pouvoir s'y obtenir.
+    brief = policy or _read_brief(run_dir)
     env["STUDIO_ANIMATIONS"] = brief.animations if brief else "off"
     env["STUDIO_VISUAL_STYLE"] = brief.visual_style if brief else "animation"
+    env["STUDIO_MOTION3D"] = "1" if brief and brief.motion3d else "0"
     if brief is None:
         env["STUDIO_MAX_AI_IMAGES"] = "0"
     elif brief.max_ai_images is not None:
         env["STUDIO_MAX_AI_IMAGES"] = str(min(brief.max_ai_images, max_ai_images()))
     env["STUDIO_AI_MODELS"] = ",".join(usable_ai_models(brief, keys))
-    # Rendus et transcriptions dépassent les 2 min par défaut du Bash de Claude Code.
+    # Rendus et transcriptions dépassent les 2 min par défaut du Bash de Claude Code ; un plan 3D peut prendre
+    # jusqu'à ~20 min (rendu + file + encodage), d'où 30 min quand la 3D est active.
     env.setdefault("BASH_DEFAULT_TIMEOUT_MS", "1200000")
+    if env["STUDIO_MOTION3D"] == "1":
+        # Au moins 30 min, même si l'environnement en hérite un plus court.
+        env["BASH_DEFAULT_TIMEOUT_MS"] = str(max(env_int("BASH_DEFAULT_TIMEOUT_MS", 0), 1800000))
     env.setdefault("BASH_MAX_TIMEOUT_MS", "1800000")
     # Ce plafond compte l'attente *inactive* et repart à chaque tour de Claude ; or le producteur devient
     # inactif dès qu'il a lancé un rôle, si bien que ses 10 min devenaient le budget du rôle — un montage qui
@@ -491,6 +498,7 @@ async def run_claude(
     config_dir: Path | None = None,
     session_id: str | None = None,
     resume: bool = False,
+    policy: Brief | None = None,
 ) -> dict[str, Any]:
     """Exécute la session avec les clés `keys` et renvoie l'événement `result` final de Claude Code."""
     from agent.core.subprocess_registry import register, terminate_proc, unregister
@@ -506,7 +514,7 @@ async def run_claude(
         proc = await asyncio.create_subprocess_exec(
             *build_command(cfg, prompt, session_id=session_id, resume=resume),
             cwd=str(run_dir),
-            env=build_env(run_dir, keys, config_dir=config_dir),
+            env=build_env(run_dir, keys, config_dir=config_dir, policy=policy),
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=stderr_fh,

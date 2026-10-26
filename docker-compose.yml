@@ -195,6 +195,33 @@ services:
     pids_limit: 512
     restart: unless-stopped
 
+  studio-sandbox-3d:
+    # Même service, file à part pour les rendus 3D (WebGL logiciel, ~3 s par image, jusqu'à 18 min par job) :
+    # ils ne font jamais attendre les animations 2D des autres créations (studio/sandbox.py → jobs_dir).
+    container_name: studio-sandbox-3d
+    image: cutevideo-sandbox:local
+    network_mode: none
+    environment:
+      STUDIO_SANDBOX_JOBS_DIR: /var/lib/cutevideo/studio-runs/.sandbox-jobs-3d
+    volumes:
+      - studio_runs:/var/lib/cutevideo/studio-runs
+      - ./studio/sandbox_exec.py:/opt/sandbox/sandbox_exec.py:ro
+      - ./studio/sandbox_worker.py:/opt/sandbox/sandbox_worker.py:ro
+    read_only: true
+    init: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    shm_size: 256m
+    mem_limit: ${SANDBOX_3D_MEM_LIMIT:-1500m}
+    memswap_limit: ${SANDBOX_3D_MEM_LIMIT:-1500m}
+    cpus: ${SANDBOX_3D_CPUS:-1.5}
+    pids_limit: 512
+    restart: unless-stopped
+
   # Ce bloc reste en sommeil, sauf si app-dev le réveille
   shared-postgres:
     container_name: shared-postgres

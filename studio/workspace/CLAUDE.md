@@ -33,6 +33,12 @@ pour lire, écrire ou lister des fichiers utilise Read, Write, Edit et Glob.
   Viser au moins la moitié des plans en images réelles.
 - `realistic` : `visual_mode` = `footage` (ou `mixed`) : images réelles sur presque tous les plans, animations
   seulement pour les données (chiffre, carte, comparaison) ; `ai-image` en dernier recours, dans son plafond.
+- `motion3d` : `visual_mode` = `animation` (ou `mixed`) ; **2 à 4 plans clés en 3D** (accroche, chiffre choc,
+  révélation : beats dont le `visual_intent` commence par « 3D : »), les autres avec le kit 2D, même charte.
+  Kit, modèles, budget et méthode : `docs/motion3d.md`.
+- `auto` : **tu choisis le style selon le sujet** — concept, mécanisme, chiffres → animation ; lieux, animaux,
+  personnes, histoire → mixed ou footage ; produit, technologie, appli, record spectaculaire → 3D sur les plans clés
+  si `brief.json.motion3d` est vrai. Le scénariste justifie ce choix dans `visual_mode` et les `visual_intent`.
 - Si `brief.json.animations` = `off`, on est en `footage` ; si `templates`, seulement les modèles.
   `validate --kind scenario` refuse un `visual_mode` incompatible avec le style de la chaîne.
 - **Aucune image vide à une coupe** : à t = 0 de chaque plan, le mot-clé (affiché d'office) et l'objet principal
@@ -116,7 +122,8 @@ fichiers de `anim/` sont accessibles. Python (numpy, matplotlib, Pillow) : lis `
 `tts_engine`, `max_scenario_iterations` / `min_scenario_score` (boucle scénario, défaut 5 / 90), `max_iterations` /
 `min_score` (boucle vidéo, défaut 5 / 80), `editorial_tone`, `creative_brief` (charte éditoriale de la chaîne : ton,
 style narratif, interdits — à respecter), `content_plan`, `animations` (off | templates | scripts),
-`visual_style` (animation | mixed | realistic : direction visuelle imposée par la chaîne).
+`visual_style` (animation | mixed | realistic | motion3d | auto : direction visuelle imposée par la chaîne),
+`motion3d` (vrai : plans 3D autorisés, voir `docs/motion3d.md`).
 
 `scenario.json` (scénariste) :
 ```json
@@ -192,6 +199,6 @@ exige `lines` (numéros de ligne de `narration.txt`, 1 = première). La miniatur
 | `frames --video renders/v1.mp4 [--every 2]` | frames + `review/v1/sheet.png` + loudness |
 | `analyze --video renders/v1.mp4 [--words words.json] [--timeline timeline.json]` | analyse multimodale : avis Gemini si dispo, sinon planches hook/chronologie/coupes, débit, pauses, loudness, rapport voix/fond, intonation, spectrogramme + alertes |
 | `thumbnail --background media/x.jpg --text "MOT\|CHOC" --out thumbnails/final_9x16.png [--aspect 16:9] [--position top\|center\|bottom] [--color yellow]` | miniature |
-| `animate-template --template <modèle> --params '{…}' --duration 3 --name 04_x` | animation prête → `media/anim_04_x.mp4` |
-| `animate --script anim/05_x.html\|.py --duration 4 --name 05_x` | rend un script jetable (bac à sable) |
+| `animate-template --template <modèle> --params '{…}' --duration 3 --name 04_x [--preview]` | animation prête → `media/anim_04_x.mp4` (modèles 3D `phone3d`, `number3d` : `docs/motion3d.md`) |
+| `animate --script anim/05_x.html\|.py --duration 4 --name 05_x [--3d] [--preview]` | rend un script jetable (bac à sable) ; `--3d` : scène `studio3d.js` (si `brief.json.motion3d`) ; `--preview` : planche de 6 images sans vidéo |
 | `probe --path … [--loudness]` / `validate --kind … --path …` | contrôle |

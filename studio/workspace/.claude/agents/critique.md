@@ -25,6 +25,10 @@ Grille (`scores`, total = `score`) :
 - `valeur` (0-15) : une idée claire, vraie, surprenante ; chiffres mis à l'échelle ; zéro jargon.
 - `visuels` (0-20) : chaque plan illustre littéralement ce qui est dit, au bon moment ; finition (rien de coupé,
   pas de vide, contrastes) ; charte cohérente (thème, accent, objet-héros) ; contenu dans y 170-1180.
+  Si `brief.json.motion3d` est vrai et que la vidéo a des plans 3D : juge aussi la **finition motion design**
+  (sujet lisible et bien éclairé, caméra qui bouge en continu, profondeur, halo discret, raccord de charte entre plans
+  3D et 2D) ; en style `motion3d`, l'absence de plan 3D sur l'accroche ou le chiffre clé est un défaut.
+  Un plan 3D réussi n'est jamais cité (son rendu coûte ~10 min).
 - `voix_son` (0-15) : voix naturelle et expressive (intonation qui varie, emphases, pas de diction robotique),
   musique audible mais 12-20 dB sous la voix (`speech_to_bed_db`), loudness -16 à -12 LUFS, bruitages discrets
   et à propos.

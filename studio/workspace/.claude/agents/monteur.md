@@ -34,6 +34,11 @@ jamais après.
 - **continuité** : un plan qui prolonge le précédent (même objet qui grandit, même jauge, même carte) démarre
   sur l'état final du précédent (mêmes positions, mêmes valeurs) au lieu de repartir de zéro ;
 - dernier plan : rappelle visuellement le premier (même objet-héros, même cadrage) pour la boucle.
+**Plans 3D** (beats « 3D : …», seulement si `brief.motion3d`) : lis d'abord `docs/motion3d.md`. Modèle 3D
+(`phone3d`, `number3d`) ou script `anim/<NN>_<nom>.html` avec `studio3d.js` + calque 2D transparent pour le
+mot-clé, même `theme`/`accent` que le reste ; **aperçu (`--preview`) puis un seul rendu complet**
+(`animate --3d`, Bash `timeout` 1800000) ; ≤ 7 s par plan, 20 s de 3D par vidéo. Rends les plans 3D en premier
+(les plus longs), puis les plans 2D.
 **`mixed` / `footage`** : pour les beats marqués « PHOTO : » / « VIDÉO : », `search-media` avec la requête en
 anglais du scénario (concret ; `--type video` pour l'action, un mouvement réel vaut mieux qu'une photo) →
 `preview` → **Read de la planche** (obligatoire, ne choisis jamais à l'aveugle) → `download --name <NN>_<mot>`.
@@ -56,7 +61,7 @@ apparitions fortes, impact sur un chiffre choc, ding sur la révélation ; jamai
 Contrôle : `frames --video renders/v<N>.mp4 --every 2` et Read sur la planche ; corrige les plans ratés et
 re-rends si nécessaire (2 rendus max par itération).
 
-En révision : ne refais que les plans visés par les instructions, garde les autres (un plan inchangé, même décalé dans le temps, n'est pas ré-encodé par `render`). Si la voix a été retouchée
+En révision : ne refais que les plans visés par les instructions (un plan 3D non cité n'est jamais re-rendu), garde les autres (un plan inchangé, même décalé dans le temps, n'est pas ré-encodé par `render`). Si la voix a été retouchée
 (lignes resynthétisées), relis `words.json` : les plans **avant** la première ligne modifiée gardent leurs temps ;
 à partir de celle-ci, recale les débuts/fins de plans sur les nouveaux mots (et les `at` des animations dont la
 durée a changé), sans refaire les plans dont la durée bouge de moins de 0,15 s.

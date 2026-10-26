@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 from pathlib import Path
 from typing import Any, Literal, TypeVar
 
@@ -19,8 +20,14 @@ from pydantic import BaseModel, Field, ValidationError, field_validator, model_v
 Role = Literal["scenariste", "voix", "monteur"]
 Motion = Literal["zoom", "pan_left", "pan_right", "static"]
 # Style visuel d'une chaîne (réglages → Général), imposé au scénario par `allowed_visual_modes()`.
-VisualStyle = Literal["animation", "mixed", "realistic"]
-VISUAL_STYLES: tuple[str, ...] = ("animation", "mixed", "realistic")
+# motion3d : plans clés en 3D (studio3d.js), réservé aux abonnements qui l'autorisent ; auto : Claude choisit
+# le style par vidéo (la 3D comprise si l'abonnement l'autorise).
+VisualStyle = Literal["animation", "mixed", "realistic", "motion3d", "auto"]
+VISUAL_STYLES: tuple[str, ...] = ("animation", "mixed", "realistic", "motion3d", "auto")
+# Styles où la 3D peut servir (si l'abonnement l'autorise et que les animations ne sont pas coupées).
+MOTION3D_STYLES: tuple[str, ...] = ("motion3d", "auto")
+# Préfixe de `visual_intent` qui désigne un plan 3D (exigé au moins une fois en style motion3d).
+MOTION3D_BEAT_PREFIX = "3D"
 # Débit de voix conseillé (mots/s), réglable par chaîne (`production.words_per_second`) : repère pour le
 # scénariste, la voix et les analyses, jamais un critère bloquant.
 DEFAULT_WORDS_PER_SECOND = 3.1
@@ -68,8 +75,11 @@ class Brief(BaseModel):
     content_plan: dict | None = None
     # Animations autorisées : off | templates (modèles intégrés) | scripts (scripts jetables + modèles).
     animations: Literal["off", "templates", "scripts"] = "scripts"
-    # Style visuel de la chaîne : animation (kit), mixed (images réelles + animations), realistic (images réelles).
+    # Style visuel de la chaîne : animation (kit), mixed (images réelles + animations), realistic (images réelles),
+    # motion3d (plans clés en 3D), auto (au choix de Claude).
     visual_style: VisualStyle = "animation"
+    # Rendus 3D autorisés pour ce Short (abonnement ∧ style motion3d/auto ∧ animations) : `motion3d_enabled()`.
+    motion3d: bool = False
     # Images IA autorisées pour ce Short (0 = désactivées par la chaîne ou l'abonnement ;
     # None = plafond plateforme STUDIO_MAX_AI_IMAGES).
     max_ai_images: int | None = Field(default=None, ge=0)
@@ -261,15 +271,33 @@ class StudioResult(BaseModel):
 ModelT = TypeVar("ModelT", bound=BaseModel)
 
 
+def motion3d_enabled(visual_style: str, animations: str, allowed: bool) -> bool:
+    """La 3D sert-elle à ce Short : droit d'abonnement, style qui la prévoit, animations actives."""
+    return allowed and visual_style in MOTION3D_STYLES and animations != "off"
+
+
 def allowed_visual_modes(visual_style: str, animations: str) -> tuple[str, ...]:
-    """`scenario.visual_mode` autorisés par le style visuel de la chaîne et la politique d'animations."""
+    """`scenario.visual_mode` autorisés par le style visuel de la chaîne et la politique d'animations.
+
+    La 3D n'est pas un `visual_mode` : ses plans sont des animations (beats « 3D : … »), d'où motion3d → animation
+    ou mixed, et auto → au choix comme animation.
+    """
     if animations == "off":
         return ("footage",)
     if visual_style == "mixed":
         return ("mixed",)
     if visual_style == "realistic":
         return ("footage", "mixed")
-    return ("animation", "mixed", "footage")  # animation (ou style inconnu) : au choix
+    if visual_style == "motion3d":
+        return ("animation", "mixed")
+    return ("animation", "mixed", "footage")  # animation, auto (ou style inconnu) : au choix
+
+
+_MOTION3D_BEAT = re.compile(rf"^\s*{MOTION3D_BEAT_PREFIX}\s*:", re.IGNORECASE)
+
+
+def has_motion3d_beat(scenario: Scenario) -> bool:
+    return any(_MOTION3D_BEAT.match(b.visual_intent) for b in scenario.beats)
 
 
 class ContractError(ValueError):

@@ -102,7 +102,7 @@ def test_build_brief_carries_channel_policy() -> None:
     cfg = SimpleNamespace(content_language="fr", short_duration_s=45, words_per_second=3.1, tts_short=SimpleNamespace(voice="", engine=""),
                           tts_voice="v", tts_engine="edge", min_critic_score=80,
                           min_scenario_score=90, max_scenario_iterations=5,
-                          editorial_tone="", studio_animations="templates", studio_visual_style="mixed",
+                          editorial_tone="", studio_animations="templates", studio_visual_style="mixed", studio_motion3d=False,
                           ai_fallback=SimpleNamespace(enabled=False, max_ai_images_per_video=10))
     ctx = SimpleNamespace(channel_config=cfg, content_plan=None, theme="t", niche_prompt="",
                           target_duration_seconds=30, max_critic_iterations=2,

@@ -13,7 +13,9 @@ import GeneralTab from '@/components/channelSettings/GeneralTab'
 import VoiceTab from '@/components/channelSettings/VoiceTab'
 import { PageContainer, PageHeader, LoadingState, useConfirmDialog } from '@/components/layout'
 import TikTokPublishingPanel from '@/components/TikTokPublishingPanel'
-import { fetcher, previewChannelCostEstimate, updateChannel, type Channel, type ChannelCostEstimate } from '@/lib/api'
+import {
+  API_BASE, fetcher, previewChannelCostEstimate, updateChannel, type Channel, type ChannelCostEstimate, type SubscriptionInfo,
+} from '@/lib/api'
 import {
   aiFallbackPayload,
   buildChannelUpdatePayload,
@@ -31,6 +33,8 @@ interface Props {
 export default function ChannelSettingsPage({ params }: Props) {
   const { id } = params
   const { data: channel, isLoading, mutate } = useSWR<Channel>(`/api/v1/channels/${id}`, fetcher)
+  const { data: subscription } = useSWR<SubscriptionInfo>(`${API_BASE}/me/subscription`, fetcher)
+  const motion3dAllowed = subscription ? Boolean(subscription.is_unlimited || subscription.limits.motion3d_allowed) : undefined
   const [form, setForm] = useState<ChannelSettingsForm | null>(null)
   const [savedForm, setSavedForm] = useState<ChannelSettingsForm | null>(null)
   const [saving, setSaving] = useState(false)
@@ -126,7 +130,7 @@ export default function ChannelSettingsPage({ params }: Props) {
         <Tab label="Publication" />
       </Tabs>
 
-      {tab === 0 && <GeneralTab form={form} update={update} />}
+      {tab === 0 && <GeneralTab form={form} update={update} motion3dAllowed={motion3dAllowed} />}
       {tab === 1 && <VoiceTab form={form} update={update} />}
       {tab === 2 && <AiMediaTab form={form} update={update} costEstimate={costEstimate} />}
       {tab === 3 && <TikTokPublishingPanel channelId={id} />}

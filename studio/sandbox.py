@@ -8,7 +8,9 @@ sur un job (script HTML ou Python → images) selon `STUDIO_SANDBOX` :
   environnement vidé (aucune clé API), repo non monté ;
 - `container` (Docker, où `unshare` est refusé) : le job est déposé dans
   `STUDIO_SANDBOX_JOBS_DIR`, exécuté par le conteneur `studio-sandbox`
-  (`network_mode: none`, sans `.env`) via `studio/sandbox_worker.py` ;
+  (`network_mode: none`, sans `.env`) via `studio/sandbox_worker.py` ; les rendus 3D
+  (longs) vont dans une file à part (`<jobs>-3d`, conteneur `studio-sandbox-3d`) pour ne
+  jamais faire attendre les animations 2D des autres créations ;
 - `none` : sans isolation, réservé aux modèles d'animation intégrés (HTML de confiance).
 
 Le mode `auto` (défaut) choisit bwrap s'il fonctionne, sinon `none`.
@@ -17,6 +19,7 @@ Le mode `auto` (défaut) choisit bwrap s'il fonctionne, sinon `none`.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import functools
 import json
 import os
@@ -32,6 +35,16 @@ from agent.core.env import env_float, env_int
 SandboxMode = Literal["bwrap", "container", "none"]
 EXEC_SCRIPT = Path(__file__).resolve().parent / "sandbox_exec.py"
 DEFAULT_TIMEOUT_S = 300.0
+# Rendus 3D (WebGL logiciel, ~3,5 s par image mesurées) : délai proportionnel au nombre d'images avec une marge
+# (machine chargée), plafonné sous le délai Bash de Claude Code (30 min quand la 3D est active, launcher.build_env).
+SECONDS_PER_FRAME_3D = env_float("STUDIO_3D_SECONDS_PER_FRAME", 6.0)
+MAX_3D_TIMEOUT_S = env_float("STUDIO_3D_MAX_TIMEOUT_S", 960.0)
+# Attente maximale dans la file du conteneur avant la prise en charge du job (la file est séquentielle).
+# File (480 s) + rendu 3D maximal (960 s) + marge + encodage restent sous le délai Bash de 30 min : l'outil rend une
+# erreur propre au lieu d'être tué par Claude Code.
+QUEUE_WAIT_S = env_float("STUDIO_SANDBOX_QUEUE_WAIT_S", 480.0)
+# Marge au-delà du délai du job (démarrage de Chromium, écriture du résultat) avant de l'abandonner.
+RESULT_MARGIN_S = 30.0
 
 
 # Garde-fous ressources (VPS partagé, sans swap) : un rendu Chromium ne doit jamais
@@ -123,13 +136,22 @@ def scripts_supported() -> bool:
     return sandbox_mode() in ("bwrap", "container")
 
 
-def jobs_dir() -> Path:
+def render_timeout(frames: int, *, webgl: bool) -> float:
+    """Délai d'un rendu : fixe en 2D, proportionnel au nombre d'images en 3D."""
+    if not webgl:
+        return DEFAULT_TIMEOUT_S
+    return min(MAX_3D_TIMEOUT_S, 60.0 + frames * SECONDS_PER_FRAME_3D)
+
+
+def jobs_dir(*, webgl: bool = False) -> Path:
     configured = os.getenv("STUDIO_SANDBOX_JOBS_DIR")
     if configured:
-        return Path(configured)
-    from studio.launcher import default_runs_dir
+        base = Path(configured)
+    else:
+        from studio.launcher import default_runs_dir
 
-    return default_runs_dir() / ".sandbox-jobs"
+        base = default_runs_dir() / ".sandbox-jobs"
+    return base.with_name(f"{base.name}-3d") if webgl else base
 
 
 def _playwright_browsers() -> Path:
@@ -187,28 +209,54 @@ async def _run_process(cmd: list[str], timeout_s: float) -> tuple[int, str]:
         proc.kill()
         await proc.wait()
         raise SandboxError(f"délai dépassé ({timeout_s:.0f} s)") from exc
+    except BaseException:
+        # Annulation : un rendu 3D peut durer un quart d'heure, il ne doit pas survivre à l'outil.
+        with contextlib.suppress(ProcessLookupError):
+            proc.kill()
+        raise
     return proc.returncode or 0, out.decode("utf-8", errors="replace")
 
 
 async def _run_container(job: dict, timeout_s: float) -> None:
-    queue = jobs_dir()
+    webgl = bool(job.get("webgl"))
+    queue = jobs_dir(webgl=webgl)
+    service = "studio-sandbox-3d" if webgl else "studio-sandbox"
     queue.mkdir(parents=True, exist_ok=True)
     queue.chmod(0o777)  # le conteneur sandbox (non-root) y renomme et marque les jobs
     job_id = uuid.uuid4().hex
     tmp = queue / f"{job_id}.tmp"
     tmp.write_text(json.dumps(job), encoding="utf-8")
     tmp.chmod(0o666)
-    tmp.rename(queue / f"{job_id}.json")  # dépôt atomique : le worker ne lit jamais un job partiel
-    done = queue / f"{job_id}.done"
+    pending, running = queue / f"{job_id}.json", queue / f"{job_id}.running"
+    done, cancel = queue / f"{job_id}.done", queue / f"{job_id}.cancel"
+    tmp.rename(pending)  # dépôt atomique : le worker ne lit jamais un job partiel
     loop = asyncio.get_running_loop()
-    deadline = loop.time() + timeout_s + 30
-    while not done.exists():
-        if loop.time() > deadline:
-            (queue / f"{job_id}.json").unlink(missing_ok=True)
-            raise SandboxError(
-                "le conteneur studio-sandbox n'a pas répondu (est-il démarré ? docker compose up -d studio-sandbox)"
-            )
-        await asyncio.sleep(0.5)
+    # Deux délais : la file (séquentielle, partagée) puis le rendu, compté depuis la prise en charge — sinon
+    # un job qui attend derrière un long rendu expirerait sans avoir tourné.
+    deadline, picked = loop.time() + QUEUE_WAIT_S, False
+    try:
+        while not done.exists():
+            if not picked and running.exists():
+                picked, deadline = True, loop.time() + timeout_s + RESULT_MARGIN_S
+            if loop.time() > deadline:
+                if picked:
+                    raise SandboxError(f"délai dépassé ({timeout_s:.0f} s)")
+                raise SandboxError(
+                    f"le conteneur {service} n'a pas pris le job en {QUEUE_WAIT_S:.0f} s : file occupée par d'autres "
+                    f"rendus (réessaie plus tard ou rends ce plan en 2D) ou conteneur arrêté (docker compose up -d {service})"
+                )
+            await asyncio.sleep(0.5)
+    finally:
+        if not done.exists():
+            # Abandon (délai, outil tué par Claude Code) : un job encore en file est simplement retiré ; un job
+            # déjà pris reçoit un `.cancel` pour que le worker arrête le rendu au lieu de le finir pour personne.
+            try:
+                pending.unlink()
+            except FileNotFoundError:
+                cancel.touch()
+                # Le worker peut déjà l'avoir lu et supprimé : ne jamais masquer l'exception d'origine.
+                with contextlib.suppress(OSError):
+                    cancel.chmod(0o666)
     done.unlink(missing_ok=True)
 
 
@@ -224,8 +272,13 @@ async def run_sandboxed(
     duration: float,
     trusted: bool = False,
     timeout_s: float = DEFAULT_TIMEOUT_S,
+    webgl: bool = False,
+    times: list[float] | None = None,
 ) -> dict:
-    """Rend `script` (dans `anim_dir`) en images dans `out_dir/frames/`. Renvoie le résultat du job."""
+    """Rend `script` (dans `anim_dir`) en images dans `out_dir/frames/`. Renvoie le résultat du job.
+
+    `webgl` active la 3D (coupée sinon) ; `times` limite le rendu à ces instants (aperçu).
+    """
     mode = sandbox_mode()
     if mode == "none" and not trusted:
         raise SandboxError(
@@ -237,28 +290,29 @@ async def run_sandboxed(
     out_dir.mkdir(parents=True)
     out_dir.chmod(0o777)  # le conteneur sandbox écrit avec un utilisateur non-root
     params = {"kind": kind, "width": width, "height": height, "fps": fps, "duration": duration,
-              "timeout_s": timeout_s}
+              "timeout_s": timeout_s, "webgl": webgl, "times": times}
 
     if mode == "bwrap":
         job_file = out_dir.parent / f".{out_dir.name}.job.json"
         rel_script = script.resolve().relative_to(anim_dir.resolve())
-        job_file.write_text(json.dumps({**params, "script": f"/anim/{rel_script}", "out_dir": "/out"}),
+        job_file.write_text(json.dumps({**params, "script": f"/anim/{rel_script}", "root": "/anim", "out_dir": "/out"}),
                             encoding="utf-8")
         try:
-            code, output = await _run_process(_bwrap_command(job_file, anim_dir, out_dir), timeout_s + 30)
+            code, output = await _run_process(_bwrap_command(job_file, anim_dir, out_dir), timeout_s + RESULT_MARGIN_S)
         finally:
             job_file.unlink(missing_ok=True)
         if code != 0 and not (out_dir / "result.json").exists():
             raise SandboxError(f"bac à sable bwrap en échec (code {code}) : {output[-1500:]}")
     elif mode == "container":
-        await _run_container({**params, "script": str(script.resolve()), "out_dir": str(out_dir.resolve())},
-                             timeout_s)
+        await _run_container({**params, "script": str(script.resolve()), "root": str(anim_dir.resolve()),
+                              "out_dir": str(out_dir.resolve())}, timeout_s)
     else:
         job_file = out_dir / "job.json"
-        job_file.write_text(json.dumps({**params, "script": str(script.resolve()), "out_dir": str(out_dir)}),
+        job_file.write_text(json.dumps({**params, "script": str(script.resolve()), "root": str(anim_dir.resolve()),
+                                        "out_dir": str(out_dir)}),
                             encoding="utf-8")
         code, output = await _run_process([*_resource_limits(), sys.executable, str(EXEC_SCRIPT), str(job_file)],
-                                          timeout_s + 30)
+                                          timeout_s + RESULT_MARGIN_S)
         if code != 0 and not (out_dir / "result.json").exists():
             raise SandboxError(f"rendu en échec (code {code}) : {output[-1500:]}")
 

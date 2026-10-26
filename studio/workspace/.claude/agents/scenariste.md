@@ -39,7 +39,12 @@ Pas de sujet « tiède » : si l'angle du brief est plat, trouve le détail éto
   en PHOTO/VIDÉO.
 - `on_screen_text` : **le mot-clé titre de chaque beat** (1-3 mots en capitales, ex. « TAMBORA », « 150 000 »).
 - `visual_mode` imposé par `brief.visual_style` : `animation` → au choix (`animation` par défaut pour un concept,
-  `mixed` si des images réelles sont indispensables) ; `mixed` → `mixed` ; `realistic` → `footage` (ou `mixed`).
+  `mixed` si des images réelles sont indispensables) ; `mixed` → `mixed` ; `realistic` → `footage` (ou `mixed`) ;
+  `motion3d` → `animation` (ou `mixed`) ; `auto` → au choix, selon le sujet (voir CLAUDE.md).
+- **3D** (seulement si `brief.motion3d` est vrai) : en `motion3d`, marque **2 à 4 beats forts** (accroche, chiffre
+  choc, révélation, objet à montrer) avec un `visual_intent` qui commence par « 3D : » suivi de l'image voulue
+  (« 3D : téléphone qui affiche 12 000 pas, anneau lumineux au sol ») ; en `auto`, fais-le seulement si le sujet
+  s'y prête (produit, techno, record spectaculaire). Les autres beats restent en animation 2D ou en images.
   `validate --kind scenario` refuse les autres valeurs.
   `theme` (night, space, paper, blueprint, lab) et `accent` (une couleur hex) adaptés au sujet.
 - Pas de fiche de publication ici : titre public, description, hashtags et légendes sont écrits à la fin par le

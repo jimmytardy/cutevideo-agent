@@ -590,6 +590,18 @@ async def _build_sheet(tiles: list[Path], out: Path) -> None:
     shutil.rmtree(work, ignore_errors=True)
 
 
+async def sheet_from_images(images: list[tuple[Path, str]], out: Path) -> None:
+    """Planche contact d'images déjà rendues (aperçu d'animation), avec les repères de zones."""
+    work = out.parent / ".work"
+    work.mkdir(parents=True, exist_ok=True)
+    tiles: list[Path] = []
+    for i, (image, label) in enumerate(images):
+        tile = work / f"t{i:03d}.png"
+        await _tile_from(image, tile, label, guides=True)
+        tiles.append(tile)
+    await _build_sheet(tiles, out)
+
+
 async def preview_candidates(run_dir: Path, ids: list[str]) -> dict[str, Any]:
     """Planche contact des candidats (vignettes 9:16 étiquetées par id)."""
     sheets_dir = run_dir / "media" / "previews"

@@ -170,7 +170,9 @@ def scenariste(brief: dict, attempt: int = 1) -> None:
         "title": brief["theme"],
         "hook": BEATS[0],
         "beats": [
-            {"text": BEATS[0], "visual_intent": "poussin gris", "on_screen_text": "NÉ GRIS"},
+            # Chaîne en motion design 3D : l'accroche est un plan 3D (exigé par validate).
+            {"text": BEATS[0], "visual_intent": ("3D : " if os.environ.get("STUDIO_MOTION3D") == "1" else "") + "poussin gris",
+             "on_screen_text": "NÉ GRIS"},
             {"text": BEATS[1], "visual_intent": "flamant qui mange"},
             {"text": BEATS[2], "visual_intent": "silhouette"},
         ],
@@ -318,6 +320,7 @@ def _visual_mode() -> str:
     """Le mode qu'exige le style visuel de la chaîne (posé par le launcher), comme le ferait le scénariste."""
     if os.environ.get("STUDIO_ANIMATIONS") == "off":
         return "footage"
+    # animation, motion3d (plans 3D = animations) et auto : « animation » convient.
     return {"mixed": "mixed", "realistic": "footage"}.get(os.environ.get("STUDIO_VISUAL_STYLE", ""), "animation")
 
 

@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import shutil
+import signal
 import sys
 from pathlib import Path
 from typing import Any
@@ -336,13 +337,14 @@ async def cmd_animate_template(args: argparse.Namespace, run_dir: Path) -> Any:
         raise ContractError(f"--params doit être un objet JSON : {exc}") from exc
     if not isinstance(params, dict):
         raise ContractError("--params doit être un objet JSON")
-    return await animate_template(run_dir, args.template, params, args.duration, args.name)
+    return await animate_template(run_dir, args.template, params, args.duration, args.name, preview=args.preview)
 
 
 async def cmd_animate(args: argparse.Namespace, run_dir: Path) -> Any:
     from studio.animate import animate_script
 
-    return await animate_script(run_dir, args.script, args.duration, args.name)
+    return await animate_script(run_dir, args.script, args.duration, args.name, three_d=args.three_d,
+                                preview=args.preview)
 
 
 async def cmd_probe(args: argparse.Namespace, run_dir: Path) -> Any:
@@ -377,6 +379,13 @@ async def cmd_validate(args: argparse.Namespace, run_dir: Path) -> Any:
             raise contracts.ContractError(
                 f"visual_mode « {data.visual_mode} » interdit (style visuel de la chaîne : {style}, "
                 f"animations : {animations}) : utilise {' ou '.join(allowed)}"
+            )
+        from studio.animate import motion3d_allowed
+
+        if style == "motion3d" and motion3d_allowed() and not contracts.has_motion3d_beat(data):
+            raise contracts.ContractError(
+                "chaîne en motion design 3D : marque 2 à 4 plans forts avec un visual_intent « 3D : … » "
+                "(accroche, chiffre clé, révélation)"
             )
     return {"path": args.path, "valid": True}
 
@@ -478,17 +487,21 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--color", default="yellow", help="couleur ffmpeg (yellow, white, #FF3B30…)")
     p.set_defaults(func=cmd_thumbnail)
 
-    p = sub.add_parser("animate-template", help="animation prête (title, counter, bars, list) → media/anim_<name>.mp4")
+    p = sub.add_parser("animate-template", help="animation prête (liste dans CLAUDE.md) → media/anim_<name>.mp4")
     p.add_argument("--template", required=True)
     p.add_argument("--params", default="{}", help="objet JSON des paramètres du modèle")
     p.add_argument("--duration", type=float, required=True)
     p.add_argument("--name", required=True)
+    p.add_argument("--preview", action="store_true", help="aperçu : planche de 6 images, sans vidéo")
     p.set_defaults(func=cmd_animate_template)
 
     p = sub.add_parser("animate", help="rend un script jetable anim/<x>.html|.py (bac à sable) → media/anim_<name>.mp4")
     p.add_argument("--script", required=True)
     p.add_argument("--duration", type=float, required=True)
     p.add_argument("--name", required=True)
+    p.add_argument("--3d", dest="three_d", action="store_true",
+                   help="scène 3D (studio3d.js, WebGL) : chaînes en motion design 3D seulement, rendu lent")
+    p.add_argument("--preview", action="store_true", help="aperçu : planche de 6 images, sans vidéo")
     p.set_defaults(func=cmd_animate)
 
     p = sub.add_parser("probe", help="durée, résolution, audio d'un fichier")
@@ -508,6 +521,9 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=os.getenv("STUDIO_LOG_LEVEL", "ERROR"), stream=sys.stderr)
     args = build_parser().parse_args(argv)
     run_dir = RUN_DIR
+    # Claude Code tue la commande par SIGTERM à l'expiration du délai Bash : en KeyboardInterrupt, asyncio annule
+    # la tâche et les `finally` tournent (rendu du bac à sable arrêté, job du conteneur annulé).
+    signal.signal(signal.SIGTERM, signal.default_int_handler)
     try:
         result = asyncio.run(args.func(args, run_dir))
     except Exception as exc:

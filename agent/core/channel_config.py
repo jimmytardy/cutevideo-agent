@@ -19,6 +19,7 @@ from studio.contracts import (
     MAX_WORDS_PER_SECOND,
     MIN_WORDS_PER_SECOND,
     VISUAL_STYLES,
+    VisualStyle,
     clamp_words_per_second,
 )
 
@@ -109,8 +110,11 @@ class ChannelRuntimeConfig(BaseModel):
     # Création Claude Studio
     # Animations : off | templates | scripts (data/agent_config.json → studio, surcharge chaîne).
     studio_animations: Literal["off", "templates", "scripts"] = "scripts"
-    # Style visuel : animation | mixed | realistic (data/agent_config.json → studio.visual_style, surcharge chaîne).
-    studio_visual_style: Literal["animation", "mixed", "realistic"] = "animation"
+    # Style visuel : animation | mixed | realistic | motion3d | auto (data/agent_config.json → studio.visual_style,
+    # surcharge chaîne).
+    studio_visual_style: VisualStyle = "animation"
+    # Droit à la 3D (abonnement), jamais lu dans Channel.config : sans limites d'abonnement connues, pas de 3D.
+    studio_motion3d: bool = False
     # Boucle vidéo (monteur ⇄ analyse vidéo) puis boucle scénario (scénariste ⇄ analyse scénario).
     min_critic_score: int = 80
     max_critic_iterations: int = 5
@@ -330,6 +334,7 @@ def resolve_channel_config(
         content_language=_resolve_content_language(channel_overrides, global_cfg, tts_voice),
         studio_animations=studio_animations,  # type: ignore[arg-type]
         studio_visual_style=studio_visual_style,  # type: ignore[arg-type]
+        studio_motion3d=bool(subscription_limits and subscription_limits.motion3d_allowed),
         min_critic_score=int(pipeline.get("min_critic_score", 80)),
         max_critic_iterations=int(pipeline.get("max_critic_iterations", 5)),
         min_scenario_score=int(pipeline.get("min_scenario_score", 90)),

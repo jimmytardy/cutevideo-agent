@@ -22,7 +22,7 @@ import unicodedata
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from studio.contracts import Brief, StudioResult, load_contract
+from studio.contracts import VISUAL_STYLES, Brief, StudioResult, load_contract, motion3d_enabled
 from studio.launcher import (
     LaunchConfig,
     permission_args,
@@ -93,6 +93,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--model", help="modèle Claude (défaut CLAUDE_STUDIO_MODEL ou claude-opus-5-5)")
     parser.add_argument("--animations", choices=["off", "templates", "scripts"], default="scripts",
                         help="animations autorisées (défaut : scripts jetables + modèles)")
+    parser.add_argument("--visual-style", choices=list(VISUAL_STYLES), default="animation",
+                        help="style visuel (motion3d / auto : 3D autorisée, rendu nettement plus long)")
     parser.add_argument("--interactive", action="store_true", help="ouvre Claude Code au lieu du mode headless")
     parser.add_argument("--user", metavar="EMAIL", help="utilise les clés API de ce compte (Compte → Clés API)")
     args = parser.parse_args(argv)
@@ -108,6 +110,9 @@ def main(argv: list[str] | None = None) -> int:
         max_iterations=args.max_iterations,
         min_score=args.min_score,
         animations=args.animations,
+        visual_style=args.visual_style,
+        # Lancement local par un opérateur : la 3D suit le style demandé (pas d'abonnement à consulter).
+        motion3d=motion3d_enabled(args.visual_style, args.animations, True),
     )
     run_dir = args.run_dir or default_runs_dir() / f"{time.strftime('%Y%m%d-%H%M%S')}-{_slug(args.theme)}"
     run_dir = prepare_run_dir(run_dir, brief)

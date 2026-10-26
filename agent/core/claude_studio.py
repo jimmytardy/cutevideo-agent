@@ -47,6 +47,7 @@ from studio.contracts import (
     StudioResult,
     Thumbnail,
     load_contract,
+    motion3d_enabled,
     read_json,
     resolve_in_run_dir,
     write_json,
@@ -117,6 +118,7 @@ def build_brief(ctx: PipelineContext) -> Brief:
         content_plan=plan or None,
         animations=cfg.studio_animations,
         visual_style=cfg.studio_visual_style,
+        motion3d=motion3d_enabled(cfg.studio_visual_style, cfg.studio_animations, cfg.studio_motion3d),
         max_ai_images=ai.max_ai_images_per_video if ai_on else 0,
         ai_models=models_up_to(ai.plan.value) if ai_on else [],
     )
@@ -358,9 +360,15 @@ class ClaudeStudioRunner:
             }
             await self._pause(limited_until, state, config_dir)
 
+        # Politiques recalculées depuis la base à chaque lancement, reprise comprise : les outils les lisent dans
+        # l'environnement, jamais dans brief.json (modifiable par Claude).
+        brief = build_brief(self.ctx)
         if resuming:
             assert decision is not None
             session_id = str(decision.state["session_id"])
+            # Les rôles lisent brief.json : on le réaligne sur la politique du moment (abonnement ou style changés
+            # pendant la pause), sinon agents et outils se contrediraient (plans 3D demandés, outils qui refusent).
+            (self.run_dir / "brief.json").write_text(brief.model_dump_json(indent=2, exclude_none=True), encoding="utf-8")
             write_json(self.run_dir / RESUME_FILE, {
                 "attempt": decision.state.get("resumes", 0),
                 "limit_pauses": decision.state.get("limit_pauses", 0),
@@ -373,7 +381,6 @@ class ClaudeStudioRunner:
             # Démarrage qui suit une pause d'avant lancement : le compteur de pauses continue (plafond borné).
             prior = (await self._session_state() or {}) if self.ctx.resume else {}
             carried = {"limit_pauses": prior["limit_pauses"]} if prior.get("limit_pauses") else {}
-            brief = build_brief(self.ctx)
             # Relance complète : on repart d'un état propre (DB et run dir).
             async with AsyncSessionFactory() as session:
                 await clear_creation_artifacts(self.ctx.project_id, session)
@@ -390,7 +397,7 @@ class ClaudeStudioRunner:
         logger.info("Claude Studio — projet %s, run dir %s", self.ctx.project_id, self.run_dir)
 
         recorder = _ProgressRecorder(self.ctx.project_id, iteration=self._next_iteration() if resuming else 1)
-        launch = {"on_event": recorder, "keys": keys, "config_dir": config_dir}
+        launch = {"on_event": recorder, "keys": keys, "config_dir": config_dir, "policy": brief}
         try:
             try:
                 session_result = await run_claude(

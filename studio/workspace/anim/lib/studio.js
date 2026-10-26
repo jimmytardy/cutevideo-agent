@@ -9,6 +9,8 @@
  *   </script>
  *
  * Tout est fonction de t (renderFrame est posé automatiquement) : aucune horloge réelle.
+ * Plusieurs scènes cohabitent (registre `Studio.register`) : `transparent: true` donne un calque de titres
+ * sans fond, posé par-dessus une scène 3D (studio3d.js) ; l'ordre de création ne compte pas.
  * Options communes à tous les éléments : at (s), dur (durée d'entrée, 0.45), enter
  * (pop|fade|up|down|left|right|grow|draw|none), out (instant de sortie), exit (fade|pop|up|down),
  * idle (float|pulse|spin|wiggle), opacity, rotate (deg), scale, bleed (fond qui peut déborder : pas d'alerte de zone).
@@ -60,6 +62,15 @@
     document.head.appendChild(st);
   }
 
+  // Registre des scènes de la page (SVG et 3D) : un seul renderFrame / __studioCheck qui les parcourt toutes,
+  // sinon la dernière scène créée écraserait silencieusement les autres.
+  function register(scene) {
+    const scenes = window.__studioScenes || (window.__studioScenes = []);
+    scenes.push(scene);
+    window.renderFrame = async (t) => { for (const sc of scenes) await sc.render(t); };
+    window.__studioCheck = () => scenes.flatMap((sc) => sc.check());
+  }
+
   class Scene {
     constructor(opts = {}) {
       injectFonts();
@@ -71,7 +82,9 @@
       this.shakes = [];
       this.flashes = [];
       this.fitted = false;
+      this.transparent = !!opts.transparent;
       const svg = el("svg", {width: W, height: H, viewBox: `0 0 ${W} ${H}`});
+      if (this.transparent) svg.setAttribute("style", "position:absolute;left:0;top:0;z-index:2");
       document.body.appendChild(svg);
       this.svg = svg;
       const defs = el("defs", {}, svg);
@@ -84,13 +97,13 @@
       el("stop", {offset: "100%", "stop-color": this.th.accent, "stop-opacity": 0}, ag);
       const sh = el("filter", {id: "shadow", x: "-20%", y: "-20%", width: "140%", height: "140%"}, defs);
       el("feDropShadow", {dx: 0, dy: 10, stdDeviation: 14, "flood-color": "#000", "flood-opacity": opts.theme === "paper" ? 0.18 : 0.45}, sh);
-      el("rect", {x: 0, y: 0, width: W, height: H, fill: "url(#bgGlow)"}, svg);
-      if (opts.theme === "blueprint") {
+      if (!this.transparent) el("rect", {x: 0, y: 0, width: W, height: H, fill: "url(#bgGlow)"}, svg);
+      if (opts.theme === "blueprint" && !this.transparent) {
         const grid = el("g", {stroke: this.th.muted, "stroke-opacity": 0.12, "stroke-width": 2}, svg);
         for (let x = 0; x <= W; x += 90) el("line", {x1: x, y1: 0, x2: x, y2: H}, grid);
         for (let y = 0; y <= H; y += 90) el("line", {x1: 0, y1: y, x2: W, y2: y}, grid);
       }
-      this.glow = el("ellipse", {cx: 540, cy: opts.glowY || 760, rx: 620, ry: 620, fill: "url(#accGlow)"}, svg);
+      this.glow = el("ellipse", {cx: 540, cy: opts.glowY || 760, rx: 620, ry: 620, fill: this.transparent ? "none" : "url(#accGlow)"}, svg);
       this.world = el("g", {}, svg);      // couche soumise à la caméra
       this.overlay = el("g", {}, svg);    // titres (fixes)
       // Flash teinté de l'accent, en mode « screen » : éclaire sans délaver les noirs.
@@ -99,9 +112,8 @@
       const vg = el("radialGradient", {id: "vign", cx: "50%", cy: "45%", r: "75%"}, defs);
       el("stop", {offset: "60%", "stop-color": "#000", "stop-opacity": 0}, vg);
       el("stop", {offset: "100%", "stop-color": "#000", "stop-opacity": opts.theme === "paper" ? 0.18 : 0.55}, vg);
-      el("rect", {x: 0, y: 0, width: W, height: H, fill: "url(#vign)", "pointer-events": "none"}, svg);
-      window.renderFrame = (t) => this.render(t);
-      window.__studioCheck = () => this.check();
+      if (!this.transparent) el("rect", {x: 0, y: 0, width: W, height: H, fill: "url(#vign)", "pointer-events": "none"}, svg);
+      register(this);
     }
 
     // Contrôle des zones (appelé par le moteur de rendu après la dernière image) : contenu hors de
@@ -152,7 +164,8 @@
         }
       }
       const ratio = covered / ((ux1 - ux0) * (uy1 - uy0));
-      if (this.items.length && ratio < 0.28) out.push(`scène vide : les éléments couvrent ~${Math.round(ratio * 100)} % de la zone utile (viser ≥ 35 % : agrandir ou zoom caméra)`);
+      // Calque transparent : la scène 3D dessous remplit l'écran, elle fait son propre contrôle.
+      if (this.items.length && ratio < 0.28 && !this.transparent) out.push(`scène vide : les éléments couvrent ~${Math.round(ratio * 100)} % de la zone utile (viser ≥ 35 % : agrandir ou zoom caméra)`);
       return out;
     }
 
@@ -503,5 +516,5 @@
     }
   }
 
-  window.Studio = {scene: (o) => new Scene(o), THEMES, ease: E};
+  window.Studio = {scene: (o) => new Scene(o), THEMES, ease: E, register, fonts: injectFonts};
 })();
