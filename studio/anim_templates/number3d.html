@@ -11,6 +11,7 @@
 <script>
 const P = /*PARAMS*/{};
 const D = P.duration || 4;
+if (!Number.isFinite(+P.to) || P.to === "" || P.to === null) throw new Error("number3d : paramètre « to » (nombre) requis");
 const s = Studio3D.scene({theme: P.theme || "night", accent: P.accent, floor: P.floor || "gloss", dof: 1, bloom: 0.3,
   camera: {pos: [0, 1.2, 9.5], target: [0, 0.75, 0], fov: 28}});
 const ui = Studio.scene({theme: P.theme || "night", accent: P.accent, transparent: true});
@@ -36,7 +37,7 @@ if (P.before) {
   s.start = {pos: [-0.4, 0.4 + dist * 0.26, dist * 1.12], target: aim, fov: 28};
   s.camera({at: 0, dur: D, pos: [0.5, 0.4 + dist * 0.26, dist], target: aim});
   s.ring({r: Math.max(1.0, big.size.w / 2 + 0.3), draw: Math.min(1.2, D * 0.4)});
-  if (P.label) ui.text(P.label, {x: 540, y: 1165, size: 58, at: Math.min(D * 0.45, 1.6), enter: "up", maxW: 900});
+  if (P.label) ui.text(P.label, {x: 540, y: 1100, size: 58, at: Math.min(D * 0.45, 1.6), enter: "up", maxW: 900});
 }
 s.particles({count: 50});
 // Seul, le chiffre est plus petit qu'un couple avant/après : la caméra s'en approche davantage.

@@ -308,6 +308,10 @@ def test_webgl_exists_only_for_3d_renders(tmp_path: Path, three_d: bool, expecte
 @needs_render
 def test_number3d_preview_then_render(tmp_path: Path) -> None:
     run_dir = _run_dir(tmp_path, visual_style="motion3d", motion3d=True)
+    # Paramètre mal nommé : erreur claire au lieu d'un « 0 » rendu en silence.
+    code, out = _tool(run_dir, "animate-template", "--template", "number3d", "--params", '{"value": 42}',
+                      "--duration", "1", "--name", "n", "--preview", STUDIO_SANDBOX="bwrap")
+    assert code == 1 and "« to »" in out["error"], out
     params = json.dumps({"title": "RECORD", "to": 23, "suffix": " %"})
     code, out = _tool(run_dir, "animate-template", "--template", "number3d", "--params", params, "--duration", "1",
                       "--name", "n", "--preview", STUDIO_SANDBOX="bwrap")
