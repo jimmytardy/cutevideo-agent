@@ -102,7 +102,7 @@ def check_invocation(argv: list[str]) -> None:
         fail("STUDIO_ANIMATIONS doit refléter brief.animations (posé par le launcher)")
     if not (RUN_DIR / "anim" / "lib" / "gsap.min.js").is_file():
         fail("libs d'animation absentes du run dir (anim/lib)")
-    leaked = [name for name in ("GOOGLE_GEMINI_API_KEY", "FAL_KEY", "AZURE_SPEECH_KEY")
+    leaked = [name for name in ("GOOGLE_GEMINI_API_KEY", "FAL_KEY", "AZURE_SPEECH_KEY", "ELEVENLABS_API_KEY")
               if os.environ.get(name)]
     if leaked:
         fail(f"clés de plateforme transmises au CLI (seules celles de l'utilisateur doivent l'être) : {leaked}")

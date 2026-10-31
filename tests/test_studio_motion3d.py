@@ -98,7 +98,7 @@ def test_build_brief_enables_3d_only_with_right_and_style() -> None:
 
     def brief(style: str, right: bool) -> Brief:
         cfg = SimpleNamespace(content_language="fr", short_duration_s=45, words_per_second=3.1,
-                              tts_short=SimpleNamespace(voice="", engine=""), tts_voice="v", tts_engine="edge",
+                              tts_short=SimpleNamespace(voice="", engine=""), tts_fallback=None, tts_voice="v", tts_engine="edge",
                               min_critic_score=80, min_scenario_score=90, max_scenario_iterations=5,
                               editorial_tone="", studio_animations="scripts", studio_visual_style=style,
                               studio_motion3d=right, ai_fallback=SimpleNamespace(enabled=False, max_ai_images_per_video=0))

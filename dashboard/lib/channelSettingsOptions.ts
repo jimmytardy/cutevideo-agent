@@ -68,6 +68,7 @@ export const AI_PLANS: (Option & { family: string })[] = [
 export const TTS_ENGINES: Option[] = [
   { value: 'azure', label: 'Azure Neural' },
   { value: 'gemini', label: 'Gemini Flash TTS' },
+  { value: 'elevenlabs', label: 'ElevenLabs (votre clé)' },
   { value: 'edge-tts', label: 'Edge TTS (gratuit)' },
 ]
 

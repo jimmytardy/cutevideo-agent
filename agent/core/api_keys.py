@@ -16,7 +16,7 @@ from agent.core.database import AsyncSessionFactory, User, UserApiKey
 
 Provider = Literal[
     "anthropic", "gemini", "fal", "gcp", "azure_speech", "postforme", "zernio", "youtube", "instagram",
-    "claude_subscription",
+    "claude_subscription", "elevenlabs",
 ]
 KeySource = Literal["user", "none"]
 KeyTier = Literal["free", "paid"]
@@ -25,7 +25,7 @@ KeyTier = Literal["free", "paid"]
 # identifiants du propriétaire (Compte → Clés API), sans repli sur le .env.
 ALLOWED_PROVIDERS: frozenset[str] = frozenset(
     {"anthropic", "gemini", "fal", "gcp", "azure_speech", "postforme", "zernio", "youtube", "instagram",
-     "claude_subscription"}
+     "claude_subscription", "elevenlabs"}
 )
 # Token d'abonnement Claude (`claude setup-token`) : réservé aux admins, pour leur propre usage.
 # Anthropic interdit à une application de stocker les identifiants Claude.ai d'autres utilisateurs.
@@ -190,13 +190,14 @@ class UserKeys:
     azure_speech_region: str | None = None
     gcp_credentials_json: str | None = None
     gcp_location: str | None = None
+    elevenlabs: str | None = None
 
 
 async def resolve_user_keys(user_id: uuid.UUID) -> UserKeys:
     async with AsyncSessionFactory() as session:
         ctx = {
             provider: await resolve_api_key(session, user_id, provider, purpose="studio")
-            for provider in ("anthropic", "claude_subscription", "gemini", "fal", "azure_speech", "gcp")
+            for provider in ("anthropic", "claude_subscription", "gemini", "fal", "azure_speech", "gcp", "elevenlabs")
         }
     azure_meta = ctx["azure_speech"].metadata or {}
     gcp_meta = ctx["gcp"].metadata or {}
@@ -209,4 +210,5 @@ async def resolve_user_keys(user_id: uuid.UUID) -> UserKeys:
         azure_speech_region=str(azure_meta.get("region") or "").strip() or None,
         gcp_credentials_json=ctx["gcp"].key,
         gcp_location=str(gcp_meta.get("location") or "").strip() or None,
+        elevenlabs=ctx["elevenlabs"].key,
     )

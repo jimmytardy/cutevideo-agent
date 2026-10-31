@@ -11,7 +11,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from studio.contracts import ContractError, resolve_in_run_dir
+from studio.contracts import TTS_STATUS_FILE, ContractError, resolve_in_run_dir
 
 # Dossier → extensions servables. `voice.wav` est à la racine.
 ARTIFACT_MEDIA: dict[str, frozenset[str]] = {
@@ -99,6 +99,9 @@ def list_artifacts(run_dir: Path) -> dict[str, Any]:
         meta = _read_json(run_dir / "voice.json")
         if isinstance(meta, dict):
             voice.update({k: meta.get(k) for k in ("duration_s", "engine", "voice")})
+        status = _read_json(run_dir / TTS_STATUS_FILE)
+        if isinstance(status, dict):  # écrit par l'outil `tts` : prime sur `voice.json`, écrit par l'agent
+            voice.update({k: status.get(k) for k in ("engine", "voice", "fallback_errors")})
 
     # Boucle scénario (avant la voix) : toutes les passes, dans l'ordre.
     scenario_critiques: list[dict[str, Any]] = []

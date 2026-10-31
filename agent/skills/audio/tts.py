@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from agent.core.config import settings
+from agent.skills.audio.elevenlabs_tts import DEFAULT_ELEVENLABS_MODEL, synthesize_elevenlabs_tts
 from agent.skills.audio.gemini_tts import (
     DEFAULT_GEMINI_LANGUAGE,
     DEFAULT_GEMINI_TTS_MODEL,
@@ -87,6 +88,10 @@ async def generate_tts(
     azure_speech_region: str | None = None,
     gcp_credentials_json: str | None = None,
     gcp_location: str | None = None,
+    elevenlabs_api_key: str | None = None,
+    elevenlabs_model: str = DEFAULT_ELEVENLABS_MODEL,
+    previous_text: str = "",
+    next_text: str = "",
     mastering: dict[str, Any] | None = None,
 ) -> tuple[float, str]:
     """Génère un fichier audio WAV depuis un texte. Retourne (durée_s, moteur_effectif).
@@ -137,6 +142,20 @@ async def generate_tts(
             raise RuntimeError("Clé Gemini non configurée pour la synthèse TTS")
         duration = await synthesize_gemini_tts(text, output_path, vertex=vertex, **common)
         return duration, "gemini-vertex"
+
+    if resolved == "elevenlabs":
+        duration = await synthesize_elevenlabs_tts(
+            text,
+            output_path,
+            voice=voice,
+            api_key=elevenlabs_api_key,
+            model=elevenlabs_model,
+            rate=tts_rate,
+            previous_text=previous_text,
+            next_text=next_text,
+            mastering=mastering,
+        )
+        return duration, "elevenlabs"
 
     if resolved == "azure":
         from agent.skills.audio.azure_tts import synthesize_ssml

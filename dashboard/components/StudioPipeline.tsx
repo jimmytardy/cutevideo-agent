@@ -279,6 +279,7 @@ function StepOutput({
       )
     case 'narrator_agent': {
       const voice = artifacts?.voice
+      const fallbackErrors = Object.entries(voice?.fallback_errors ?? artifacts?.tts_status?.fallback_errors ?? {})
       return (
         <OutputBlock title="voice.wav" note={voice ? overwritten : null}>
           {voice ? (
@@ -296,6 +297,11 @@ function StepOutput({
             </>
           ) : (
             <Missing purged={purged} />
+          )}
+          {fallbackErrors.length > 0 && (
+            <Typography variant="caption" color="warning.main" sx={{ display: 'block' }}>
+              Voix de secours utilisée : {fallbackErrors.map(([engine, error]) => `${engine} : ${error}`).join(' ; ')}
+            </Typography>
           )}
         </OutputBlock>
       )

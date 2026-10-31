@@ -20,9 +20,11 @@ AZURE_SPEECH_KEY = "STUDIO_AZURE_SPEECH_KEY"
 AZURE_SPEECH_REGION = "STUDIO_AZURE_SPEECH_REGION"
 GCP_CREDENTIALS_JSON = "STUDIO_GCP_CREDENTIALS_JSON"
 GCP_LOCATION = "STUDIO_GCP_LOCATION"
+ELEVENLABS_API_KEY = "STUDIO_ELEVENLABS_API_KEY"
 
 STUDIO_SECRET_VARS = (
     GEMINI_API_KEY, FAL_KEY, AZURE_SPEECH_KEY, AZURE_SPEECH_REGION, GCP_CREDENTIALS_JSON, GCP_LOCATION,
+    ELEVENLABS_API_KEY,
 )
 
 # Variables qu'un ancien `.env` ou l'hôte pourraient encore exposer : jamais transmises au CLI.
@@ -35,6 +37,7 @@ INHERITED_SECRET_VARS = (
     "GOOGLE_API_KEY",
     "FAL_KEY",
     "AZURE_SPEECH_KEY",
+    "ELEVENLABS_API_KEY",
     "GOOGLE_APPLICATION_CREDENTIALS",
     "GCP_PROJECT_ID",
     "YOUTUBE_REFRESH_TOKEN",
@@ -59,6 +62,7 @@ def studio_env(keys: UserKeys) -> dict[str, str]:
         AZURE_SPEECH_REGION: keys.azure_speech_region,
         GCP_CREDENTIALS_JSON: keys.gcp_credentials_json,
         GCP_LOCATION: keys.gcp_location,
+        ELEVENLABS_API_KEY: keys.elevenlabs,
     }
     return {name: value for name, value in values.items() if value}
 

@@ -143,8 +143,11 @@ async def get_studio_artifacts(
     """Scénario, voix, rendus, miniatures et critiques du run Claude Studio (tant qu'il n'est pas purgé)."""
     from studio.artifacts import list_artifacts, project_run_dir
 
-    await get_user_project(db, project_id, current_user)
-    return list_artifacts(project_run_dir(str(project_id)))
+    project = await get_user_project(db, project_id, current_user)
+    artifacts = list_artifacts(project_run_dir(str(project_id)))
+    if not artifacts["available"]:  # run dir purgé : le repli de voix reste visible
+        artifacts["tts_status"] = ((project.config or {}).get("claude_studio") or {}).get("tts")
+    return artifacts
 
 
 @router.get("/{project_id}/studio/file", response_model=None)

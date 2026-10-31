@@ -36,6 +36,7 @@ from agent.core import studio_resume
 from agent.skills.media_sources.ai.registry import models_up_to
 from studio.agent_stream import coalesce, encode, trim
 from studio.contracts import (
+    TTS_STATUS_FILE,
     AI_DIR,
     PublishMetadata,
     VOICE_CACHE_DIR,
@@ -107,8 +108,10 @@ def build_brief(ctx: PipelineContext) -> Brief:
         language=cfg.content_language or "fr",
         target_duration_s=max(15, min(int(ctx.target_duration_seconds or cfg.short_duration_s), 180)),
         words_per_second=cfg.words_per_second,
-        voice=cfg.tts_short.voice or cfg.tts_voice,
+        voice=cfg.tts_short.voice if cfg.tts_short.engine == "elevenlabs" else (cfg.tts_short.voice or cfg.tts_voice),
         tts_engine=cfg.tts_short.engine or cfg.tts_engine,
+        tts_fallback_engine=cfg.tts_fallback.engine if cfg.tts_fallback else "",
+        tts_fallback_voice=cfg.tts_fallback.voice if cfg.tts_fallback else "",
         max_iterations=max(1, min(ctx.max_critic_iterations or cfg.max_critic_iterations, 6)),
         min_score=cfg.min_critic_score,
         max_scenario_iterations=max(1, min(cfg.max_scenario_iterations, 6)),
@@ -668,6 +671,13 @@ class ClaudeStudioRunner:
                 logger.warning("Critique ignorée (%s) : %s", path.name, exc)
         return sorted(critiques, key=lambda c: c.iteration)
 
+    def _tts_status(self) -> dict[str, Any] | None:
+        try:  # le run dir est modifiable par l'agent : un fichier abîmé ne doit pas bloquer la persistance
+            status = read_json(self.run_dir / TTS_STATUS_FILE, None)
+        except (OSError, ValueError):
+            return None
+        return status if isinstance(status, dict) else None
+
     def _scenario_critiques(self) -> list[dict[str, Any]]:
         """Passes de la boucle scénario (stockées dans Project.config, pas de table dédiée)."""
         out: list[dict[str, Any]] = []
@@ -763,6 +773,8 @@ class ClaudeStudioRunner:
             "cost_usd": session_result.get("total_cost_usd"),
             "num_turns": session_result.get("num_turns"),
             "credits": credits,
+            # Moteur réel de la voix : garde la trace d'un repli une fois le run dir purgé.
+            "tts": self._tts_status(),
         }
         async with AsyncSessionFactory() as session:
             project = await session.get(Project, self.ctx.project_id)

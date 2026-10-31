@@ -26,7 +26,8 @@ Tu es directeur·rice de la voix off. Lis `scenario.json` et `brief.json`.
    - question au spectateur : `[pitch=+8Hz] À votre avis, qui ?`
    - révélation, chiffre choc, chute : `[rate=-8% pitch=+10Hz mood=revelateur] Nous !`
    - confidence : `[rate=-6% mood=mysterieux style=whispering] Personne n'en a parlé pendant 140 ans.`
-   edge-tts n'applique que `rate`/`pitch` ; Azure applique le style si la voix le supporte (DragonHD : rate/pitch
+   edge-tts n'applique que `rate`/`pitch` ; ElevenLabs n'applique que `rate` (dirige alors par la ponctuation et le
+   découpage des lignes) ; Azure applique le style si la voix le supporte (DragonHD : rate/pitch
    seulement) ; Gemini suit `mood`/`style` par le prompt. Les réglages entrent dans le cache : changer un préfixe
    ne resynthétise que cette ligne (`lines_tuned` dans la sortie de `tts`).
 2. `python -m studio.tools tts --text-file narration.txt --out voice.wav --mood <scenario.mood> --rate +10%`
@@ -37,7 +38,9 @@ Tu es directeur·rice de la voix off. Lis `scenario.json` et `brief.json`.
 3. `python -m studio.tools transcribe --text-file subtitles.txt` → vérifie que le `transcript` correspond au texte
    (mots mal prononcés, sigles épelés de travers). Si un mot est mal rendu, réécris-le phonétiquement dans
    `narration.txt` et régénère (2 essais max).
-4. Écris `voice.json` : `{"duration_s": …, "engine": "…", "voice": "…"}` d'après la sortie de `tts`.
+4. Écris `voice.json` : `{"duration_s": …, "engine": "…", "voice": "…"}` d'après la sortie de `tts`. Si elle contient `fallback_errors`,
+   le moteur de la chaîne a été refusé et une voix de secours a lu toute la narration : continue normalement, écris
+   le moteur réellement utilisé, et cite ce repli dans ton compte rendu.
 
 ## Retouche (le prompt cite des lignes de la critique vidéo)
 Ne touche **que** les lignes citées (`lines`, 1 = première ligne de `narration.txt`) : ponctuation, réglages de

@@ -84,6 +84,7 @@ async def check_api_key(provider: str, key: str, metadata: dict | None = None) -
         "fal": lambda: _check_fal(key),
         "gcp": lambda: _check_gcp(key),
         "azure_speech": lambda: _check_azure(key, meta),
+        "elevenlabs": lambda: _check_elevenlabs(key),
         "postforme": lambda: _check_bearer_get(
             key, "https://api.postforme.dev/v1/social-accounts?limit=1", "Post for Me"
         ),
@@ -227,6 +228,23 @@ async def _check_azure(key: str, metadata: dict) -> KeyHealth:
     if resp.status_code in (401, 403):
         return KeyHealth("invalid", f"Clé Azure Speech invalide ou région incorrecte (région testée : {region}).")
     return KeyHealth("unavailable", f"Azure Speech a répondu {resp.status_code}.")
+
+
+async def _check_elevenlabs(key: str) -> KeyHealth:
+    async with _client() as client:
+        resp = await client.get("https://api.elevenlabs.io/v1/user", headers={"xi-api-key": key})
+    if resp.is_success:
+        return OK
+    # Clé restreinte : elle s'authentifie, mais tester le droit de synthèse coûterait des crédits.
+    if "missing_permissions" in _text(resp):
+        return KeyHealth("unavailable", "Clé ElevenLabs restreinte : vérifiez qu'elle a bien l'accès « Text to Speech ».")
+    if resp.status_code in (401, 403):
+        return KeyHealth("invalid", "Clé ElevenLabs invalide ou non autorisée.")
+    if resp.status_code == 402:
+        return KeyHealth("no_credit", "Crédit ElevenLabs épuisé.")
+    if resp.status_code == 429:
+        return KeyHealth("quota", "Limite de débit ElevenLabs atteinte.")
+    return KeyHealth("unavailable", f"ElevenLabs a répondu {resp.status_code}.")
 
 
 async def _check_bearer_get(key: str, url: str, label: str) -> KeyHealth:

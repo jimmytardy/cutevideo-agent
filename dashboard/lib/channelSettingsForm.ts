@@ -23,6 +23,9 @@ export interface ChannelSettingsForm {
   enabled_platforms: string[]
   tts_short_engine: string
   tts_short_voice: string
+  /** Voix de secours si le moteur est refusé (clé, crédit) ; moteur '' = aucune. */
+  tts_fallback_engine: string
+  tts_fallback_voice: string
   ai_plan: string
   max_ai_images_per_video: NumericInput
 }
@@ -90,6 +93,8 @@ export function channelToFormState(channel: Channel): ChannelSettingsForm {
     enabled_platforms: (pub.enabled_platforms as string[]) || ['youtube', 'tiktok', 'instagram'],
     tts_short_engine: shortTts.engine,
     tts_short_voice: shortTts.voice,
+    tts_fallback_engine: String(section(section(section(cfg, 'tts'), 'short'), 'fallback').engine || ''),
+    tts_fallback_voice: String(section(section(section(cfg, 'tts'), 'short'), 'fallback').voice || ''),
     ai_plan: String(ai.plan || 'flux_pro'),
     max_ai_images_per_video: Number(ai.max_ai_images_per_video ?? 10),
   }
@@ -170,7 +175,13 @@ export function buildChannelUpdatePayload(
       },
       tts: {
         ...tts,
-        short: { engine: form.tts_short_engine, voice: form.tts_short_voice },
+        short: {
+          engine: form.tts_short_engine,
+          voice: form.tts_short_voice,
+          ...(form.tts_fallback_engine && form.tts_fallback_voice.trim()
+            ? { fallback: { engine: form.tts_fallback_engine, voice: form.tts_fallback_voice.trim() } }
+            : {}),
+        },
         gemini: { ...section(tts, 'gemini'), apply_to: 'off' },
       },
       media_sources: {

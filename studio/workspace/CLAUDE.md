@@ -119,7 +119,8 @@ fichiers de `anim/` sont accessibles. Python (numpy, matplotlib, Pillow) : lis `
 ## Fichiers (contrats validés par `python -m studio.tools validate --kind <kind> --path <fichier>`)
 
 `brief.json` (fourni, lecture seule) : `theme`, `niche`, `angle`, `language`, `target_duration_s`, `voice`,
-`tts_engine`, `max_scenario_iterations` / `min_scenario_score` (boucle scénario, défaut 5 / 90), `max_iterations` /
+`tts_engine`, `tts_fallback_engine` / `tts_fallback_voice` (voix de secours, gérée par l'outil `tts`),
+`max_scenario_iterations` / `min_scenario_score` (boucle scénario, défaut 5 / 90), `max_iterations` /
 `min_score` (boucle vidéo, défaut 5 / 80), `editorial_tone`, `creative_brief` (charte éditoriale de la chaîne : ton,
 style narratif, interdits — à respecter), `content_plan`, `animations` (off | templates | scripts),
 `visual_style` (animation | mixed | realistic | motion3d | auto : direction visuelle imposée par la chaîne),
@@ -192,7 +193,7 @@ exige `lines` (numéros de ligne de `narration.txt`, 1 = première). La miniatur
 | `download --id c4 --name 03_lave` | → `media/03_lave.<ext>` + crédits |
 | `ai-image --prompt "…" --name 05_carte [--model flux_2_dev] [--aspect 16:9]` | image IA 9:16 (dernier recours ; un prompt déjà généré est repris du cache, gratuitement et hors plafond → `reused: true` ; modèles autorisés et écriture du prompt : `docs/ai-images.md`) |
 | `music --mood dramatique` | musique libre → `media/music/…` |
-| `tts --text-file narration.txt [--mood …] [--rate +8%] [--pitch -2Hz] [--max-pause 0.4]` | → `voice.wav` (Azure → Gemini → edge ; une synthèse par ligne, lignes inchangées reprises de `voice_cache/` ; silences > 0,4 s raccourcis ; préfixe de ligne `[rate=-4% pitch=+12Hz mood=dramatique style=whispering]` = réglage de cette ligne seule, voir le rôle voix) |
+| `tts --text-file narration.txt [--mood …] [--rate +8%] [--pitch -2Hz] [--max-pause 0.4]` | → `voice.wav` (moteur de la chaîne → sa voix de secours → Gemini → edge ; une synthèse par ligne, lignes inchangées reprises de `voice_cache/` ; silences > 0,4 s raccourcis ; préfixe de ligne `[rate=-4% pitch=+12Hz mood=dramatique style=whispering]` = réglage de cette ligne seule, voir le rôle voix) |
 | `transcribe --text-file subtitles.txt` | `voice.wav` → `words.json` (timings Whisper, orthographe du script) |
 | `cues --start 26.68 --end 29.9` | mots du plan avec `at` relatif au début du plan → valeurs `at` exactes pour le kit |
 | `render --out renders/v1.mp4` | rend `timeline.json` (plusieurs minutes : normal ; les plans inchangés depuis le rendu précédent sont repris sans ré-encodage : `clips_reused`) |

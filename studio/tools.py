@@ -31,6 +31,7 @@ from agent.skills.media_sources.ai.registry import ALLOWED_PLANS  # noqa: E402
 from studio import media  # noqa: E402
 from agent.skills.audio.gemini_tts import DEFAULT_GEMINI_VOICE  # noqa: E402
 from studio.contracts import (  # noqa: E402
+    TTS_STATUS_FILE,
     VOICE_CACHE_DIR,
     ContractError,
     cache_key,
@@ -90,14 +91,18 @@ def _tts_engine_chain(run_dir: Path, requested: str | None) -> tuple[list[str], 
     """Moteurs à essayer dans l'ordre et voix de chacun.
 
     Moteur/voix de la chaîne (résolus avec les plafonds d'abonnement dans `brief.json`),
-    sinon défauts globaux ; repli : moteur demandé → Gemini → edge-tts (gratuit, sans clé).
+    sinon défauts globaux ; repli : moteur demandé → voix de secours de la chaîne → Gemini → edge-tts (gratuit, sans
+    clé).
     """
     tts_cfg = load_agent_config().get("tts", {})
     short_cfg = tts_cfg.get("short", {})
     brief = _read_brief(run_dir)
     brief_engine = _engine_key(brief.get("tts_engine"))
     primary = _engine_key(requested) or brief_engine or _engine_key(short_cfg.get("engine")) or "azure"
-    chain = [primary] + [e for e in ("gemini", "edge") if e != primary]
+    fallback = _engine_key(brief.get("tts_fallback_engine"))
+    fallback_voice = str(brief.get("tts_fallback_voice") or "")
+    secours = [fallback] if fallback and fallback_voice else []
+    chain = list(dict.fromkeys([primary, *secours, "gemini", "edge"]))
     voices = {
         "azure": short_cfg.get("voice", "fr-FR-Vivienne:DragonHDLatestNeural"),
         "gemini": tts_cfg.get("gemini", {}).get("voice", DEFAULT_GEMINI_VOICE),
@@ -105,28 +110,41 @@ def _tts_engine_chain(run_dir: Path, requested: str | None) -> tuple[list[str], 
     }
     if brief_engine and brief.get("voice"):
         voices[brief_engine] = str(brief["voice"])
+    if secours:
+        voices[fallback] = fallback_voice
     return chain, voices
 
 
 # Une ligne de narration déjà synthétisée avec les mêmes réglages est relue ici (`VOICE_CACHE_DIR`) au lieu
 # d'être refaite : une retouche de la voix ne resynthétise que les lignes modifiées.
-def _line_cache_key(text: str, *, engine: str, voice: str, rate: str, pitch: str, style: str, mood: str) -> str:
+def _line_cache_key(
+    text: str, *, engine: str, voice: str, rate: str, pitch: str, style: str, mood: str, model: str = ""
+) -> str:
     return cache_key(
         {"text": text, "engine": engine, "voice": voice, "rate": rate, "pitch": pitch, "style": style, "mood": mood}
+        | ({"model": model} if model else {})
     )
 
 
 async def _synthesize(
-    segments: list[tuple[str, dict]], out: Path, *, engine: str, voice: str, args: argparse.Namespace
+    segments: list[tuple[str, dict]],
+    out: Path,
+    *,
+    engine: str,
+    voice: str,
+    args: argparse.Namespace,
+    strict_engine: bool = False,
 ) -> tuple[float, str, dict[str, int]]:
     """Synthétise chaque ligne (emphase propre, cache par ligne) puis les recolle.
 
     Renvoie (durée, moteur effectif, compteurs `lines_synthesized` / `lines_reused` / `chars_synthesized`).
     """
+    from agent.skills.audio.elevenlabs_tts import DEFAULT_ELEVENLABS_MODEL, rate_to_speed
     from agent.skills.audio.tts import generate_tts, resolve_engine
     from studio.user_keys import (
         AZURE_SPEECH_KEY,
         AZURE_SPEECH_REGION,
+        ELEVENLABS_API_KEY,
         GCP_CREDENTIALS_JSON,
         GCP_LOCATION,
         GEMINI_API_KEY,
@@ -147,11 +165,18 @@ async def _synthesize(
         azure_speech_key=user_key(AZURE_SPEECH_KEY),
         gcp_credentials_json=user_key(GCP_CREDENTIALS_JSON),
     )
+    # Voix de secours configurée : un moteur sans clé échoue, au lieu d'être remplacé en silence par edge avant elle.
+    if strict_engine and effective_engine != engine:
+        raise RuntimeError(f"moteur {engine} indisponible : clé non configurée")
+    is_elevenlabs = effective_engine == "elevenlabs"
+    elevenlabs_model = str(
+        load_agent_config().get("tts", {}).get("elevenlabs", {}).get("model") or DEFAULT_ELEVENLABS_MODEL
+    )
     stats = {"lines_synthesized": 0, "lines_reused": 0, "chars_synthesized": 0, "lines_tuned": 0}
     parts: list[Path] = []
     durations: list[float] = []
     used = engine
-    for seg_text, opts in segments:
+    for index, (seg_text, opts) in enumerate(segments):
         rate = combine_offset(args.rate, opts.get("rate"))
         pitch = combine_offset(args.pitch, opts.get("pitch"))
         # Ambiance et style de la ligne (préfixe `[mood=… style=…]`), sinon ceux de la commande. Un `mood` seul
@@ -163,8 +188,18 @@ async def _synthesize(
         # (`edge` = clé de la chaîne du brief, `edge-tts` = repli de resolve_engine.)
         is_edge = effective_engine in ("edge", "edge-tts")
         keyed_mood, keyed_style = (args.mood or "", style) if is_edge else (line_mood, line_style)
+        # ElevenLabs ne reçoit que le débit : le reste n'entre pas dans sa clé, pour ne pas repayer le même audio.
+        # Les lignes voisines (contexte d'intonation) non plus : une retouche ne repaie pas ses voisines.
         key = _line_cache_key(
-            seg_text, engine=effective_engine, voice=voice, rate=rate, pitch=pitch, style=keyed_style, mood=keyed_mood
+            seg_text,
+            engine=effective_engine,
+            voice=voice,
+            # ElevenLabs borne le débit : deux valeurs au-delà des bornes donnent le même audio.
+            rate=str(rate_to_speed(rate)) if is_elevenlabs else rate,
+            pitch="" if is_elevenlabs else pitch,
+            style="" if is_elevenlabs else keyed_style,
+            mood="" if is_elevenlabs else keyed_mood,
+            model=elevenlabs_model if is_elevenlabs else "",
         )
         part = cache_dir / f"{key}.wav"
         meta_path = part.with_suffix(".json")
@@ -195,6 +230,10 @@ async def _synthesize(
                     # Compte de service GCP : repli Vertex de la voix Gemini.
                     gcp_credentials_json=user_key(GCP_CREDENTIALS_JSON),
                     gcp_location=user_key(GCP_LOCATION),
+                    elevenlabs_api_key=user_key(ELEVENLABS_API_KEY),
+                    elevenlabs_model=elevenlabs_model,
+                    previous_text=segments[index - 1][0] if index else "",
+                    next_text=segments[index + 1][0] if index + 1 < len(segments) else "",
                 )
             except BaseException:
                 tmp.unlink(missing_ok=True)
@@ -224,16 +263,22 @@ async def cmd_tts(args: argparse.Namespace, run_dir: Path) -> Any:
     # mise en cache : une ligne inchangée n'est jamais resynthétisée.
     segments = parse_emphasis(text)
     errors: dict[str, str] = {}
+    strict_engine = bool(_read_brief(run_dir).get("tts_fallback_engine"))
     for engine in chain:
         voice = args.voice if (args.voice and engine == chain[0]) else voices.get(engine, "")
         try:
-            duration, used, stats = await _synthesize(segments, out, engine=engine, voice=voice, args=args)
+            duration, used, stats = await _synthesize(
+                segments, out, engine=engine, voice=voice, args=args, strict_engine=strict_engine
+            )
         except Exception as exc:
             errors[engine] = str(exc)[:200]
             continue
         tightened = tighten_pauses(out, max_pause_s=args.max_pause) if args.max_pause > 0 else None
         if tightened:
             duration = tightened["after_s"]
+        # Écrit par l'outil, pas par le rôle voix : un repli reste visible même si l'agent ne le recopie pas.
+        if out == run_dir / "voice.wav":  # pas un essai vers un autre fichier
+            write_json(run_dir / TTS_STATUS_FILE, {"engine": used, "voice": voice, "fallback_errors": errors})
         return {
             "path": args.out,
             "duration_s": round(duration, 3),
@@ -432,7 +477,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--text-file", required=True)
     p.add_argument("--out", default="voice.wav")
     p.add_argument("--voice", help="voix (défaut : tts.short de data/agent_config.json)")
-    p.add_argument("--engine", choices=["azure", "gemini", "edge"])
+    p.add_argument("--engine", choices=["azure", "gemini", "edge", "elevenlabs"])
     p.add_argument("--style", help="style Azure (narration-professional, cheerful, excited…)")
     p.add_argument("--rate", default="+0%", help="débit, ex. +8%%")
     p.add_argument("--pitch", default="+0Hz", help="hauteur, ex. -2Hz (edge, Azure)")

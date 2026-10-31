@@ -80,7 +80,7 @@ _TAG = re.compile(r"^\s*\[(?P<body>[^\]]*)\]\s*")
 
 # Réglages acceptés en tête de ligne : débit et hauteur (relatifs au réglage global), ambiance et style de
 # cette ligne seule (`mood` → prompt Gemini / prosodie Azure ; `style` → style Azure `express-as`, texte libre
-# pour Gemini ; edge-tts n'applique que rate/pitch).
+# pour Gemini ; edge-tts n'applique que rate/pitch, ElevenLabs que rate).
 LINE_SETTINGS = ("rate", "pitch", "mood", "style")
 
 

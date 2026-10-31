@@ -9,6 +9,7 @@ export type ApiKeyProviderId =
   | 'youtube'
   | 'instagram'
   | 'claude_subscription'
+  | 'elevenlabs'
 
 /** Champ complémentaire enregistré avec la clé (`metadata` de `PUT /me/api-keys/{provider}`). */
 type ApiKeyMetadataField = {
@@ -111,6 +112,21 @@ export const API_KEY_PROVIDERS: ApiKeyProviderInfo[] = [
     docUrl: 'https://portal.azure.com/#create/Microsoft.CognitiveServicesSpeechServices',
     docLabel: 'Portail Azure — créer une ressource Speech',
     metadataFields: [{ key: 'region', label: 'Région Azure', placeholder: 'westeurope' }],
+  },
+  {
+    id: 'elevenlabs',
+    label: 'ElevenLabs (voix off)',
+    shortDescription: 'Voix off ElevenLabs, facturée sur votre propre compte. Forfait payant requis pour un usage commercial.',
+    keyFieldLabel: 'Clé API ElevenLabs',
+    tutorialTitle: 'Obtenir une clé ElevenLabs',
+    steps: [
+      'Connectez-vous à ElevenLabs et ouvrez « Developers » → « API Keys ».',
+      'Créez une clé avec au moins l’accès « Text to Speech ».',
+      'Copiez la clé et collez-la ici.',
+      'Dans les réglages de la chaîne (onglet Voix), choisissez ElevenLabs et collez le « Voice ID » de la voix.',
+    ],
+    docUrl: 'https://elevenlabs.io/app/developers/api-keys',
+    docLabel: 'ElevenLabs — clés API',
   },
   {
     id: 'postforme',

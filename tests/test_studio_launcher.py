@@ -416,9 +416,10 @@ def test_build_env_strips_inherited_secrets_and_injects_user_keys(
 
     keys = UserKeys(
         anthropic="sk-ant-api-user", gemini="g-user", azure_speech="az", azure_speech_region="westeurope",
-        gcp_credentials_json='{"project_id": "p"}', gcp_location="us-central1",
+        gcp_credentials_json='{"project_id": "p"}', gcp_location="us-central1", elevenlabs="el-user",
     )
     env = build_env(tmp_path, keys, config_dir=tmp_path / "cfg")
+    assert env["STUDIO_ELEVENLABS_API_KEY"] == "el-user"
     assert env["ANTHROPIC_API_KEY"] == "sk-ant-api-user"
     assert env["STUDIO_GEMINI_API_KEY"] == "g-user"
     assert env["STUDIO_AZURE_SPEECH_KEY"] == "az"

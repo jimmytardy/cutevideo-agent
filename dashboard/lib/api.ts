@@ -787,7 +787,9 @@ export interface StudioArtifacts {
   available: boolean
   scenario: StudioScenarioFile | null
   scenario_critiques?: StudioScenarioCritiqueFile[]
-  voice: (StudioMediaFile & { duration_s?: number | null; engine?: string | null; voice?: string | null }) | null
+  voice: (StudioMediaFile & { duration_s?: number | null; engine?: string | null; voice?: string | null; fallback_errors?: Record<string, string> | null }) | null
+  /** Run dir purgé : état de la voix conservé dans Project.config.claude_studio.tts. */
+  tts_status?: { fallback_errors?: Record<string, string> | null } | null
   thumbnail: { text?: string } | null
   /** Fiche de publication écrite par le miniaturiste après la boucle (publish.json). */
   publish: {

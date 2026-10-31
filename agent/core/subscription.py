@@ -21,7 +21,7 @@ class SubscriptionLimits(BaseModel):
     auto_publish_allowed: bool = False
     max_critic_iterations: int = 2
     unlimited_critic_iterations: bool = False
-    tts_allowed_engines: list[str] = Field(default_factory=lambda: ["edge"])
+    tts_allowed_engines: list[str] = Field(default_factory=lambda: ["edge", "elevenlabs"])
     whisper_model: str = "base"
     enable_ai_fallback: bool = False
     # Motion design 3D (style motion3d, plans 3D en style auto) : rendu long, réservé aux plans payants.
@@ -85,7 +85,7 @@ async def resolve_user_limits(session: AsyncSession, user: User) -> Subscription
             production_modes=["mixed", "long_only", "shorts_only"],
             auto_publish_allowed=True,
             unlimited_critic_iterations=True,
-            tts_allowed_engines=["edge", "azure", "gemini"],
+            tts_allowed_engines=["edge", "azure", "gemini", "elevenlabs"],
             whisper_model="small",
             enable_ai_fallback=True,
             motion3d_allowed=True,
@@ -168,6 +168,10 @@ def apply_subscription_caps(
             tts[profile_key] = {
                 k: v for k, v in profile.items() if k != "voice"
             } | {"engine": limits.tts_allowed_engines[0]}
+    short = tts.get("short")
+    fallback = short.get("fallback") if isinstance(short, dict) else None
+    if isinstance(fallback, dict) and _tts_engine_key(fallback.get("engine", "")) not in allowed:
+        tts["short"] = {k: v for k, v in short.items() if k != "fallback"}
     if "gemini" not in limits.tts_allowed_engines:
         gemini = dict(tts.get("gemini") or {})
         gemini["apply_to"] = "off"

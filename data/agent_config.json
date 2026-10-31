@@ -23,6 +23,9 @@
       "engine": "azure",
       "voice": "fr-FR-Vivienne:DragonHDLatestNeural"
     },
+    "elevenlabs": {
+      "model": "eleven_multilingual_v2"
+    },
     "gemini": {
       "apply_to": "off",
       "model": "gemini-2.5-flash-preview-tts",

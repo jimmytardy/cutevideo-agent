@@ -63,6 +63,8 @@ class Brief(BaseModel):
     words_per_second: float = Field(default=DEFAULT_WORDS_PER_SECOND, ge=MIN_WORDS_PER_SECOND, le=MAX_WORDS_PER_SECOND)
     voice: str = ""
     tts_engine: str = ""
+    tts_fallback_engine: str = ""
+    tts_fallback_voice: str = ""
     # Boucle vidéo (monteur ⇄ critique) : plafond et seuil de `critique_N.json`.
     max_iterations: int = Field(default=5, ge=1, le=6)
     min_score: int = Field(default=80, ge=0, le=100)
@@ -316,6 +318,8 @@ def resolve_in_run_dir(run_dir: Path, rel: str, *, within: str | None = None) ->
 
 # Une synthèse par ligne de `narration.txt` (studio.tools tts) ; supprimé avec le run dir en fin de création.
 VOICE_CACHE_DIR = "voice_cache"
+# Moteur réellement utilisé et refus rencontrés, écrits par `studio.tools tts`.
+TTS_STATUS_FILE = "tts_status.json"
 
 # Tout ce que `studio.tools ai-image` écrit : images brutes par nom, cache et registre de dépense.
 # Supprimé en entier une fois la vidéo persistée.

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, get_args, Literal, TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
@@ -70,7 +70,8 @@ class GeminiTtsConfig(BaseModel):
     language_code: str = "fr"
 
 
-TtsEngine = Literal["azure", "gemini", "edge-tts"]
+TtsEngine = Literal["azure", "gemini", "edge-tts", "elevenlabs"]
+_TTS_ENGINES: tuple[str, ...] = get_args(TtsEngine)
 
 
 class TtsFormatProfile(BaseModel):
@@ -87,6 +88,8 @@ class ChannelRuntimeConfig(BaseModel):
     tts_engine: str = "azure"
     tts_voice: str = "fr-FR-Vivienne:DragonHDLatestNeural"
     tts_short: TtsFormatProfile = Field(default_factory=TtsFormatProfile)
+    # Voix de secours (`tts.short.fallback`) essayée juste après le moteur de la chaîne s'il est refusé.
+    tts_fallback: TtsFormatProfile | None = None
     # Publication (DistributionAgent / executor)
     default_tags: list[str] = Field(default_factory=list)
     youtube_category_id: str = "27"
@@ -162,7 +165,7 @@ def _normalize_tts_engine(raw: str) -> TtsEngine:
     engine = str(raw or "azure").strip().lower()
     if engine == "edge":  # nom court utilisé par les plafonds d'abonnement et `studio.tools tts`
         return "edge-tts"
-    if engine in ("azure", "gemini", "edge-tts"):
+    if engine in _TTS_ENGINES:
         return engine  # type: ignore[return-value]
     return "azure"
 
@@ -177,10 +180,26 @@ def _parse_tts_format_profile(
     if not isinstance(raw, dict):
         raw = {}
     engine = _normalize_tts_engine(str(raw.get("engine", fallback_engine)))
-    voice = str(raw.get("voice") or fallback_voice)
+    # Un voice_id ElevenLabs n'a pas de défaut : une voix Azure héritée serait refusée à chaque vidéo.
+    voice = str(raw.get("voice") or ("" if engine == "elevenlabs" else fallback_voice))
     if engine == "edge-tts" and ":" in voice:  # voix Azure HD (`…:DragonHDLatestNeural`) inconnue d'edge-tts
         voice = edge_voice
     return TtsFormatProfile(engine=engine, voice=voice)
+
+
+def _resolve_tts_fallback(tts: dict[str, Any], primary: TtsFormatProfile) -> TtsFormatProfile | None:
+    """Voix de secours de la chaîne ; incomplète, inconnue ou sur le moteur principal (même refus) : ignorée."""
+    short = tts.get("short")
+    raw = short.get("fallback") if isinstance(short, dict) else None
+    if not isinstance(raw, dict) or not str(raw.get("voice") or "").strip():
+        return None
+    name = str(raw.get("engine") or "").strip().lower()
+    if name not in (*_TTS_ENGINES, "edge"):
+        return None
+    profile = _parse_tts_format_profile(
+        raw, fallback_engine=name, fallback_voice="", edge_voice=str(tts.get("fallback_voice") or DEFAULT_EDGE_VOICE)
+    )
+    return None if profile.engine == primary.engine else profile
 
 
 def _resolve_tts_format_profiles(
@@ -313,6 +332,7 @@ def resolve_channel_config(
         tts_engine=str(tts.get("engine", "azure")),
         tts_voice=tts_voice,
         tts_short=tts_short,
+        tts_fallback=_resolve_tts_fallback(tts, tts_short),
         default_tags=list(publishing.get("default_tags", [])) or _tags_from_channel(channel),
         youtube_category_id=str(publishing.get("youtube_category_id", "27")),
         auto_publish=bool(publishing.get("auto_publish", False)),
