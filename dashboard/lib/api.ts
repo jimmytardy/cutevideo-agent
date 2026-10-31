@@ -825,6 +825,10 @@ export async function saveApiKey(
   })
 }
 
+export async function deleteApiKey(provider: string): Promise<void> {
+  await apiJson<unknown>(`${API_BASE}/me/api-keys/${encodeURIComponent(provider)}`, { method: 'DELETE' })
+}
+
 export async function saveAgentLlmPreferences(preferences: Record<string, unknown>): Promise<void> {
   await apiJson(`${API_BASE}/me/agent-llm`, {
     method: 'PUT',

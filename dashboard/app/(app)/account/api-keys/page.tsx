@@ -11,6 +11,7 @@ import Alert from '@mui/material/Alert'
 import Card from '@mui/material/Card'
 import CardContent from '@mui/material/CardContent'
 import Chip from '@mui/material/Chip'
+import IconButton from '@mui/material/IconButton'
 import CircularProgress from '@mui/material/CircularProgress'
 import List from '@mui/material/List'
 import ListItem from '@mui/material/ListItem'
@@ -19,8 +20,9 @@ import Link from '@mui/material/Link'
 import ListItemIcon from '@mui/material/ListItemIcon'
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline'
 import HighlightOffOutlinedIcon from '@mui/icons-material/HighlightOffOutlined'
-import { PageContainer, PageHeader, PageSection } from '@/components/layout'
-import { API_BASE, fetcher, saveApiKey } from '@/lib/api'
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline'
+import { PageContainer, PageHeader, PageSection, useConfirmDialog } from '@/components/layout'
+import { API_BASE, deleteApiKey, fetcher, saveApiKey } from '@/lib/api'
 import { useMe } from '@/lib/hooks'
 import {
   API_KEY_PROVIDERS,
@@ -88,6 +90,8 @@ export default function ApiKeysPage() {
   const [apiKey, setApiKey] = useState('')
   const [metadata, setMetadata] = useState<Record<string, string>>({})
   const [message, setMessage] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState<string | null>(null)
+  const { confirm, dialog } = useConfirmDialog()
 
   const selectedProvider = getApiKeyProvider(provider)
   const metadataFields = selectedProvider?.metadataFields ?? []
@@ -124,12 +128,45 @@ export default function ApiKeysPage() {
     recheck()
   }
 
+  const removeKey = async (id: string) => {
+    const label = getApiKeyProviderLabel(id)
+    const ok = await confirm({
+      title: 'Supprimer la clé',
+      message: `Supprimer la clé ${label} ? Les vidéos, agents et publications qui en dépendent ne pourront plus l’utiliser. Cette action est irréversible.`,
+      confirmLabel: 'Supprimer',
+      confirmColor: 'error',
+    })
+    if (!ok) return
+    setMessage(null)
+    setDeleting(id)
+    try {
+      await deleteApiKey(id)
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : 'Erreur')
+      return
+    } finally {
+      setDeleting(null)
+    }
+    // Le cache est mis à jour tout de suite : ni la liste ni le formulaire ne doivent ressortir l'ancienne clé,
+    // et une clé ressaisie ne doit pas afficher l'ancien état de santé.
+    mutate((current) =>
+      current?.map((k) => (k.provider === id ? { ...k, configured: false, key_hint: null, metadata: null } : k)),
+    )
+    recheck((current) => current?.filter((h) => h.provider !== id), { revalidate: false })
+    if (id === provider) {
+      setApiKey('')
+      setMetadata({})
+    }
+    setMessage(`Clé ${label} supprimée`)
+  }
+
   return (
     <PageContainer maxWidth="md">
       <PageHeader
         title="Clés API personnelles"
         description="Vos vidéos, agents et publications utilisent uniquement ces clés : aucune clé de la plateforme n’est partagée. La clé Anthropic est requise pour créer des vidéos."
       />
+      {dialog}
       {message && <Alert severity="info" sx={{ mb: 2 }}>{message}</Alert>}
 
       {Array.isArray(keys) && (
@@ -151,7 +188,23 @@ export default function ApiKeysPage() {
               ) : (
                 <List dense disablePadding>
                   {configuredKeys.map((k) => (
-                    <ListItem key={k.provider} disableGutters sx={{ py: 0.75 }}>
+                    <ListItem
+                      key={k.provider}
+                      disableGutters
+                      sx={{ py: 0.75 }}
+                      secondaryAction={
+                        <IconButton
+                          edge="end"
+                          size="small"
+                          color="error"
+                          onClick={() => removeKey(k.provider)}
+                          disabled={deleting === k.provider}
+                          aria-label={`Supprimer la clé ${getApiKeyProviderLabel(k.provider)}`}
+                        >
+                          <DeleteOutlineIcon fontSize="small" />
+                        </IconButton>
+                      }
+                    >
                       <ListItemText
                         primary={
                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
